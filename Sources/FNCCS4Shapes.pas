@@ -830,6 +830,11 @@ type
     procedure SaveToJSON(const AJSON: TJSONObject); override;
     procedure Draw(const VT: TTransf2D; const Cnv: TDecorativeCanvas; const
 {%H-}ClipRect2D: TRect2D; const {%H-}DrawMode: Integer); override;
+    { : Picking. Without this a bitmap can only ever be picked by one
+      of its two corner points, because the inherited version stops at
+      the bounding box - and selection wants better than that. }
+    function OnMe(Pt: TPoint2D; Aperture: TRealType;
+      var Distance: TRealType): Integer; override;
     { : This property contains the picture to be drawed.
 
       It is owned and freed by the object. Change it in place
@@ -4493,6 +4498,42 @@ end;
 // TBitmap2D
 // =====================================================================
 
+function TBitmap2D.OnMe(Pt: TPoint2D; Aperture: TRealType;
+  var Distance: TRealType): Integer;
+var
+  TmpDist: TRealType;
+  TmpPts: array [0 .. 3] of TPoint2D;
+  P0, P1: TPoint2D;
+begin
+  Result := inherited OnMe(Pt, Aperture, Distance);
+  { The inherited version answers PICK_INBBOX at best, plus a control
+    point index when the click is on a corner. Selection wants better
+    than PICK_INBBOX - see TCAD2DSelectObject - so a bitmap that stops
+    there can only be picked by one of its two corners, and to anyone
+    using it that reads as "I cannot select the image".
+
+    Everything else two-cornered has an OnMe of its own; this one was
+    missed because nothing could draw a bitmap until there was an
+    insert-image command to try it with. }
+  if Result = PICK_INBBOX then
+  begin
+    P0 := CartesianPoint2D(Points[0]);
+    P1 := CartesianPoint2D(Points[1]);
+    { The four corners, built here rather than kept: a bitmap has no
+      profile points, and two points plus "cannot be rotated" is the
+      whole shape. ModelTransform is still applied, because a bitmap
+      inside a block is moved and scaled by one. }
+    TmpPts[0] := Point2D(P0.X, P0.Y);
+    TmpPts[1] := Point2D(P1.X, P0.Y);
+    TmpPts[2] := Point2D(P1.X, P1.Y);
+    TmpPts[3] := Point2D(P0.X, P1.Y);
+    TmpDist := 0;
+    Result := MaxIntValue([PICK_INBBOX, IsPointInPolygon2D(@TmpPts[0], 4, Pt,
+      TmpDist, Aperture, ModelTransform)]);
+    Distance := {%H-}MinValue([Aperture, TmpDist]);
+  end;
+end;
+
 procedure TBitmap2D.SetScaleFactor(SF: TRealType);
 var
   TmpPt: TPoint2D;
@@ -4564,9 +4605,22 @@ begin
     fAspectRatio := TBitmap2D(Obj).AspectRatio;
     fCopyMode := TBitmap2D(Obj).CopyMode;
     if Obj is TBitmap2D then
+    begin
+      { The image may not exist yet. Editing builds its working copy
+        with CADSysFindClassByName(..).Create(0), and that constructor
+        is not virtual - so the instance is a TBitmap2D but only
+        TGraphicObject.Create has run, and every field this class adds
+        is still nil. TPrimitive2D.Assign guards its own fPoints for
+        exactly this reason. }
+      if not Assigned(fImage) then
+        fImage := TCADImage.Create;
       fImage.Assign(TBitmap2D(Obj).fImage);
+    end;
     Points.Copy(TPrimitive2D(Obj).Points, 0, 1);
-    Points.GrowingEnabled := True;
+    { Two corners and no more, as the constructor has it and as
+      TFrame2D.Assign does. Left open, the editor would happily insert
+      a third control point into a rectangle that cannot have one. }
+    Points.GrowingEnabled := False;
   end;
 end;
 

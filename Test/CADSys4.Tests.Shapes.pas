@@ -21,6 +21,7 @@ uses
   System.SysUtils,
   DUnitX.TestFramework,
   FNCCS4BaseTypes,
+  FNCCS4Graphics,
   FNCCADSys4,
   FNCCS4Shapes,
   FNCCadSysRegister;
@@ -271,6 +272,30 @@ type
 
   { ================================================================= }
   { TText2D }
+  { ================================================================= }
+  { : TBitmap2D, which went unexercised until the demos gained an
+    insert-image command - and had two bugs waiting behind that. }
+  [TestFixture]
+  TBitmap2DTests = class(TObject)
+  private
+    FImg: TCADImage;
+    FBmp: TBitmap2D;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    [Test]
+    procedure OnMe_PointInsideTheImage_IsBetterThanInBBox;
+    [Test]
+    procedure OnMe_PointOutside_IsNotOnTheObject;
+    [Test]
+    procedure OnMe_PointOnACorner_ReturnsThatControlPoint;
+    [Test]
+    procedure Assign_OntoAnInstanceTheRegistryBuilt_DoesNotFault;
+  end;
+
   { ================================================================= }
   [TestFixture]
   TText2DTests = class(TObject)
@@ -1376,6 +1401,80 @@ begin
 end;
 
 { ===================================================================== }
+{ TBitmap2DTests }
+
+procedure TBitmap2DTests.Setup;
+var
+  TmpBytes: TBytes;
+begin
+  { A BMP header and nothing else. Hit-testing and Assign never decode
+    the bytes - only a backend does - so this is as much image as these
+    tests need, and it keeps them free of a canvas. }
+  FImg := TCADImage.Create;
+  SetLength(TmpBytes, 26);
+  TmpBytes[0] := Ord('B');
+  TmpBytes[1] := Ord('M');
+  TmpBytes[18] := 10;
+  TmpBytes[22] := 10;
+  FImg.SetData(TmpBytes);
+  FBmp := TBitmap2D.Create(0, Point2D(0, 0), Point2D(100, 100), FImg);
+end;
+
+procedure TBitmap2DTests.TearDown;
+begin
+  FBmp.Free;
+  FImg.Free;
+end;
+
+procedure TBitmap2DTests.OnMe_PointInsideTheImage_IsBetterThanInBBox;
+var
+  TmpDist: TRealType;
+begin
+  { Selection takes anything better than PICK_INBBOX and nothing else,
+    so this is the whole difference between an image you can click and
+    one you cannot. }
+  Assert.IsTrue(FBmp.OnMe(Point2D(50, 50), 5, TmpDist) > PICK_INBBOX,
+    'a point inside the image can be selected');
+end;
+
+procedure TBitmap2DTests.OnMe_PointOutside_IsNotOnTheObject;
+var
+  TmpDist: TRealType;
+begin
+  Assert.AreEqual(PICK_NOOBJECT, FBmp.OnMe(Point2D(500, 500), 5, TmpDist),
+    'a point well outside hits nothing');
+end;
+
+procedure TBitmap2DTests.OnMe_PointOnACorner_ReturnsThatControlPoint;
+var
+  TmpDist: TRealType;
+begin
+  { A corner still wins over the interior, which is what makes the
+    image resizable rather than only draggable. }
+  Assert.AreEqual(1, FBmp.OnMe(Point2D(100, 100), 5, TmpDist),
+    'the second control point');
+end;
+
+procedure TBitmap2DTests.Assign_OntoAnInstanceTheRegistryBuilt_DoesNotFault;
+var
+  TmpCopy: TBitmap2D;
+begin
+  { Exactly what TCAD2DEditPrimitiveParam does when an edit starts.
+    Create(0) is not virtual, so only TGraphicObject.Create runs and
+    every field TBitmap2D adds is still nil - including the image that
+    Assign then copies onto. This faulted. }
+  TmpCopy := CADSysFindClassByName('TBitmap2D').Create(0) as TBitmap2D;
+  try
+    TmpCopy.Assign(FBmp);
+    Assert.AreEqual(2, TmpCopy.Points.Count, 'the two corners came across');
+    Assert.IsFalse(TmpCopy.Image.IsEmpty, 'and so did the image');
+    Assert.IsFalse(TmpCopy.Points.GrowingEnabled,
+      'a bitmap has two control points and cannot grow a third');
+  finally
+    TmpCopy.Free;
+  end;
+end;
+
 { TText2DTests }
 { ===================================================================== }
 
@@ -1712,6 +1811,7 @@ TDUnitX.RegisterTestFixture(TFrameRectangleTests);
 TDUnitX.RegisterTestFixture(TArcEllipseTests);
 TDUnitX.RegisterTestFixture(TBSpline2DTests);
 TDUnitX.RegisterTestFixture(TCurveProfileProtocolTests);
+TDUnitX.RegisterTestFixture(TBitmap2DTests);
 TDUnitX.RegisterTestFixture(TText2DTests);
 TDUnitX.RegisterTestFixture(TJustifiedVectText2DTests);
 
