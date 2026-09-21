@@ -119,9 +119,10 @@ if not "%DEMOERR%"=="0" (
   exit /b %DEMOERR%
 )
 rem --- data files the demo needs beside the exe ----------------------
-rem The vector font is what the text tool and the DXF reader use; the
-rem sample DXF is there to import. Copied rather than duplicated in the
-rem repository, so there is one copy to keep correct.
+rem The vector font is what the text tool and the DXF reader use, the
+rem sample DXF is there to import, and the test patterns are there for
+rem the image tool. Copied rather than duplicated in the repository, so
+rem there is one copy to keep correct.
 copy /Y "%ROOT%\Demos\CAD2D\data\*.*" "%OUT%\bin\" >nul 2>&1
 
 echo FMX BUILD OK - run Tools\build\bin\CadSysFMX.exe
