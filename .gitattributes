@@ -1,2 +1,34 @@
-# Auto detect text files and perform LF normalization
+# Line endings.
+#
+# Everything text is stored LF in the repository and checked out in the
+# platform's own ending, so a Windows working tree is CRLF and a Linux
+# one is LF and neither shows the other as modified. Before this file
+# existed, the two disagreed and produced a 43,704-line diff with no
+# content change in it - which is the kind of thing that buries a real
+# change rather than showing it.
 * text=auto
+
+# Binaries, named rather than left to content detection. Git's sniffing
+# is good, but a vector font or a compiled resource that got normalised
+# would be corrupted silently and the damage would be committed.
+*.res binary
+*.RES binary
+*.ico binary
+*.dcr binary
+*.fnt binary
+*.bmp binary
+*.png binary
+*.jpg binary
+*.hlp binary
+*.HLP binary
+*.gid binary
+*.GID binary
+*.lib binary
+*.dcu binary
+*.exe binary
+*.zip binary
+
+# DXF is text, but TEST.DXF is a parser fixture: it is read byte for
+# byte by the DXF tests, so it stays exactly as it was written.
+*.dxf -text
+*.DXF -text
