@@ -145,6 +145,7 @@ type
     procedure PolygonClick(Sender: TObject);
     procedure SplineClick(Sender: TObject);
     procedure TextClick(Sender: TObject);
+    procedure ImageClick(Sender: TObject);
 
     { ---- editing ---- }
     procedure MoveClick(Sender: TObject);
@@ -210,7 +211,7 @@ const
   { Fifteen buttons in three rows of five. The sizes are in MeasureUI,
     to mirror the VCL demo - here they really are constants. }
   BarColumns = 5;
-  BarRows = 3;
+  BarRows = 4;
 
 constructor TMyCADCreateTheSourceBlock.Create(const CADPrg: TFNCCADPrg;
   const StateParam: TCADPrgParam; var NextState: TCADStateClass);
@@ -354,6 +355,7 @@ begin
   AddButton('Polygon', PolygonClick);
   AddButton('Spline', SplineClick);
   AddButton('Text', TextClick);
+  AddButton('Image', ImageClick);
   AddButton('Move', MoveClick);
   AddButton('Rotate', RotateClick);
   AddButton('Edit', EditClick);
@@ -795,6 +797,49 @@ begin
 end;
 
 { ===================== editing ===================== }
+
+procedure TMainForm.ImageClick(Sender: TObject);
+var
+  TmpDlg: TOpenDialog;
+  TmpStream: TFileStream;
+  TmpImg: TCADImage;
+begin
+  { PNG and BMP only, and the filter says so rather than offering
+    everything and failing later: TCADImage.ReadSize knows those two
+    signatures, and the backends decode those two. A JPEG would load
+    its bytes and then draw nothing. }
+  TmpDlg := TOpenDialog.Create(Self);
+  try
+    TmpDlg.Filter := 'Images (*.png;*.bmp)|*.png;*.bmp|All files (*.*)|*.*';
+    if not TmpDlg.Execute then
+      Exit;
+    TmpImg := TCADImage.Create;
+    try
+      TmpStream := TFileStream.Create(TmpDlg.FileName,
+        fmOpenRead or fmShareDenyWrite);
+      try
+        TmpImg.LoadFromStream(TmpStream);
+      finally
+        TmpStream.Free;
+      end;
+      Log(Format('image: %s, %d x %d, %d bytes',
+        [ExtractFileName(TmpDlg.FileName), TmpImg.Width, TmpImg.Height,
+        Length(TmpImg.Data)]));
+      if TmpImg.Width = 0 then
+        Log('  no size read - the decoder will probably draw nothing');
+      { Two corners, like a rectangle, because that is what a TBitmap2D
+        is: the image is stretched between them and cannot be rotated.
+        The constructor copies the image, so this one stays ours. }
+      StartDraw(TButton(Sender), TCAD2DDrawSizedPrimitive,
+        TCAD2DDrawSizedPrimitiveParam.Create(nil,
+        TBitmap2D.Create(-1, Point2D(0, 0), Point2D(0, 0), TmpImg), 0, True));
+    finally
+      TmpImg.Free;
+    end;
+  finally
+    TmpDlg.Free;
+  end;
+end;
 
 procedure TMainForm.MoveClick(Sender: TObject);
 begin
