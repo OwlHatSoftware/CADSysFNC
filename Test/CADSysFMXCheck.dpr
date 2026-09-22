@@ -27,6 +27,7 @@ uses
   FNCCS4Shapes in '..\Sources\FNCCS4Shapes.pas',
   FNCCS4Tasks in '..\Sources\FNCCS4Tasks.pas',
   FNCCS4DXFModule in '..\Sources\FNCCS4DXFModule.pas',
+  FNCCS4Legacy in '..\Sources\FNCCS4Legacy.pas',
   FNCCadSysRegister in '..\Sources\FNCCadSysRegister.pas';
 
 begin

@@ -49,6 +49,7 @@ contains
   FNCCS4GraphicsFNC in '..\..\Sources\FNCCS4GraphicsFNC.pas',
   FNCCS4ExportVCL in '..\..\Sources\FNCCS4ExportVCL.pas',
   FNCCS4DXFModule in '..\..\Sources\FNCCS4DXFModule.pas',
+  FNCCS4Legacy in '..\..\Sources\FNCCS4Legacy.pas',
   FNCCS4Shapes in '..\..\Sources\FNCCS4Shapes.pas',
   FNCCS4Tasks in '..\..\Sources\FNCCS4Tasks.pas',
   FNCCadSysRegister in '..\..\Sources\FNCCadSysRegister.pas';

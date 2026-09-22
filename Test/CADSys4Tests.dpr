@@ -45,6 +45,7 @@ uses
   CADSys4.Tests.Regressions in 'CADSys4.Tests.Regressions.pas',
   CADSys4.Tests.Graphics in 'CADSys4.Tests.Graphics.pas',
   CADSys4.Tests.DXF in 'CADSys4.Tests.DXF.pas',
+  CADSys4.Tests.Legacy in 'CADSys4.Tests.Legacy.pas',
   FNCCS4ExportVCL;
 
 {$IFNDEF TESTINSIGHT}

@@ -717,6 +717,18 @@ type
 
   TFNCCADCmp = class;
   TFNCCADCmp2D = class;
+
+  { : Reads a drawing in the pre-JSON binary format into ACAD.
+
+    The reader lives in FNCCS4Legacy, which uses this unit, so this
+    unit cannot use it back. The hook is how
+    <See Method=TFNCCADCmp2D@LoadLegacyStream> reaches it - the same
+    arrangement as CADResolveSystemColor in FNCCS4Graphics, and for the
+    same reason. FNCCS4Legacy installs it from its initialization, so
+    putting that unit in a uses clause anywhere in the program is all
+    it takes. }
+  TCADLegacyLoader = procedure(const AStream: TStream;
+    const ACAD: TFNCCADCmp2D);
   TFNCCADViewport = class;
   TFNCCADViewport2D = class;
   TObject2D = class;
@@ -5088,6 +5100,16 @@ type
       the instance.
     }
     constructor Create(ID: LongInt; const Source: TSourceBlock2D);
+    { : Creates a block that names its source but does not yet point at
+      it, for a loader reading a file in which the two are separate.
+
+      The block is not usable until
+      <See Method=TBlock2D@UpdateReference> has linked it, which is
+      exactly the state CreateFromJSON leaves it in - a file names its
+      source block and the reference is resolved once every source
+      block is in. }
+    constructor CreateUnlinked(ID: LongInt; const AName: TSourceBlockName;
+      const AOrigin: TPoint2D);
     destructor Destroy; override;
     constructor CreateFromJSON(const AJSON: TJSONObject); override;
     procedure SaveToJSON(const AJSON: TJSONObject); override;
@@ -5226,6 +5248,27 @@ type
     procedure DeleteSourceBlock(const SrcName: TSourceBlockName);
     function GetSourceBlock(const ID: LongInt): TSourceBlock2D;
     function FindSourceBlock(const SrcName: TSourceBlockName): TSourceBlock2D;
+    { : Reads a drawing written in the binary format this library used
+      before step 2b, replacing the current drawing.
+
+      Migration is this and then <See Method=TFNCCADCmp@SaveToFile>:
+
+        CAD.LoadLegacyFile('old.cs2');
+        CAD.SaveToFile('new.json');
+
+      Requires FNCCS4Legacy to be in the program - it installs the
+      reader on the way in. Without it this raises, saying so, rather
+      than failing obscurely.
+
+      If the drawing holds a class the reader does not know, the read
+      stops there and raises: the old records carry no length, so a
+      reader that meets an unknown class cannot find the end of it and
+      must not guess. What has been read by then stays in the
+      component, which is usually what you want to look at when
+      working out why. }
+    procedure LoadLegacyStream(const Stream: TStream);
+    { : <See Method=TFNCCADCmp2D@LoadLegacyStream>, from a file. }
+    procedure LoadLegacyFile(const FileName: String);
     { : This method creates a source block (and add it to the CAD) by
       grouping a list of objects.
 
@@ -9990,6 +10033,10 @@ procedure CADSysUnregisterClass(Index: Word);
   See also <See Type=TSourceBlockName>
 }
 function StringToBlockName(const Str: String): TSourceBlockName;
+
+var
+  { : Installed by FNCCS4Legacy. See <See Type=TCADLegacyLoader>. }
+  CADLegacyLoader: TCADLegacyLoader = nil;
 
 const
   { : This constant contains the version number of the library
@@ -17665,6 +17712,15 @@ begin
   inherited Destroy;
 end;
 
+constructor TBlock2D.CreateUnlinked(ID: LongInt;
+  const AName: TSourceBlockName; const AOrigin: TPoint2D);
+begin
+  inherited Create(ID);
+  fSourceName := AName;
+  fOriginPoint := AOrigin;
+  fSourceBlock := nil;
+end;
+
 constructor TBlock2D.CreateFromJSON(const AJSON: TJSONObject);
 begin
   { TFNCCADCmp uses fSourceName to find the source block. }
@@ -17819,6 +17875,28 @@ end;
 
 {$WARNINGS OFF}
 
+
+procedure TFNCCADCmp2D.LoadLegacyStream(const Stream: TStream);
+begin
+  if not Assigned(CADLegacyLoader) then
+    Raise ECADSysException.Create
+      ('TFNCCADCmp2D.LoadLegacyStream: no reader for the old binary format ' +
+      'is installed. Add FNCCS4Legacy to a uses clause in the program - it ' +
+      'installs one from its initialization.');
+  CADLegacyLoader(Stream, Self);
+end;
+
+procedure TFNCCADCmp2D.LoadLegacyFile(const FileName: String);
+var
+  TmpStream: TFileStream;
+begin
+  TmpStream := TFileStream.Create(FileName, fmOpenRead or fmShareDenyWrite);
+  try
+    LoadLegacyStream(TmpStream);
+  finally
+    TmpStream.Free;
+  end;
+end;
 
 procedure TFNCCADCmp2D.LoadObjectsFromJSON(const AJSON: TJSONArray);
 var
