@@ -622,6 +622,19 @@ type
     the linked Viewport.
   }
   TRulerOrientationType = (otOrizontal, otVertical);
+  { : Which pixels a rectangle is measured in.
+
+    The two differ only on FMX, and only on a scaled display. The
+    library draws in device pixels - the back buffer holds them, the
+    viewport transform produces them, every clip rect is in them -
+    while FMX's own Width, Height and mouse coordinates are logical, a
+    factor of ViewScale smaller. On VCL and LCL they are the same
+    thing.
+
+    <LI=<I=cruDevice> real pixels: what the drawing is made of.>
+    <LI=<I=cruLogical> framework units: what FMX hands you and expects
+    back.> }
+  TCADRectUnits = (cruDevice, cruLogical);
   { : This type defines which principal axis is used in a
     <See Class=TFNCCADOrtogonalViewport3D> control.
 
@@ -3466,19 +3479,34 @@ type
       "how big is a pixel on this device" moved out. }
     procedure CalibrateMM(const AMMPerPixelX, AMMPerPixelY: TRealType;
       XScale, YScale: TRealType);
-    { : The control's own area, as a TRect with the origin at its top
-      left corner.
-
-      This is what ClientRect used to be. FMX has no ClientRect on a
-      control - it has LocalRect, and that is a TRectF - so the one
-      spelling that works everywhere is to build it from Width and
-      Height, which is also exactly how the back buffer is sized. }
     { : Device pixels per drawing unit - see the field's note. Public
       so a demo can log what it resolved to. }
     property ViewScale: Single read fViewScale;
     { : ViewScale, or one before the first paint has established it. }
     function ViewScaleOrOne: Single;
-    function ControlRect: TRect;
+    { : The control's own area in device pixels, origin at its top left.
+
+      This is what ClientRect used to be. FMX has no ClientRect on a
+      control - it has LocalRect, and that is a TRectF - so the one
+      spelling that works everywhere is to build it from Width and
+      Height.
+
+      Device pixels, because that is what everything downstream is made
+      of: the back buffer, the viewport transform, every clip rect. On
+      a scaled FMX display that is larger than the control's Width and
+      Height, which are logical. This is what the library itself calls,
+      and it is unchanged from before the buffer moved to device
+      resolution. }
+    function ControlRect: TRect; overload;
+    { : The control's own area, in whichever pixels you ask for.
+
+      Reach for cruLogical when talking to the framework rather than to
+      the drawing: positioning a child control, reading a mouse
+      position that has not been through HandleMouseDown, or sizing
+      something FMX will scale for you. Everything inside the library
+      wants cruDevice, which is why that is what the parameterless
+      version gives. On VCL and LCL the two are identical. }
+    function ControlRect(const AUnits: TCADRectUnits): TRect; overload;
     { : True when the control is far enough along to be painted.
 
       On VCL and LCL that is HandleAllocated: before the window exists
@@ -4403,6 +4431,18 @@ type
       See <See Method=TFNCRuler@RulerScale> for why this control keeps
       its own. }
     fScaleOverride: Single;
+    { : The width a vertical ruler's labels need, in device pixels, or
+      0 before a paint has measured them.
+
+      Thickness cannot answer this. It is set before there is a font,
+      while the labels depend on the font, on the display's scale and
+      on how many digits the drawing's coordinates run to: a ruler
+      twenty units thick held "10.00" at 96 DPI and cut it in half at
+      240. So the control grows to what it turns out to have to draw.
+      It only ever grows while the font and the scale stand, which is
+      what stops a wider ruler, a narrower viewport and a different
+      visible range from chasing each other. }
+    fFitSize: Integer;
     { : Thickness in device pixels.
 
       Thickness and FontSize are logical values, as every size a user
@@ -4421,6 +4461,21 @@ type
       while every other control on the form rescales around it. }
     procedure ChangeDPIScale(M, D: Integer); override;
     procedure SelectRulerFont;
+    { : A point in the linked viewport's world, in this ruler's own
+      client pixels.
+
+      Two things stand between the two, and the ruler used to assume
+      neither existed:
+
+      The viewport draws in device pixels since the back buffer moved
+      to the display's resolution, while a ruler has no buffer and
+      paints in the framework's logical units. On FMX with a scaled
+      display those differ by ViewScale.
+
+      And the two controls need not share an origin. They did while the
+      ruler was the only one and spanned the whole window; add a
+      vertical ruler and the viewport starts further right, so every
+      tick on the horizontal ruler was out by that width. }
     function RulerTextWidth(const S: String): Integer;
     procedure RulerTextOut(const X, Y: Integer; const S: String);
 
@@ -4481,6 +4536,25 @@ type
 
       Public for the same reason as RulerFontHeight. }
     function RulerScale: Single;
+    { : A point in the linked viewport's world, in this ruler's own
+      client pixels.
+
+      Two things stand between the two, and the ruler used to assume
+      neither existed:
+
+      The viewport draws in device pixels since the back buffer moved
+      to the display's resolution, while a ruler has no buffer and
+      paints in the framework's logical units. On FMX with a scaled
+      display those differ by ViewScale.
+
+      And the two controls need not share an origin. They did while the
+      ruler was the only one and spanned the whole window; add a
+      vertical ruler and the viewport starts further right, so every
+      tick was out by that width.
+
+      Public for the same reason as RulerScale: so a caller can log
+      what it came to rather than infer it from a screenshot. }
+    function ViewToRuler(const APoint: TPoint2D): TPoint;
   published
     { : This property contains the linked viewport used for the alignment
       of the ruler
@@ -15789,15 +15863,24 @@ end;
 
 function TFNCCADViewport.ControlRect: TRect;
 begin
-  { Device pixels, not logical ones. Everything downstream - the back
-    buffer, the viewport transform, every clip rect - is built from
-    this, which is why collapsing ClientRect into one accessor in step
-    5d was worth doing: the whole drawing moves to the display's real
-    resolution from here.
+  { Everything downstream - the back buffer, the viewport transform,
+    every clip rect - is built from this, which is why collapsing
+    ClientRect into one accessor in step 5d was worth doing: the whole
+    drawing moved to the display's real resolution from this one
+    function. }
+  Result := ControlRect(cruDevice);
+end;
 
-    Round, because Width and Height are Single on FMX. }
-  Result := Rect(0, 0, Round(Width * ViewScaleOrOne),
-    Round(Height * ViewScaleOrOne));
+function TFNCCADViewport.ControlRect(const AUnits: TCADRectUnits): TRect;
+begin
+  { Round, because Width and Height are Single on FMX. }
+  case AUnits of
+    cruLogical:
+      Result := Rect(0, 0, Round(Width), Round(Height));
+  else
+    Result := Rect(0, 0, Round(Width * ViewScaleOrOne),
+      Round(Height * ViewScaleOrOne));
+  end;
 end;
 
 function TFNCCADViewport.ViewScaleOrOne: Single;
@@ -16840,6 +16923,8 @@ begin
 
     fOrientation := O;
 
+    { Measured for the other orientation, and meaningless in this one. }
+    fFitSize := 0;
     ApplyThickness;
     Invalidate;
 
@@ -16852,6 +16937,9 @@ begin
   if S <> fSize then
   begin
     fSize := S;
+    { A new tick area, so the fit that was measured around the old one
+      no longer holds. }
+    fFitSize := 0;
     { The control resizes itself. A caller that had to set Thickness and
       then Height to the same number would get it wrong on a scaled
       display, because only one of the two is a logical value. }
@@ -16865,6 +16953,9 @@ begin
   if S <> fFontSize then
   begin
     fFontSize := S;
+    { The labels change size with it, so what they needed is stale. }
+    fFitSize := 0;
+    ApplyThickness;
     Invalidate;
   end;
 end;
@@ -16938,17 +17029,32 @@ begin
     M/D is a step, not an absolute. }
   if (M > 0) and (D > 0) then
     fScaleOverride := RulerScale * M / D;
+  { Everything the fit was measured from - the font, the ticks - is
+    about to be a different size. }
+  fFitSize := 0;
   ApplyThickness;
   Invalidate;
 end;
 
 procedure TFNCRuler.ApplyThickness;
+var
+  TmpWidth: Integer;
 begin
   case fOrientation of
     otOrizontal:
+      { A horizontal ruler's labels sit inside its thickness: they are
+        one line of text tall, and the tick area is taller. }
       Height := ScaledThickness;
     otVertical:
-      Width := ScaledThickness;
+      begin
+        { Across a vertical ruler they do not: a label is as long as
+          its digits, which has nothing to do with the tick area. See
+          fFitSize. }
+        TmpWidth := ScaledThickness;
+        if fFitSize > TmpWidth then
+          TmpWidth := fFitSize;
+        Width := TmpWidth;
+      end;
   end;
 end;
 
@@ -16988,6 +17094,49 @@ begin
     because a point is a physical size. }
   TmpPixels := Round(fFontSize * 96 / 72);
   Result := -ScaleRuler(TmpPixels);
+end;
+
+function TFNCRuler.ViewToRuler(const APoint: TPoint2D): TPoint;
+var
+  TmpPt: TPoint2D;
+  TmpScale: TRealType;
+{$IFDEF CADSYS_FMX}
+  TmpViewOrg, TmpSelfOrg: TPointF;
+{$ELSE}
+  TmpViewOrg, TmpSelfOrg: TPoint;
+{$ENDIF}
+begin
+  Result := Point(0, 0);
+  if fOwnerView = nil then
+    Exit;
+
+  { The viewport's answer, in the viewport's own pixels. }
+  TmpPt := fOwnerView.ViewportToScreen(APoint);
+
+  { Device to logical. The viewport draws into a buffer at the
+    display's resolution; a ruler has no buffer and paints in the
+    framework's units. One on VCL and LCL. }
+  TmpScale := fOwnerView.ViewScaleOrOne;
+  if TmpScale <> 1.0 then
+  begin
+    TmpPt.X := TmpPt.X / TmpScale;
+    TmpPt.Y := TmpPt.Y / TmpScale;
+  end;
+
+  { And the gap between the two controls' origins. Nothing guarantees
+    they line up: they did while a horizontal ruler was the only one
+    and spanned the whole window, and stopped the moment a vertical
+    ruler pushed the viewport to the right. Asking the framework where
+    each one actually is costs a little per tick and cannot be wrong. }
+{$IFDEF CADSYS_FMX}
+  TmpViewOrg := fOwnerView.LocalToAbsolute(PointF(0, 0));
+  TmpSelfOrg := LocalToAbsolute(PointF(0, 0));
+{$ELSE}
+  TmpViewOrg := fOwnerView.ClientToScreen(Point(0, 0));
+  TmpSelfOrg := ClientToScreen(Point(0, 0));
+{$ENDIF}
+  Result.X := Round(TmpPt.X + (TmpViewOrg.X - TmpSelfOrg.X));
+  Result.Y := Round(TmpPt.Y + (TmpViewOrg.Y - TmpSelfOrg.Y));
 end;
 
 procedure TFNCRuler.SelectRulerFont;
@@ -17030,6 +17179,7 @@ begin
 
   fOwnerView := nil;
   fSize := 20;
+  fFitSize := 0;
   fFontSize := 0;
   fStepSize := 10.0;
   fStepDivisions := 5;
@@ -17054,6 +17204,8 @@ var
   TmpStep, TmpVal: TRealType;
   TmpPt: TPoint;
   LastPt, MinSize: Integer;
+  TmpTick, TmpNeed, TmpLabel: Integer;
+  TmpText: String;
   TmpRect: TRect;
 begin
   inherited Draw(AGraphics, ARect);
@@ -17081,13 +17233,11 @@ begin
             TmpStep := fStepSize;
             MinSize := RulerTextWidth(Format('%12.2f', [TmpVal]));
             // Trova lo step ottimo.
-            TmpPt := Point2DToPoint
-              (fOwnerView.ViewportToScreen(Point2D(TmpVal - fStepSize, 0)));
+            TmpPt := ViewToRuler(Point2D(TmpVal - fStepSize, 0));
             LastPt := TmpPt.X;
             while TmpVal <= fOwnerView.VisualRect.Right do
             begin
-              TmpPt := Point2DToPoint
-                (fOwnerView.ViewportToScreen(Point2D(TmpVal, 0)));
+              TmpPt := ViewToRuler(Point2D(TmpVal, 0));
               if Abs(TmpPt.X - LastPt) > MinSize then
                 Break;
               TmpVal := TmpVal + TmpStep;
@@ -17099,8 +17249,7 @@ begin
               Exit;
             while TmpVal <= fOwnerView.VisualRect.Right do
             begin
-              TmpPt := Point2DToPoint
-                (fOwnerView.ViewportToScreen(Point2D(TmpVal, 0)));
+              TmpPt := ViewToRuler(Point2D(TmpVal, 0));
               fCanvas.MoveTo(TmpPt.X, ControlRect.Top);
               fCanvas.LineTo(TmpPt.X, ControlRect.Bottom);
               RulerTextOut(TmpPt.X,
@@ -17115,8 +17264,7 @@ begin
               TmpVal := Trunc(fOwnerView.VisualRect.Left / TmpStep) * TmpStep;
               while TmpVal <= fOwnerView.VisualRect.Right do
               begin
-                TmpPt := Point2DToPoint
-                  (fOwnerView.ViewportToScreen(Point2D(TmpVal, 0)));
+                TmpPt := ViewToRuler(Point2D(TmpVal, 0));
                 fCanvas.MoveTo(TmpPt.X, ControlRect.Top);
                 fCanvas.LineTo(TmpPt.X,
                   ControlRect.Top + ScaledThickness div 2);
@@ -17131,13 +17279,11 @@ begin
             TmpStep := fStepSize;
             MinSize := 2 * Abs(RulerFontHeight);
             // Trova lo step ottimo.
-            TmpPt := Point2DToPoint(fOwnerView.ViewportToScreen(Point2D(0,
-              TmpVal - fStepSize)));
+            TmpPt := ViewToRuler(Point2D(0, TmpVal - fStepSize));
             LastPt := TmpPt.Y;
             while TmpVal <= fOwnerView.VisualRect.Top do
             begin
-              TmpPt := Point2DToPoint(fOwnerView.ViewportToScreen(Point2D(0,
-                TmpVal)));
+              TmpPt := ViewToRuler(Point2D(0, TmpVal));
               if Abs(TmpPt.Y - LastPt) > MinSize then
                 Break;
               TmpVal := TmpVal + TmpStep;
@@ -17147,15 +17293,32 @@ begin
             TmpVal := Trunc(fOwnerView.VisualRect.Bottom / TmpStep) * TmpStep;
             if TmpStep / fOwnerView.VisualRect.Right < 0.01 then
               Exit;
+            { Ticks in the outer half and the labels clear of them,
+              rather than both across the full width with the digits
+              written over the lines. }
+            TmpTick := ScaledThickness div 2;
+            TmpNeed := 0;
             while TmpVal <= fOwnerView.VisualRect.Top do
             begin
-              TmpPt := Point2DToPoint(fOwnerView.ViewportToScreen(Point2D(0,
-                TmpVal)));
+              TmpPt := ViewToRuler(Point2D(0, TmpVal));
               fCanvas.MoveTo(ControlRect.Left, TmpPt.Y);
-              fCanvas.LineTo(ControlRect.Right, TmpPt.Y);
-              RulerTextOut(ControlRect.Left + ScaledThickness div 2, TmpPt.Y,
-                Format('%-6.2f', [TmpVal]));
+              fCanvas.LineTo(ControlRect.Left + TmpTick, TmpPt.Y);
+              TmpText := Format('%-6.2f', [TmpVal]);
+              RulerTextOut(ControlRect.Left + TmpTick + 2, TmpPt.Y, TmpText);
+              { What this label would have needed, measured from the
+                string on its way to the canvas so that it answers for
+                the font actually in use. }
+              TmpLabel := TmpTick + RulerTextWidth(TmpText) + 4;
+              if TmpLabel > TmpNeed then
+                TmpNeed := TmpLabel;
               TmpVal := TmpVal + TmpStep;
+            end;
+            { This paint is already clipped to the width it was given;
+              the next one gets the room. }
+            if TmpNeed > fFitSize then
+            begin
+              fFitSize := TmpNeed;
+              ApplyThickness;
             end;
             // Subdivisions.
             if fStepDivisions > 0 then
@@ -17164,11 +17327,9 @@ begin
               TmpVal := Trunc(fOwnerView.VisualRect.Bottom / TmpStep) * TmpStep;
               while TmpVal <= fOwnerView.VisualRect.Top do
               begin
-                TmpPt := Point2DToPoint(fOwnerView.ViewportToScreen(Point2D(0,
-                  TmpVal)));
+                TmpPt := ViewToRuler(Point2D(0, TmpVal));
                 fCanvas.MoveTo(ControlRect.Left, TmpPt.Y);
-                fCanvas.LineTo(ControlRect.Left + ScaledThickness div 2,
-                  TmpPt.Y);
+                fCanvas.LineTo(ControlRect.Left + TmpTick div 2, TmpPt.Y);
                 TmpVal := TmpVal + TmpStep;
               end;
             end;
@@ -17195,6 +17356,13 @@ end;
 
 function TFNCRuler.ControlRect: TRect;
 begin
+  { No units overload here, unlike the viewport's, and no ViewScale.
+
+    A ruler has no back buffer: it paints straight onto the framework's
+    canvas in whatever units that canvas uses, so logical is the only
+    answer it can give. Offering a cruDevice that meant nothing would
+    be worse than not offering it. What the ruler does scale is its own
+    thickness and font - see RulerScale. }
   Result := Rect(0, 0, Round(Width), Round(Height));
 end;
 
@@ -17209,15 +17377,13 @@ begin
   case fOrientation of
     otOrizontal:
       begin
-        TmpPt := Point2DToPoint
-          (fOwnerView.ViewportToScreen(Point2D(fMark, 0)));
+        TmpPt := ViewToRuler(Point2D(fMark, 0));
         fCanvas.MoveTo(TmpPt.X, ControlRect.Top);
         fCanvas.LineTo(TmpPt.X, ControlRect.Bottom);
       end;
     otVertical:
       begin
-        TmpPt := Point2DToPoint
-          (fOwnerView.ViewportToScreen(Point2D(0, fMark)));
+        TmpPt := ViewToRuler(Point2D(0, fMark));
         fCanvas.MoveTo(ControlRect.Left, TmpPt.Y);
         fCanvas.LineTo(ControlRect.Right, TmpPt.Y);
       end;

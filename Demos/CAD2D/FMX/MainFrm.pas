@@ -52,6 +52,7 @@ type
     fCAD: TFNCCADCmp2D;
     fView: TFNCCADViewport2D;
     fRuler: TFNCRuler;
+    fVRuler: TFNCRuler;
     fPrg: TFNCCADPrg2D;
 
     fBar: TToolBar;
@@ -170,6 +171,7 @@ type
     procedure ShowGridClick(Sender: TObject);
     procedure KeepAspectClick(Sender: TObject);
     procedure UseSnapClick(Sender: TObject);
+    procedure SnapChanged;
     procedure UseOrtoClick(Sender: TObject);
     procedure UseAreaClick(Sender: TObject);
     procedure LayersClick(Sender: TObject);
@@ -295,6 +297,8 @@ begin
     'Thickness %d, Height %d, FontSize %d, label height %d',
     [fRuler.RulerScale, fRuler.PaintScaleFactor, fRuler.Thickness,
     Round(fRuler.Height), fRuler.FontSize, Abs(fRuler.RulerFontHeight)]));
+  Log(Format('  vruler: RulerScale %.3f, Thickness %d, Width %d',
+    [fVRuler.RulerScale, fVRuler.Thickness, Round(fVRuler.Width)]));
 end;
 
 procedure TMainForm.FormShow(Sender: TObject);
@@ -482,6 +486,19 @@ begin
   fRuler.StepSize := 10.0;
   fRuler.StepDivisions := 5;
 
+  { The vertical one, on the left, and created after the horizontal one
+    so FMX gives it the edge below. The horizontal ruler therefore runs
+    the full width and the vertical starts under it, which is the
+    conventional corner: the top left square belongs to the horizontal
+    one. }
+  fVRuler := TFNCRuler.Create(Self);
+  fVRuler.Parent := Self;
+  fVRuler.Align := TAlignLayout.Left;
+  fVRuler.Orientation := otVertical;
+  fVRuler.Thickness := 24;
+  fVRuler.StepSize := 10.0;
+  fVRuler.StepDivisions := 5;
+
   Log('BuildControls: TFNCCADCmp2D');
   fCAD := TFNCCADCmp2D.Create(Self);
 
@@ -500,6 +517,7 @@ begin
   fView.CanFocus := True;
 
   fRuler.LinkedViewport := fView;
+  fVRuler.LinkedViewport := fView;
 
   Log('BuildControls: TFNCCADPrg2D');
   fPrg := TFNCCADPrg2D.Create(Self);
@@ -553,10 +571,15 @@ begin
   fView.ZoomWindow(Rect2D(-50, -50, 50, 50));
 
   fPrg.ShowCursorCross := True;
-  fPrg.XSnap := 1.0;
-  fPrg.YSnap := 1.0;
+  { The grid step, not one unit. The grid is what a user aims at, and a
+    snap an order of magnitude finer than the grid is indistinguishable
+    from no snap at all - which is what the old 1.0 looked like at this
+    zoom, where a unit is about nine pixels. }
+  fPrg.XSnap := fView.GridDeltaX;
+  fPrg.YSnap := fView.GridDeltaY;
   fPrg.UseSnap := fUseSnapItem.IsChecked;
   fPrg.UseOrto := fUseOrtoItem.IsChecked;
+  SnapChanged;
   { Logged because the window has not always opened at the size asked
     for, and the toolbar and ruler layout depend on it. }
   Log(Format('form %d x %d, toolbar %d wide',
@@ -620,7 +643,10 @@ procedure TMainForm.ViewMouseMove2D(Sender: TObject; Shift: TShiftState;
 begin
   with fPrg.CurrentViewportSnappedPoint do
     fCoordLbl.Text := Format('X: %6.3f  Y: %6.3f', [X, Y]);
+  { Each ruler marks its own axis: the horizontal one follows X, the
+    vertical one Y. }
   fRuler.SetMark(WX);
+  fVRuler.SetMark(WY);
 end;
 
 procedure TMainForm.ViewDblClick(Sender: TObject);
@@ -954,10 +980,21 @@ begin
   fView.ZoomWindow(fView.VisualRect);
 end;
 
+procedure TMainForm.SnapChanged;
+begin
+  { Written down rather than left to the eye: "snap does nothing" and
+    "snap is off" look alike on screen, and this says which. }
+  if fPrg.UseSnap then
+    Log(Format('snap on, step %.2f x %.2f', [fPrg.XSnap, fPrg.YSnap]))
+  else
+    Log('snap off');
+end;
+
 procedure TMainForm.UseSnapClick(Sender: TObject);
 begin
   fUseSnapItem.IsChecked := not fUseSnapItem.IsChecked;
   fPrg.UseSnap := fUseSnapItem.IsChecked;
+  SnapChanged;
 end;
 
 procedure TMainForm.UseOrtoClick(Sender: TObject);
