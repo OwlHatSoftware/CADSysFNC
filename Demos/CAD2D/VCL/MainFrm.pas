@@ -48,6 +48,7 @@ type
     fPopup: TPopupMenu;
     fCoordLbl: TLabel;
     fStateLbl: TLabel;
+    fLoggedScale: Single;
 
     { The button whose operation is running, and its unmodified text.
       Decorating the caption rather than using TToolButton.Indeterminate,
@@ -178,6 +179,7 @@ type
     procedure ImportDXFClick(Sender: TObject);
     procedure ImportLegacyClick(Sender: TObject);
     procedure LoadProgress(Sender: TObject; ReadPercent: Byte);
+    procedure ViewPaint(Sender: TObject);
     procedure ExportDXFClick(Sender: TObject);
     procedure PrintActualClick(Sender: TObject);
     procedure PrintFitClick(Sender: TObject);
@@ -526,6 +528,7 @@ begin
   fView.GridDeltaX := 10.0;
   fView.GridDeltaY := 10.0;
   fView.OnMouseMove2D := ViewMouseMove2D;
+  fView.OnPaint := ViewPaint;
   fView.OnDblClick := ViewDblClick;
   fView.OnKeyDown := ViewKeyDown;
   fView.PopupMenu := fPopup;
@@ -1130,6 +1133,21 @@ begin
   else if (AWhat = 'object') and not LegacyFine then
     Exit;
   Log(Format('  legacy: %s %d at %d', [AWhat, AIndex, APosition]));
+end;
+
+procedure TMainForm.ViewPaint(Sender: TObject);
+begin
+  { Logged once, the first time a paint establishes it. ViewScale is
+    zero until then - the canvas is the only thing that knows the
+    display's scale and it does not exist before the first paint - so
+    logging it from OnShow would only ever record the zero. On VCL it
+    is one by construction; on FMX it is what decides whether the back
+    buffer holds the display's real pixels. }
+  if fLoggedScale = fView.ViewScale then
+    Exit;
+  fLoggedScale := fView.ViewScale;
+  Log(Format('viewport: ViewScale %.3f, buffer %d x %d',
+    [fView.ViewScale, fView.ControlRect.Right, fView.ControlRect.Bottom]));
 end;
 
 procedure TMainForm.LoadProgress(Sender: TObject; ReadPercent: Byte);

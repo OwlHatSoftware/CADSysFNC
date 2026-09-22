@@ -525,6 +525,10 @@ uses
   System.Types, System.UITypes, System.JSON,
 {$ENDIF}
 {$IFDEF CADSYS_FMX}
+  { System.Math.Vectors for TMatrix: the overlay is drawn in device
+    coordinates and the canvas is scaled down to match - see
+    TFNCCADViewport.Draw. }
+  System.Math.Vectors,
   FMX.TMSFNCTypes, FMX.TMSFNCGraphicsTypes, FMX.TMSFNCGraphics,
   FMX.TMSFNCCustomControl,
 {$ENDIF}
@@ -3374,6 +3378,21 @@ type
     fInRepainting: Boolean;
     { True while Draw is running, when the overlay may really paint. }
     fInDraw: Boolean;
+    { : Device pixels per drawing unit.
+
+      One on VCL and LCL, where the library has always drawn in device
+      pixels. On FMX the scene is scaled by the display's DPI and the
+      control's Width and Height are logical, so a back buffer sized
+      from them holds a fraction of the pixels the screen has and the
+      whole drawing is upscaled on its way out - visibly soft on a 240
+      DPI display, and the reason an eight pixel hatch came out at eight
+      physical pixels on VCL and twenty on FMX.
+
+      Taken from the canvas during Draw, which is the only place that
+      knows it and the only place where it is certainly right. Not from
+      PaintScaleFactor: see TFNCRuler.RulerScale for why that cannot be
+      trusted. }
+    fViewScale: Single;
     { Nesting depth of BeginOverlay / EndOverlay. }
     fOverlayDepth: Integer;
     fOnPaintOverlay: TNotifyEvent;
@@ -3454,6 +3473,11 @@ type
       control - it has LocalRect, and that is a TRectF - so the one
       spelling that works everywhere is to build it from Width and
       Height, which is also exactly how the back buffer is sized. }
+    { : Device pixels per drawing unit - see the field's note. Public
+      so a demo can log what it resolved to. }
+    property ViewScale: Single read fViewScale;
+    { : ViewScale, or one before the first paint has established it. }
+    function ViewScaleOrOne: Single;
     function ControlRect: TRect;
     { : True when the control is far enough along to be painted.
 
@@ -15750,10 +15774,12 @@ begin
     fOffScreenSceneDepth := 0;
   end;
 {$ENDIF}
+  { ControlRect, not Width and Height: on FMX those are logical and the
+    buffer has to hold device pixels. }
 {$IFDEF CADSYS_FMX}
-  fOffScreenBitmap.SetSize(Round(Width), Round(Height));
+  fOffScreenBitmap.SetSize(ControlRect.Right, ControlRect.Bottom);
 {$ELSE}
-  fOffScreenBitmap.Bitmap.SetSize(Width, Height);
+  fOffScreenBitmap.Bitmap.SetSize(ControlRect.Right, ControlRect.Bottom);
 {$ENDIF}
 {$IFNDEF CADSYS_VCL}
   if TmpRebuild then
@@ -15763,8 +15789,24 @@ end;
 
 function TFNCCADViewport.ControlRect: TRect;
 begin
-  { Round, because Width and Height are Single on FMX. }
-  Result := Rect(0, 0, Round(Width), Round(Height));
+  { Device pixels, not logical ones. Everything downstream - the back
+    buffer, the viewport transform, every clip rect - is built from
+    this, which is why collapsing ClientRect into one accessor in step
+    5d was worth doing: the whole drawing moves to the display's real
+    resolution from here.
+
+    Round, because Width and Height are Single on FMX. }
+  Result := Rect(0, 0, Round(Width * ViewScaleOrOne),
+    Round(Height * ViewScaleOrOne));
+end;
+
+function TFNCCADViewport.ViewScaleOrOne: Single;
+begin
+  { fViewScale is zero until the first Draw has seen the canvas. }
+  if fViewScale > 0 then
+    Result := fViewScale
+  else
+    Result := 1.0;
 end;
 
 function TFNCCADViewport.IsRealized: Boolean;
@@ -16113,8 +16155,13 @@ procedure TFNCCADViewport.HandleMouseDown(Button: TTMSFNCMouseButton;
 var
   TmpX, TmpY: SmallInt;
 begin
-  TmpX := Round(X);
-  TmpY := Round(Y);
+  { Logical coordinates in, device coordinates out. Everything past
+    this point - hit testing, the viewport transform, the overlay -
+    works in the same device pixels the back buffer does, so the
+    conversion belongs here, at the one door input comes through. One
+    on VCL and LCL. }
+  TmpX := Round(X * ViewScaleOrOne);
+  TmpY := Round(Y * ViewScaleOrOne);
   if Assigned(fCADMouseDown) and not fCADMouseDown(Self, Button, Shift,
     TmpX, TmpY) then
     Exit;
@@ -16127,8 +16174,13 @@ procedure TFNCCADViewport.HandleMouseMove(Shift: TShiftState; X, Y: Single);
 var
   TmpX, TmpY: SmallInt;
 begin
-  TmpX := Round(X);
-  TmpY := Round(Y);
+  { Logical coordinates in, device coordinates out. Everything past
+    this point - hit testing, the viewport transform, the overlay -
+    works in the same device pixels the back buffer does, so the
+    conversion belongs here, at the one door input comes through. One
+    on VCL and LCL. }
+  TmpX := Round(X * ViewScaleOrOne);
+  TmpY := Round(Y * ViewScaleOrOne);
   if Assigned(fCADMouseMove) and not fCADMouseMove(Self, Shift, TmpX,
     TmpY) then
     Exit;
@@ -16142,8 +16194,13 @@ procedure TFNCCADViewport.HandleMouseUp(Button: TTMSFNCMouseButton;
 var
   TmpX, TmpY: SmallInt;
 begin
-  TmpX := Round(X);
-  TmpY := Round(Y);
+  { Logical coordinates in, device coordinates out. Everything past
+    this point - hit testing, the viewport transform, the overlay -
+    works in the same device pixels the back buffer does, so the
+    conversion belongs here, at the one door input comes through. One
+    on VCL and LCL. }
+  TmpX := Round(X * ViewScaleOrOne);
+  TmpY := Round(Y * ViewScaleOrOne);
   if Assigned(fCADMouseUp) and not fCADMouseUp(Self, Button, Shift, TmpX,
     TmpY) then
     Exit;
@@ -16176,8 +16233,39 @@ end;
 procedure TFNCCADViewport.Draw(AGraphics: TTMSFNCGraphics; ARect: TRectF);
 var
   TmpRect: TRect;
+{$IFDEF CADSYS_FMX}
+  TmpScale: Single;
+  TmpMatrix: TMatrix;
+{$ENDIF}
 begin
   inherited Draw(AGraphics, ARect);
+{$IFDEF CADSYS_FMX}
+  { The canvas knows its own device scale, and this is the only place
+    that is certainly true: not at construction, where there is no
+    canvas, and not from PaintScaleFactor, which FNC only recomputes on
+    a DPI change and which is stale after a monitor drag - see
+    TFNCRuler.RulerScale.
+
+    A change means the buffer is the wrong resolution, so it is resized
+    and the display list redrawn into it before anything is blitted. }
+  TmpScale := 1.0;
+  if Assigned(AGraphics) and Assigned(AGraphics.Canvas) then
+    TmpScale := AGraphics.Canvas.Scale;
+  if TmpScale <= 0 then
+    TmpScale := 1.0;
+  if TmpScale <> fViewScale then
+  begin
+    fViewScale := TmpScale;
+    ResizeOffScreen;
+    { ChangeViewportTransform rebuilds the mapping from the new
+      ControlRect and ends in Repaint, which on this class redraws the
+      back buffer without invalidating - so it is safe to call from
+      inside a paint, and there is no second call to make. }
+    ChangeViewportTransform(fVisualWindow);
+  end;
+{$ELSE}
+  fViewScale := 1.0;
+{$ENDIF}
   if fOffScreenBitmap = nil then
     Exit;
   TmpRect := Rect(Round(ARect.Left), Round(ARect.Top), Round(ARect.Right),
@@ -16199,7 +16287,27 @@ begin
       end;
 
     { The transient overlay goes on top, and this is the only moment it
-      can be drawn: the canvas exists only for the duration of this call. }
+      can be drawn: the canvas exists only for the duration of this call.
+
+      The blit above needed no help - a device-sized bitmap drawn into
+      the logical rect is scaled down by FMX and back up by the scene,
+      which is how it comes out at the display's real resolution. The
+      overlay is different: it is drawn through the same viewport
+      transform as the display list, so it arrives in device
+      coordinates and the canvas has to be told. Scaling the canvas by
+      1/ViewScale makes one unit one physical pixel, which keeps the
+      rubber band and the cursor cross in step with what is underneath.
+
+      Only the overlay is wrapped, deliberately: a matrix on the canvas
+      interacts with IntersectClipRect, and that is where three of the
+      four FMX bugs in this port came from. The smaller the bracket,
+      the smaller the surface. }
+{$IFDEF CADSYS_FMX}
+    TmpMatrix := AGraphics.Canvas.Matrix;
+    AGraphics.Canvas.SetMatrix(TMatrix.CreateScaling(1 / ViewScaleOrOne,
+      1 / ViewScaleOrOne) * TmpMatrix);
+    TmpRect := ControlRect;
+{$ENDIF}
     fOnScreenGraphics.Attach(AGraphics, TmpRect);
     { We are inside the framework's paint, so there is a scene and the
       clip can be applied. }
@@ -16214,6 +16322,9 @@ begin
       { Detaching gives the clip back; the canvas belongs to the
         framework and the rest of the form still has to paint on it. }
       fOnScreenGraphics.Attach(nil, TmpRect);
+{$IFDEF CADSYS_FMX}
+      AGraphics.Canvas.SetMatrix(TmpMatrix);
+{$ENDIF}
     end;
   finally
     fInDraw := False;
