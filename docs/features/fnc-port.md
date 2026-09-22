@@ -417,9 +417,9 @@ before a build if you have been writing documentation comments.
 
 ## Build loop
 
-`Tools\build-and-test.cmd [BDSVER]` (default `23.0` = Delphi 12) builds the package into `Tools\build` (the installed `FNCCADSys.bpl` is left alone) and the test runner, runs the tests, and writes `Tools\logs\build.log`, `test.log`, `results.xml`; then builds and runs the FNC runner (`build-fnc.log`, `test-fnc.log`).
+`Tools\build-and-test.cmd [BDSVER]` (default `23.0` = Delphi 12) builds the package into `Tools\build` (the installed `FNCCadSysVCL.bpl` is left alone) and the test runner, runs the tests, and writes `Tools\logs\build.log`, `test.log`, `results.xml`; then builds and runs the FNC runner (`build-fnc.log`, `test-fnc.log`).
 
-Everything that the IDE could see twice is renamed, so `FNCCADSys` installs next to the original `CADSys4Lite`:
+Everything that the IDE could see twice is renamed, so the package installs next to the original `CADSys4Lite`:
 
 | Was | Is |
 |---|---|
@@ -433,6 +433,6 @@ Only the registered components were renamed; shape classes such as `TLine2D` kee
 
 The component bitmaps in `FNCCadSys.dcr` are still keyed to the old class names, so the palette will show default icons until the resource is rebuilt.
 
-Both packages are now called `FNCCADSys`: `Packages\delphi\FNCCADSys.dpk` (was `CADSys4Lite`) and `Packages\Lazarus\FNCCADSys.lpk` (was `cadsys`, package unit `FNCCADSys.pas`, registration unit still `cadsysreg.pas`). The Lazarus package lists the new units. After 5d the sources no longer name `WinAPI.Windows` or a `Vcl.` unit outside a `CADSYS_VCL` branch, so what is left before Lazarus can be attempted is 5e - the package file itself, and the `fpjson` / `base64` gaps above.
+The Delphi package is `Packages\delphi\FNCCadSysVCL.dpk` (was `CADSys4Lite`, then `FNCCADSys` until the FMX package arrived and the name had to say which framework it was) and the Lazarus one `Packages\Lazarus\FNCCADSys.lpk` (was `cadsys`, package unit `FNCCADSys.pas`, registration unit still `cadsysreg.pas`). The Lazarus package lists the new units. After 5d the sources no longer name `WinAPI.Windows` or a `Vcl.` unit outside a `CADSYS_VCL` branch, so what is left before Lazarus can be attempted is 5e - the package file itself, and the `fpjson` / `base64` gaps above.
 
 `FNCCS4GraphicsVCL` and `FNCCS4ExportVCL` are VCL-only by construction and belong in the VCL package alone; the FMX and LCL packages must not list them.

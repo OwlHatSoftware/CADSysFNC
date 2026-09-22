@@ -1,14 +1,14 @@
 ﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{7C863CCB-7AD5-42F6-B9F7-AEDA20D18039}</ProjectGuid>
-        <MainSource>FNCCADSys.dpk</MainSource>
+        <MainSource>FNCCadSysVCL.dpk</MainSource>
         <Config Condition="'$(Config)'==''">Debug</Config>
         <DCC_DCCCompiler>DCC32</DCC_DCCCompiler>
         <ProjectVersion>20.3</ProjectVersion>
         <FrameworkType>VCL</FrameworkType>
         <Base>True</Base>
         <Platform Condition="'$(Platform)'==''">Win32</Platform>
-        <ProjectName Condition="'$(ProjectName)'==''">FNCCADSys</ProjectName>
+        <ProjectName Condition="'$(ProjectName)'==''">FNCCadSysVCL</ProjectName>
         <TargetedPlatforms>1183747</TargetedPlatforms>
         <AppType>Package</AppType>
     </PropertyGroup>
@@ -71,7 +71,7 @@
     <PropertyGroup Condition="'$(Base)'!=''">
         <DCC_IOChecking>false</DCC_IOChecking>
         <DCC_WriteableConstants>true</DCC_WriteableConstants>
-        <DCC_DependencyCheckOutputName>..\..\..\..\..\..\Public\Documents\RAD Studio\6.0\Bpl\FNCCADSys.bpl</DCC_DependencyCheckOutputName>
+        <DCC_DependencyCheckOutputName>..\..\..\..\..\..\Public\Documents\RAD Studio\6.0\Bpl\FNCCadSysVCL.bpl</DCC_DependencyCheckOutputName>
         <DCC_LocalDebugSymbols>false</DCC_LocalDebugSymbols>
         <DCC_Description>CADSys 4.2 Lite Version</DCC_Description>
         <DCC_DebugInformation>0</DCC_DebugInformation>
@@ -82,14 +82,14 @@
         <GenPackage>true</GenPackage>
         <DCC_ImageBase>00400000</DCC_ImageBase>
         <DCC_Platform>x86</DCC_Platform>
-        <SanitizedProjectName>FNCCADSys</SanitizedProjectName>
+        <SanitizedProjectName>FNCCadSysVCL</SanitizedProjectName>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_MajorVer>4</VerInfo_MajorVer>
         <VerInfo_MinorVer>2</VerInfo_MinorVer>
         <VerInfo_Release>1</VerInfo_Release>
         <VerInfo_PreRelease>true</VerInfo_PreRelease>
         <VerInfo_Locale>1040</VerInfo_Locale>
-        <VerInfo_Keys>CompanyName=Piero Valagussa;FileDescription=CADSys 4.2 Lite Version;FileVersion=4.2.1.0;InternalName=CADSys422;LegalCopyright=Piero Valagussa;LegalTrademarks=;OriginalFilename=FNCCADSys4;ProductName=FNCCADSys4;ProductVersion=4.2.0.2;Comments=</VerInfo_Keys>
+        <VerInfo_Keys>CompanyName=Piero Valagussa;FileDescription=CADSys 4.2 Lite Version (VCL);FileVersion=4.2.1.0;InternalName=CADSys422;LegalCopyright=Piero Valagussa;LegalTrademarks=;OriginalFilename=FNCCADSys4;ProductName=FNCCADSys4;ProductVersion=4.2.0.2;Comments=</VerInfo_Keys>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;Vcl;Vcl.Imaging;Vcl.Touch;Vcl.Samples;Vcl.Shell;$(DCC_Namespace)</DCC_Namespace>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_OSX64)'!=''">
@@ -184,7 +184,7 @@
         <BorlandProject>
             <Delphi.Personality>
                 <Source>
-                    <Source Name="MainSource">FNCCADSys.dpk</Source>
+                    <Source Name="MainSource">FNCCadSysVCL.dpk</Source>
                 </Source>
                 <Parameters>
                     <Parameters Name="UseLauncher">False</Parameters>
@@ -246,9 +246,9 @@
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>
-                <DeployFile LocalName="..\..\..\..\..\..\..\Public\Documents\Embarcadero\Studio\23.0\Bpl\FNCCADSys.bpl" Configuration="Debug" Class="ProjectOutput">
+                <DeployFile LocalName="..\..\..\..\..\..\..\Public\Documents\Embarcadero\Studio\23.0\Bpl\FNCCadSysVCL.bpl" Configuration="Debug" Class="ProjectOutput">
                     <Platform Name="Win32">
-                        <RemoteName>FNCCADSys.bpl</RemoteName>
+                        <RemoteName>FNCCadSysVCL.bpl</RemoteName>
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>

@@ -1,7 +1,7 @@
 ﻿	<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 		<PropertyGroup>
 			<ProjectGuid>{7C863CCB-7AD5-42F6-B9F7-AEDA20D18039}</ProjectGuid>
-			<MainSource>FNCCADSys.dpk</MainSource>
+			<MainSource>FNCCadSysVCL.dpk</MainSource>
 			<Config Condition="'$(Config)'==''">Debug</Config>
 			<DCC_DCCCompiler>DCC32</DCC_DCCCompiler>
 		</PropertyGroup>
@@ -21,7 +21,7 @@
 		<PropertyGroup Condition="'$(Base)'!=''">
 			<DCC_IOChecking>false</DCC_IOChecking>
 			<DCC_WriteableConstants>true</DCC_WriteableConstants>
-			<DCC_DependencyCheckOutputName>..\..\..\..\..\..\Public\Documents\RAD Studio\6.0\Bpl\FNCCADSys.bpl</DCC_DependencyCheckOutputName>
+			<DCC_DependencyCheckOutputName>..\..\..\..\..\..\Public\Documents\RAD Studio\6.0\Bpl\FNCCadSysVCL.bpl</DCC_DependencyCheckOutputName>
 			<DCC_LocalDebugSymbols>false</DCC_LocalDebugSymbols>
 			<DCC_Description>CADSys 4.2 Lite Version</DCC_Description>
 			<DCC_DebugInformation>false</DCC_DebugInformation>
@@ -43,7 +43,7 @@
 			<DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
 		</PropertyGroup>
 		<ItemGroup>
-			<DelphiCompile Include="FNCCADSys.dpk">
+			<DelphiCompile Include="FNCCadSysVCL.dpk">
 				<MainSource>MainSource</MainSource>
 			</DelphiCompile>
 			<DCCReference Include="CADSYS.DCR"/>
@@ -72,7 +72,7 @@
 			<BorlandProject>
 				<Delphi.Personality>
 					<Source>
-						<Source Name="MainSource">FNCCADSys.dpk</Source>
+						<Source Name="MainSource">FNCCadSysVCL.dpk</Source>
 					</Source>
 					<Parameters>
 						<Parameters Name="UseLauncher">False</Parameters>

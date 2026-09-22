@@ -1,14 +1,14 @@
 ﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{3F2A7C41-9E5B-4D72-B8A3-6C1E0D4F9A21}</ProjectGuid>
-        <MainSource>FNCCADSysFMX.dpk</MainSource>
+        <MainSource>FNCCadSysFMX.dpk</MainSource>
         <Config Condition="'$(Config)'==''">Debug</Config>
         <DCC_DCCCompiler>DCC32</DCC_DCCCompiler>
         <ProjectVersion>20.3</ProjectVersion>
         <FrameworkType>FMX</FrameworkType>
         <Base>True</Base>
         <Platform Condition="'$(Platform)'==''">Win32</Platform>
-        <ProjectName Condition="'$(ProjectName)'==''">FNCCADSysFMX</ProjectName>
+        <ProjectName Condition="'$(ProjectName)'==''">FNCCadSysFMX</ProjectName>
         <TargetedPlatforms>3</TargetedPlatforms>
         <AppType>Package</AppType>
     </PropertyGroup>
@@ -47,7 +47,7 @@
         <GenPackage>true</GenPackage>
         <DCC_SymbolReferenceInfo>0</DCC_SymbolReferenceInfo>
         <DCC_ImageBase>00400000</DCC_ImageBase>
-        <SanitizedProjectName>FNCCADSysFMX</SanitizedProjectName>
+        <SanitizedProjectName>FNCCadSysFMX</SanitizedProjectName>
         <DCC_Define>CADSYS_FMX;$(DCC_Define)</DCC_Define>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;FMX;$(DCC_Namespace)</DCC_Namespace>
         <DCC_UnitSearchPath>..\..\Sources;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
@@ -57,7 +57,7 @@
         <VerInfo_MinorVer>2</VerInfo_MinorVer>
         <VerInfo_Release>1</VerInfo_Release>
         <VerInfo_Locale>1033</VerInfo_Locale>
-        <VerInfo_Keys>CompanyName=Piero Valagussa;FileDescription=CADSys 4.2 Lite Version (FMX);FileVersion=4.2.1.0;InternalName=FNCCADSysFMX;LegalCopyright=Piero Valagussa;LegalTrademarks=;OriginalFilename=FNCCADSysFMX;ProductName=FNCCADSysFMX;ProductVersion=4.2.0.2;Comments=</VerInfo_Keys>
+        <VerInfo_Keys>CompanyName=Piero Valagussa;FileDescription=CADSys 4.2 Lite Version (FMX);FileVersion=4.2.1.0;InternalName=FNCCadSysFMX;LegalCopyright=Piero Valagussa;LegalTrademarks=;OriginalFilename=FNCCadSysFMX;ProductName=FNCCadSysFMX;ProductVersion=4.2.0.2;Comments=</VerInfo_Keys>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_Win32)'!=''">
         <DCC_Namespace>Winapi;System.Win;Data.Win;Datasnap.Win;Web.Win;Soap.Win;Xml.Win;$(DCC_Namespace)</DCC_Namespace>
@@ -117,7 +117,7 @@
         <BorlandProject>
             <Delphi.Personality>
                 <Source>
-                    <Source Name="MainSource">FNCCADSysFMX.dpk</Source>
+                    <Source Name="MainSource">FNCCadSysFMX.dpk</Source>
                 </Source>
             </Delphi.Personality>
         </BorlandProject>

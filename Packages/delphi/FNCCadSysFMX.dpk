@@ -1,11 +1,11 @@
-package FNCCADSysFMX;
+package FNCCadSysFMX;
 
 { The FMX build of the CADSys FNC library.
 
   Runtime only, on purpose. This package contains the same unit names
-  as the VCL package FNCCADSys - FNCCADSys4, FNCCS4Shapes and the rest
-  are one source for all three frameworks - and the IDE refuses to load
-  a design package whose units another loaded package already
+  as the VCL package FNCCadSysVCL - FNCCADSys4, FNCCS4Shapes and the
+  rest are one source for all three frameworks - and the IDE refuses
+  to load a design package whose units another loaded package already
   provides. So installing this one would knock the VCL package out of
   the IDE and vice versa. RUNONLY makes that impossible to do by
   accident: the IDE will not offer to install it, while an FMX
