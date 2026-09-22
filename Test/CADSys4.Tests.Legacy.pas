@@ -55,6 +55,8 @@ type
   TLegacyReaderTests = class(TObject)
   private
     FCAD: TFNCCADCmp2D;
+    FPercents: array of Integer;
+    procedure CollectProgress(Sender: TObject; ReadPercent: Byte);
     function ReadBack(const AWriter: TLegacyWriter): TFNCCADCmp2D;
   public
     [Setup]
@@ -78,6 +80,8 @@ type
     procedure IsLegacyStream_RecognisesBothHeaderWidths;
     [Test]
     procedure TheComponentMethodReadsItToo;
+    [Test]
+    procedure ProgressRisesOnceToAHundred;
   end;
 
 implementation
@@ -445,6 +449,47 @@ begin
     TmpAnsi.Free;
     TmpWide.Free;
   end;
+end;
+
+procedure TLegacyReaderTests.CollectProgress(Sender: TObject;
+  ReadPercent: Byte);
+begin
+  SetLength(FPercents, Length(FPercents) + 1);
+  FPercents[High(FPercents)] := ReadPercent;
+end;
+
+procedure TLegacyReaderTests.ProgressRisesOnceToAHundred;
+var
+  TmpWriter: TLegacyWriter;
+  Cont: Integer;
+begin
+  { What the old code did not do: report a percentage that moves. It
+    sent 100 div Count on every object, which integer division pinned
+    at 0 for anything over a hundred objects. }
+  FPercents := nil;
+  FCAD.OnLoadProgress := CollectProgress;
+  TmpWriter := TLegacyWriter.Create('CAD423', True, True);
+  try
+    TmpWriter.WriteWord(1);
+    TmpWriter.EndLayers;
+    TmpWriter.WriteNoBlocks;
+    TmpWriter.BeginObjects(250);
+    for Cont := 1 to 250 do
+      TmpWriter.WriteLine(Cont, 0, Cont, Cont, Cont + 1, Cont + 1);
+    ReadBack(TmpWriter);
+  finally
+    TmpWriter.Free;
+    FCAD.OnLoadProgress := nil;
+  end;
+
+  Assert.AreEqual(250, CountObjects(FCAD), 'every object came across');
+  Assert.IsTrue(Length(FPercents) > 1, 'progress was reported more than once');
+  Assert.IsTrue(Length(FPercents) <= 100,
+    'and at most once per whole per cent, not once per object');
+  for Cont := 1 to High(FPercents) do
+    Assert.IsTrue(FPercents[Cont] > FPercents[Cont - 1],
+      'it only ever rises');
+  Assert.AreEqual(100, FPercents[High(FPercents)], 'and it reaches the end');
 end;
 
 procedure TLegacyReaderTests.TheComponentMethodReadsItToo;

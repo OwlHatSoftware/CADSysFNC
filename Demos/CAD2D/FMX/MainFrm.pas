@@ -32,11 +32,12 @@ interface
 
 uses
   System.SysUtils, System.Classes, System.Types, System.UITypes, System.Math,
+  System.DateUtils,
   FMX.Types, FMX.Controls, FMX.Forms, FMX.StdCtrls, FMX.Menus, FMX.Dialogs,
   FMX.Layouts, FMX.Controls.Presentation,
   DemoLog, DemoDlg, LayersFrm,
   FNCCS4BaseTypes, FNCCS4Graphics, FNCCADSys4, FNCCS4Shapes, FNCCS4Tasks,
-  FNCCS4DXFModule,
+  FNCCS4DXFModule, FNCCS4Legacy,
   { FNCCadSysRegister is here for its initialization section, not for
     the component palette: it is the only place that fills the class
     registry, and without it LoadFromFile and SaveToFile have no class
@@ -181,6 +182,8 @@ type
     procedure SaveClick(Sender: TObject);
     procedure MergeClick(Sender: TObject);
     procedure ImportDXFClick(Sender: TObject);
+    procedure ImportLegacyClick(Sender: TObject);
+    procedure LoadProgress(Sender: TObject; ReadPercent: Byte);
     procedure ExportDXFClick(Sender: TObject);
     procedure PrintActualClick(Sender: TObject);
     procedure PrintFitClick(Sender: TObject);
@@ -378,6 +381,7 @@ begin
   AddItem(TmpFile, 'Merge...', MergeClick);
   AddSeparator(TmpFile);
   AddItem(TmpFile, 'Import DXF...', ImportDXFClick);
+  AddItem(TmpFile, 'Import legacy .CS2...', ImportLegacyClick);
   AddItem(TmpFile, 'Export DXF...', ExportDXFClick);
   AddSeparator(TmpFile);
   TmpPrint := AddMenu(TmpFile, 'Print');
@@ -1015,7 +1019,14 @@ begin
   try
     TmpDlg.Filter := 'CADSys drawing (*.json)|*.json|All files (*.*)|*.*';
     if TmpDlg.Execute then
-      fCAD.LoadFromFile(TmpDlg.FileName);
+    begin
+      fCAD.OnLoadProgress := LoadProgress;
+      try
+        fCAD.LoadFromFile(TmpDlg.FileName);
+      finally
+        fCAD.OnLoadProgress := nil;
+      end;
+    end;
   finally
     TmpDlg.Free;
   end;
@@ -1046,6 +1057,92 @@ begin
     if TmpDlg.Execute then
       fCAD.MergeFromFile(TmpDlg.FileName);
   finally
+    TmpDlg.Free;
+  end;
+end;
+
+{ : Hooked to the legacy reader while an import runs.
+
+  Every object is logged, not every hundredth: DemoLog is unbuffered,
+  so if the import dies the last line in the file is the last thing the
+  reader touched - which is the only way to find out where in a 1.2 MB
+  drawing it went wrong. Noisy on purpose, and only while importing. }
+const
+  { True logs every object a legacy import reads, which is how the
+    empty-container crash was found: DemoLog is unbuffered, so the last
+    line written is the last thing the reader touched. It is also slow
+    enough to dominate the import, so it stays off. }
+  LegacyFine = False;
+
+var
+  fLegacyCount: Integer = 0;
+
+procedure LegacyProgress(const AWhat: string; const AIndex: Integer;
+  const APosition: Int64);
+begin
+  { Every five hundredth object, not every one. DemoLog opens, appends
+    and closes the file per line - which is what makes it survive a
+    hard crash, and what made a 7554 object import take a minute when
+    this logged all of them. The milestones still bracket a failure
+    closely enough to find it, and LegacyFine turns the rest back on
+    when they are wanted. }
+  if AWhat = 'added' then
+  begin
+    Inc(fLegacyCount);
+    if not LegacyFine and (fLegacyCount mod 500 <> 0) then
+      Exit;
+  end
+  else if (AWhat = 'object') and not LegacyFine then
+    Exit;
+  Log(Format('  legacy: %s %d at %d', [AWhat, AIndex, APosition]));
+end;
+
+procedure TMainForm.LoadProgress(Sender: TObject; ReadPercent: Byte);
+begin
+  { OnLoadProgress fires for a JSON load and for a legacy import alike,
+    so this one handler covers both. ProcessMessages because the read
+    holds the main thread: without it the number is written and never
+    painted. }
+  fStateLbl.Text := Format('Loading... %d%%', [ReadPercent]);
+  Application.ProcessMessages;
+end;
+
+procedure TMainForm.ImportLegacyClick(Sender: TObject);
+var
+  TmpDlg: TOpenDialog;
+  TmpStart: TDateTime;
+begin
+  TmpDlg := TOpenDialog.Create(Self);
+  try
+    TmpDlg.Filter := 'CADSys binary drawing (*.cs2)|*.cs2;*.CS2|' +
+      'All files (*.*)|*.*';
+    if not TmpDlg.Execute then
+      Exit;
+    Log('importing legacy ' + ExtractFileName(TmpDlg.FileName));
+    TmpStart := Now;
+    fLegacyCount := 0;
+    fCAD.OnLoadProgress := LoadProgress;
+    CADLegacyProgress := LegacyProgress;
+    try
+      fCAD.LoadLegacyFile(TmpDlg.FileName);
+    except
+      on E: Exception do
+      begin
+        { The reader stops at the first thing it cannot read, and says
+          what. Whatever it managed is still in the component, which is
+          usually what you want to look at to work out why. }
+        LogError('legacy import', E);
+        CADSysWarn('Could not read all of the drawing: ' + E.Message);
+      end;
+    end;
+    CADLegacyProgress := nil;
+    fCAD.OnLoadProgress := nil;
+    fStateLbl.Text := Format('Imported %d ms', [MilliSecondsBetween(Now, TmpStart)]);
+    Log(Format('  imported in %d ms', [MilliSecondsBetween(Now, TmpStart)]));
+    fView.ZoomToExtension;
+  finally
+    CADLegacyProgress := nil;
+    fCAD.OnLoadProgress := nil;
     TmpDlg.Free;
   end;
 end;

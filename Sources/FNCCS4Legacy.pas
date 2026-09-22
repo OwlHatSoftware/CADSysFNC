@@ -72,6 +72,14 @@ type
     fWideChars: Boolean;
     fDoubleReals: Boolean;
     fCAD: TFNCCADCmp2D;
+    fTotal, fDone, fLastPerc: Integer;
+
+    { : Reports through the component's own OnLoadProgress, so that a
+      caller cannot tell a legacy import from a JSON one - a progress
+      bar wired up for one works for the other without knowing. Fired
+      only when the whole number changes, which keeps a drawing of
+      several thousand objects to a hundred events. }
+    procedure ReportProgress;
 
     procedure ReadHeader;
     procedure ReadLayers;
@@ -132,6 +140,20 @@ procedure CADLoadLegacyFile(const AFileName: string;
 { : True if the stream looks like a legacy drawing - the first bytes
   spell CAD, in either character width. Leaves the position alone. }
 function IsLegacyStream(const AStream: TStream): Boolean;
+
+type
+  { : Called as the reader works through a drawing.
+
+    AWhat names the step, AIndex is a class index or a count depending
+    on the step, and APosition is where the stream had got to. Reading
+    a large drawing is otherwise silent for a long time, and when
+    something goes wrong the position of the last object read is the
+    only thing that says where to look. }
+  TCADLegacyProgressEvent = procedure(const AWhat: string;
+    const AIndex: Integer; const APosition: Int64);
+
+var
+  CADLegacyProgress: TCADLegacyProgressEvent = nil;
 
 implementation
 
@@ -204,6 +226,11 @@ begin
   inherited Create;
   fStream := AStream;
   fCAD := ACAD;
+  { Zero, not minus one: the first object of a large drawing rounds to
+    0 per cent, and reporting that is a wasted event saying nothing.
+    Starting here means the first thing a caller hears is 1 per cent,
+    and a drawing small enough to jump straight to 100 still gets it. }
+  fLastPerc := 0;
 end;
 
 procedure TCADLegacyReader.ReadBytes(var ABuffer; const ACount: Integer);
@@ -327,6 +354,19 @@ end;
   The header
   ================================================================== }
 
+procedure TCADLegacyReader.ReportProgress;
+var
+  TmpPerc: Integer;
+begin
+  if (fTotal <= 0) or not Assigned(fCAD.OnLoadProgress) then
+    Exit;
+  TmpPerc := Round(fDone / fTotal * 100);
+  if TmpPerc = fLastPerc then
+    Exit;
+  fLastPerc := TmpPerc;
+  fCAD.OnLoadProgress(fCAD, TmpPerc);
+end;
+
 procedure TCADLegacyReader.ReadHeader;
 var
   TmpBuf: array [0 .. 11] of Byte;
@@ -374,6 +414,10 @@ begin
   { The old loader accepted anything beginning CAD and passed the string
     down to every constructor, so the same latitude is kept here. }
   fDoubleReals := fVersion >= 'CAD423';
+  if Assigned(CADLegacyProgress) then
+    CADLegacyProgress('version ' + fVersion + ', wide chars ' +
+      BoolToStr(fWideChars, True) + ', double reals ' +
+      BoolToStr(fDoubleReals, True), 0, fStream.Position);
 end;
 
 { ==================================================================
@@ -490,6 +534,8 @@ begin
   if TmpIdx > MaxLegacyClass then
     Raise ECADLegacyFormat.CreateFmt('Class index %d is out of range at %d',
       [TmpIdx, fStream.Position]);
+  if Assigned(CADLegacyProgress) then
+    CADLegacyProgress('object', TmpIdx, fStream.Position);
   TmpBuilder := LegacyBuilders[TmpIdx];
   if not Assigned(TmpBuilder) then
     Raise ECADLegacyFormat.CreateFmt
@@ -514,9 +560,16 @@ begin
   if (TmpCount < 0) or (TmpCount > fStream.Size) then
     Raise ECADLegacyFormat.CreateFmt('The drawing claims %d source blocks',
       [TmpCount]);
+  if Assigned(CADLegacyProgress) then
+    CADLegacyProgress('source blocks', TmpCount, fStream.Position);
+  { The blocks and the objects are counted together: a reader that
+    reaches 100 per cent and then starts again is worse than none. }
+  Inc(fTotal, TmpCount);
   for Cont := 1 to TmpCount do
   begin
     TmpObj := ReadObject;
+    Inc(fDone);
+    ReportProgress;
     if TmpObj is TSourceBlock2D then
       fCAD.AddSourceBlock(TSourceBlock2D(TmpObj))
     else
@@ -536,12 +589,19 @@ var
   TmpObj: TObject2D;
   TmpBlocks: TExclusiveGraphicObjIterator;
 begin
+  { One iterator for the whole run, as LoadObjectsFromJSON does. Making
+    one per object worked, but it is 7554 of them for a real drawing. }
   if ReadByte <> LegacyObjectsMarker then
     Raise ECADLegacyFormat.Create('No objects section in the drawing');
   TmpCount := ReadInt;
   if (TmpCount < 0) or (TmpCount > fStream.Size) then
     Raise ECADLegacyFormat.CreateFmt('The drawing claims %d objects',
       [TmpCount]);
+  if Assigned(CADLegacyProgress) then
+    CADLegacyProgress('objects', TmpCount, fStream.Position);
+  Inc(fTotal, TmpCount);
+  TmpBlocks := fCAD.SourceBlocksExclusiveIterator;
+  try
   while TmpCount > 0 do
   begin
     { The count at the head of the section is what was in memory, not
@@ -558,7 +618,6 @@ begin
     { A block names its source rather than pointing at it, so the link
       is made here - the same way LoadObjectsFromJSON does it, and for
       the same reason: the source blocks are all in by now. }
-    TmpBlocks := fCAD.SourceBlocksExclusiveIterator;
     try
       if TmpObj is TContainer2D then
         TContainer2D(TmpObj).UpdateSourceReferences(TmpBlocks)
@@ -569,12 +628,22 @@ begin
       begin
         CADSysWarn('Source block not found. The block will not be loaded');
         TmpObj.Free;
-        TmpBlocks.Free;
         Continue;
       end;
     end;
-    TmpBlocks.Free;
+    { AddObject overwrites the object's layer with the component's
+      current one, so the current one has to be the object's first.
+      LoadObjectsFromJSON does the same; without it every imported
+      object lands on whatever layer happened to be selected. }
+    fCAD.CurrentLayer := TmpObj.Layer;
     fCAD.AddObject(TmpObj.ID, TmpObj);
+    Inc(fDone);
+    ReportProgress;
+    if Assigned(CADLegacyProgress) then
+      CADLegacyProgress('added', TmpObj.ID, fStream.Position);
+  end;
+  finally
+    TmpBlocks.Free;
   end;
 end;
 

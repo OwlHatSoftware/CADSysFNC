@@ -400,6 +400,18 @@ type
 
   { ---------------------------------------------------------------- }
 
+  { : Containers built from an open array of objects. }
+  [TestFixture]
+  TContainer2DTests = class(TObject)
+  public
+    [Test]
+    procedure CreatedFromAnEmptyArray_IsEmpty;
+    [Test]
+    procedure CreatedFromObjects_HoldsThem;
+  end;
+
+  { ---------------------------------------------------------------- }
+
   [TestFixture]
   TCADPrgParamTests = class(TObject)
   public
@@ -2073,6 +2085,60 @@ begin
 end;
 
 { ================================================================== }
+{ TContainer2DTests }
+
+function CountIn(const ACont: TContainer2D): Integer;
+var
+  TmpIter: TGraphicObjIterator;
+  TmpObj: TGraphicObject;
+begin
+  Result := 0;
+  TmpIter := ACont.Objects.GetIterator;
+  try
+    TmpObj := TmpIter.First;
+    while TmpObj <> nil do
+    begin
+      Inc(Result);
+      TmpObj := TmpIter.Next;
+    end;
+  finally
+    TmpIter.Free;
+  end;
+end;
+
+procedure TContainer2DTests.CreatedFromAnEmptyArray_IsEmpty;
+var
+  TmpCont: TContainer2D;
+begin
+  { This crashed. An empty open array has High() = -1; the loop counter
+    was a Word, which turns that into 65535, so the constructor walked
+    65536 entries of a zero-length array with range checking off and
+    added whatever it found. Nothing passed an empty array until the
+    legacy reader did, and then it took down the whole import with no
+    exception to catch - the list was full of rubbish pointers long
+    before anything tried to use them. }
+  TmpCont := TContainer2D.Create(0, []);
+  try
+    Assert.AreEqual(0, CountIn(TmpCont), 'an empty container is empty');
+  finally
+    TmpCont.Free;
+  end;
+end;
+
+procedure TContainer2DTests.CreatedFromObjects_HoldsThem;
+var
+  TmpCont: TContainer2D;
+begin
+  TmpCont := TContainer2D.Create(0,
+    [TLine2D.Create(1, Point2D(0, 0), Point2D(1, 1)),
+    TLine2D.Create(2, Point2D(2, 2), Point2D(3, 3))]);
+  try
+    Assert.AreEqual(2, CountIn(TmpCont), 'both objects went in');
+  finally
+    TmpCont.Free;
+  end;
+end;
+
 { TCADPrgParamTests }
 { ================================================================== }
 
@@ -2172,6 +2238,7 @@ TDUnitX.RegisterTestFixture(TGraphicObjIteratorTests);
 TDUnitX.RegisterTestFixture(TIndexedObjectListTests);
 TDUnitX.RegisterTestFixture(TLayerTests);
 TDUnitX.RegisterTestFixture(TLayersTests);
+TDUnitX.RegisterTestFixture(TContainer2DTests);
 TDUnitX.RegisterTestFixture(TCADPrgParamTests);
 
 end.

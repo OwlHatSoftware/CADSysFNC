@@ -17378,7 +17378,12 @@ end;
 
 constructor TContainer2D.Create(ID: LongInt; const Objs: array of TObject2D);
 var
-  Cont: Word;
+  { Integer, not Word. An empty open array has High() = -1, and a Word
+    counter turns that into 65535: the loop below then walks 65536
+    entries of a zero-length array with range checking off, adding
+    whatever it finds to the list. Nothing passed an empty array until
+    the legacy reader did, so it sat here unnoticed. }
+  Cont: Integer;
 begin
   inherited Create(ID);
 
@@ -17846,25 +17851,34 @@ end;
 procedure TFNCCADCmp2D.SaveObjectsToJSON(const AJSON: TJSONArray);
 var
   TmpObj: TObject2D;
-  TmpLong, TmpObjPerc: LongInt;
+  TmpLong, TmpTotal, TmpObjPerc, TmpLastPerc: LongInt;
   TmpIter: TGraphicObjIterator;
 begin
   TmpIter := ObjectList.GetPrivilegedIterator;
   try
     TmpLong := TmpIter.Count;
-    if TmpLong > 0 then
-      TmpObjPerc := 100 div TmpLong
-    else
-      TmpObjPerc := 0;
+    TmpTotal := TmpLong;
+    TmpLastPerc := 0;
     TmpObj := TmpIter.First as TObject2D;
     while TmpObj <> nil do
     begin
       if Layers[TmpObj.Layer].Streamable and TmpObj.fToBeSaved then
       begin
         JAddItem(AJSON, CADSysObjectToJSON(TmpObj));
-        if Assigned(OnSaveProgress) then
-          OnSaveProgress(Self, 100 - TmpObjPerc * TmpLong);
         Dec(TmpLong);
+        { As on the loading side: this was 100 - (100 div Count) * Count
+          remaining, which integer division pinned at 100 for any real
+          drawing. TmpLong counts down, so the work done is the
+          difference. }
+        if Assigned(OnSaveProgress) and (TmpTotal > 0) then
+        begin
+          TmpObjPerc := Round((TmpTotal - TmpLong) / TmpTotal * 100);
+          if TmpObjPerc <> TmpLastPerc then
+          begin
+            TmpLastPerc := TmpObjPerc;
+            OnSaveProgress(Self, TmpObjPerc);
+          end;
+        end;
       end;
       TmpObj := TmpIter.Next as TObject2D;
     end;
@@ -17901,9 +17915,11 @@ end;
 procedure TFNCCADCmp2D.LoadObjectsFromJSON(const AJSON: TJSONArray);
 var
   TmpObj: TGraphicObject;
-  Cont, TmpObjPerc: Integer;
+  Cont, TmpObjPerc, TmpLastPerc: Integer;
   TmpBlocksIter: TExclusiveGraphicObjIterator;
 begin
+  { Zero rather than minus one - see TCADLegacyReader.Create. }
+  TmpLastPerc := 0;
   if AJSON = nil then
     Exit;
   TmpBlocksIter := SourceBlocksExclusiveIterator;
@@ -17924,8 +17940,23 @@ begin
           Continue;
         end;
       end;
-      if Assigned(OnLoadProgress) then
-        OnLoadProgress(Self, TmpObjPerc);
+      { A real percentage, and only when it changes.
+
+        This used to send 100 div Count on every object - a constant,
+        and integer division, so any drawing with more than a hundred
+        objects reported 0 forever while its own documentation promised
+        'percentual of the drawing loaded so far'. Firing only on a
+        change also keeps a 7554 object drawing to at most a hundred
+        events instead of 7554. }
+      if Assigned(OnLoadProgress) and (AJSON.Count > 0) then
+      begin
+        TmpObjPerc := Round((Cont + 1) / AJSON.Count * 100);
+        if TmpObjPerc <> TmpLastPerc then
+        begin
+          TmpLastPerc := TmpObjPerc;
+          OnLoadProgress(Self, TmpObjPerc);
+        end;
+      end;
       if not(TmpObj is TObject2D) then
       begin
         CADSysWarn('Not 2D Object. Object discarded.');
@@ -18911,7 +18942,8 @@ end;
 
 constructor TContainer3D.Create(ID: LongInt; const Objs: array of TObject3D);
 var
-  Cont: Word;
+  { Integer, for the reason given in TContainer2D.Create. }
+  Cont: Integer;
 begin
   inherited Create(ID);
   fObjects := TGraphicObjList.Create;
@@ -19368,25 +19400,34 @@ end;
 procedure TFNCCADCmp3D.SaveObjectsToJSON(const AJSON: TJSONArray);
 var
   TmpObj: TObject3D;
-  TmpLong, TmpObjPerc: LongInt;
+  TmpLong, TmpTotal, TmpObjPerc, TmpLastPerc: LongInt;
   TmpIter: TGraphicObjIterator;
 begin
   TmpIter := ObjectList.GetPrivilegedIterator;
   try
     TmpLong := TmpIter.Count;
-    if TmpLong > 0 then
-      TmpObjPerc := 100 div TmpLong
-    else
-      TmpObjPerc := 0;
+    TmpTotal := TmpLong;
+    TmpLastPerc := 0;
     TmpObj := TmpIter.First as TObject3D;
     while TmpObj <> nil do
     begin
       if Layers[TmpObj.Layer].Streamable and TmpObj.fToBeSaved then
       begin
         JAddItem(AJSON, CADSysObjectToJSON(TmpObj));
-        if Assigned(OnSaveProgress) then
-          OnSaveProgress(Self, 100 - TmpObjPerc * TmpLong);
         Dec(TmpLong);
+        { As on the loading side: this was 100 - (100 div Count) * Count
+          remaining, which integer division pinned at 100 for any real
+          drawing. TmpLong counts down, so the work done is the
+          difference. }
+        if Assigned(OnSaveProgress) and (TmpTotal > 0) then
+        begin
+          TmpObjPerc := Round((TmpTotal - TmpLong) / TmpTotal * 100);
+          if TmpObjPerc <> TmpLastPerc then
+          begin
+            TmpLastPerc := TmpObjPerc;
+            OnSaveProgress(Self, TmpObjPerc);
+          end;
+        end;
       end;
       TmpObj := TmpIter.Next as TObject3D;
     end;
@@ -19400,9 +19441,11 @@ end;
 procedure TFNCCADCmp3D.LoadObjectsFromJSON(const AJSON: TJSONArray);
 var
   TmpObj: TGraphicObject;
-  Cont, TmpObjPerc: Integer;
+  Cont, TmpObjPerc, TmpLastPerc: Integer;
   TmpBlocksIter: TExclusiveGraphicObjIterator;
 begin
+  { Zero rather than minus one - see TCADLegacyReader.Create. }
+  TmpLastPerc := 0;
   if AJSON = nil then
     Exit;
   TmpBlocksIter := SourceBlocksExclusiveIterator;
@@ -19423,8 +19466,16 @@ begin
           Continue;
         end;
       end;
-      if Assigned(OnLoadProgress) then
-        OnLoadProgress(Self, TmpObjPerc);
+      { See the note in TFNCCADCmp2D.LoadObjectsFromJSON. }
+      if Assigned(OnLoadProgress) and (AJSON.Count > 0) then
+      begin
+        TmpObjPerc := Round((Cont + 1) / AJSON.Count * 100);
+        if TmpObjPerc <> TmpLastPerc then
+        begin
+          TmpLastPerc := TmpObjPerc;
+          OnLoadProgress(Self, TmpObjPerc);
+        end;
+      end;
       if not(TmpObj is TObject3D) then
       begin
         CADSysWarn('Not 3D Object. Object discarded.');
