@@ -69,6 +69,19 @@ if "%FNCCORE%"=="" (
   exit /b 2
 )
 
+rem --- the generated unit copies --------------------------------------
+rem Sources is the master; the compiler reads Generated\FMX. Run from
+rem here rather than by hand, because a tree generated from memory is a
+rem tree that can be stale, and a stale one fails as a compiler error in
+rem a file nobody edited.
+call "%~dp0gen-units.cmd" -Quiet
+if errorlevel 1 (
+  echo gen-units.cmd failed - see the output above. > "%LOGS%\build-fmx.log"
+  type "%LOGS%\build-fmx.log"
+  exit /b 2
+)
+set LIB=%ROOT%\Generated\FMX
+
 rem dcc32 reads dcc32.cfg from the current directory, which is how
 rem build-and-test.cmd already does it; a separate directory keeps the
 rem two configurations from seeing each other.
@@ -78,9 +91,9 @@ rem "unit in 'path'" clause against the CURRENT directory, not against
 rem the dpr's own folder, and only then falls back to -U. This script
 rem compiles from Tools\build\fmx, so every such path in a demo dpr
 rem misses and has to be found here instead.
-> "%CFG%" echo -U"%BDSROOT%lib\Win32\release;%ROOT%\Sources;%ROOT%\Test;%ROOT%\Demos\CAD2D\FMX;%ROOT%\Demos\common;%FNCCORE%"
->>"%CFG%" echo -I"%BDSROOT%lib\Win32\release;%ROOT%\Sources;%ROOT%\Test;%ROOT%\Demos\CAD2D\FMX;%ROOT%\Demos\common"
->>"%CFG%" echo -R"%BDSROOT%lib\Win32\release;%ROOT%\Sources;%ROOT%\Test;%ROOT%\Demos\CAD2D\FMX;%ROOT%\Demos\common"
+> "%CFG%" echo -U"%BDSROOT%lib\Win32\release;%LIB%;%ROOT%\Test;%ROOT%\Demos\CAD2D\FMX;%ROOT%\Demos\common;%FNCCORE%"
+>>"%CFG%" echo -I"%BDSROOT%lib\Win32\release;%LIB%;%ROOT%\Test;%ROOT%\Demos\CAD2D\FMX;%ROOT%\Demos\common"
+>>"%CFG%" echo -R"%BDSROOT%lib\Win32\release;%LIB%;%ROOT%\Test;%ROOT%\Demos\CAD2D\FMX;%ROOT%\Demos\common"
 >>"%CFG%" echo -O"%BDSROOT%lib\Win32\release"
 >>"%CFG%" echo -NSSystem;Xml;Data;Datasnap;Web;Soap;FMX;Winapi;System.Win
 >>"%CFG%" echo -N0"%OUT%\dcu-fmx"
@@ -89,6 +102,25 @@ rem misses and has to be found here instead.
 >>"%CFG%" echo -$L+
 >>"%CFG%" echo -$Y+
 >>"%CFG%" echo -DDEBUG;CADSYS_FMX
+
+rem --- a stray project .cfg would win ----------------------------------
+rem dcc32 reads a config named after the project it is compiling, from
+rem that project's own folder, as well as the dcc32.cfg in the current
+rem directory - and the project one wins. Four of these were inherited
+rem from the original author's Delphi 5 install, carrying
+rem -LE"c:\programmi\borland\delphi5\Projects\Bpl", a -U pointing at a
+rem source folder on his machine and -$D- against our -$D+. They are
+rem deleted; this refuses to compile if one ever comes back, because
+rem the alternative is a build configured by a file nobody read.
+set STRAYCFG=
+if exist "%ROOT%\Demos\CAD2D\FMX\CadSysFMX.cfg" set STRAYCFG=%ROOT%\Demos\CAD2D\FMX\CadSysFMX.cfg
+if exist "%ROOT%\Test\CADSysFMXCheck.cfg" set STRAYCFG=%ROOT%\Test\CADSysFMXCheck.cfg
+if defined STRAYCFG (
+  echo A stale project config is present: %STRAYCFG% > "%LOGS%\build-fmx.log"
+  echo dcc32 would read it instead of this script's. Delete it. >> "%LOGS%\build-fmx.log"
+  type "%LOGS%\build-fmx.log"
+  exit /b 2
+)
 
 pushd "%OUT%\fmx"
 echo === fmx build %DATE% %TIME% (BDS %BDSVER%) > "%LOGS%\build-fmx.log"

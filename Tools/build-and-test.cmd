@@ -13,9 +13,9 @@ rem executable dcc could not be run". A generated dcc32.cfg carries the
 rem paths in a file instead, and the command line stays short.
 rem
 rem The package is not built here - it has nothing these projects need
-rem (the tests compile the library from source, through Sources on the
-rem unit path) and building it is what tripped the limit. Build and
-rem install FNCCADSys.dproj in the IDE as usual.
+rem (the tests compile the library from source, through Generated\VCL
+rem on the unit path) and building it is what tripped the limit. Build and
+rem install FNCCadSysVCL.dproj in the IDE as usual.
 rem ---------------------------------------------------------------------
 setlocal
 set BDSVER=%1
@@ -52,11 +52,24 @@ for %%d in (Release Debug) do (
   )
 )
 
+rem --- the generated unit copies --------------------------------------
+rem Sources is the master; the compiler reads Generated\VCL. Run from
+rem here rather than by hand, because a tree generated from memory is a
+rem tree that can be stale, and a stale one fails as a compiler error in
+rem a file nobody edited.
+call "%~dp0gen-units.cmd" -Quiet
+if errorlevel 1 (
+  echo gen-units.cmd failed - see the output above. > "%LOGS%\build.log"
+  type "%LOGS%\build.log"
+  exit /b 2
+)
+set LIB=%ROOT%\Generated\VCL
+
 rem --- the config the compiler reads instead of a huge command line ----
 set CFG=%OUT%\dcc32.cfg
-> "%CFG%" echo -U"%BDSROOT%lib\Win32\release;%ROOT%\Sources;%ROOT%\Test;%FNCCORE%"
->>"%CFG%" echo -I"%BDSROOT%lib\Win32\release;%ROOT%\Sources;%ROOT%\Test"
->>"%CFG%" echo -R"%BDSROOT%lib\Win32\release;%ROOT%\Sources;%ROOT%\Test"
+> "%CFG%" echo -U"%BDSROOT%lib\Win32\release;%LIB%;%ROOT%\Test;%FNCCORE%"
+>>"%CFG%" echo -I"%BDSROOT%lib\Win32\release;%LIB%;%ROOT%\Test"
+>>"%CFG%" echo -R"%BDSROOT%lib\Win32\release;%LIB%;%ROOT%\Test"
 >>"%CFG%" echo -O"%BDSROOT%lib\Win32\release"
 >>"%CFG%" echo -NSVcl;Vcl.Imaging;Vcl.Touch;Vcl.Samples;Vcl.Shell;System;Xml;Data;Datasnap;Web;Soap;Winapi;System.Win
 >>"%CFG%" echo -N0"%OUT%\dcu"

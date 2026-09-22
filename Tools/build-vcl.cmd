@@ -69,6 +69,19 @@ if "%FNCCORE%"=="" (
   exit /b 2
 )
 
+rem --- the generated unit copies --------------------------------------
+rem Sources is the master; the compiler reads Generated\VCL. Run from
+rem here rather than by hand, because a tree generated from memory is a
+rem tree that can be stale, and a stale one fails as a compiler error in
+rem a file nobody edited.
+call "%~dp0gen-units.cmd" -Quiet
+if errorlevel 1 (
+  echo gen-units.cmd failed - see the output above. > "%LOGS%\build-vcl.log"
+  type "%LOGS%\build-vcl.log"
+  exit /b 2
+)
+set LIB=%ROOT%\Generated\VCL
+
 rem dcc32 reads dcc32.cfg from the current directory. A separate
 rem directory per script keeps the three configurations from seeing
 rem each other.
@@ -78,9 +91,9 @@ rem "unit in 'path'" clause against the CURRENT directory, not against
 rem the dpr's own folder, and only then falls back to -U. This script
 rem compiles from Tools\build\vcl, so DemoLog's '..\..\common' misses
 rem and has to be found here instead.
-> "%CFG%" echo -U"%BDSROOT%lib\Win32\release;%ROOT%\Sources;%ROOT%\Test;%ROOT%\Demos\CAD2D\VCL;%ROOT%\Demos\common;%FNCCORE%"
->>"%CFG%" echo -I"%BDSROOT%lib\Win32\release;%ROOT%\Sources;%ROOT%\Test;%ROOT%\Demos\CAD2D\VCL;%ROOT%\Demos\common"
->>"%CFG%" echo -R"%BDSROOT%lib\Win32\release;%ROOT%\Sources;%ROOT%\Test;%ROOT%\Demos\CAD2D\VCL;%ROOT%\Demos\common"
+> "%CFG%" echo -U"%BDSROOT%lib\Win32\release;%LIB%;%ROOT%\Test;%ROOT%\Demos\CAD2D\VCL;%ROOT%\Demos\common;%FNCCORE%"
+>>"%CFG%" echo -I"%BDSROOT%lib\Win32\release;%LIB%;%ROOT%\Test;%ROOT%\Demos\CAD2D\VCL;%ROOT%\Demos\common"
+>>"%CFG%" echo -R"%BDSROOT%lib\Win32\release;%LIB%;%ROOT%\Test;%ROOT%\Demos\CAD2D\VCL;%ROOT%\Demos\common"
 >>"%CFG%" echo -O"%BDSROOT%lib\Win32\release"
 >>"%CFG%" echo -NSVcl;Vcl.Imaging;Vcl.Touch;Vcl.Samples;Vcl.Shell;System;Xml;Data;Datasnap;Web;Soap;Winapi;System.Win
 >>"%CFG%" echo -N0"%OUT%\dcu"
@@ -89,6 +102,24 @@ rem and has to be found here instead.
 >>"%CFG%" echo -$L+
 >>"%CFG%" echo -$Y+
 >>"%CFG%" echo -DDEBUG
+
+rem --- a stray project .cfg would win ----------------------------------
+rem dcc32 reads a config named after the project it is compiling, from
+rem that project's own folder, as well as the dcc32.cfg in the current
+rem directory - and the project one wins. Four of these were inherited
+rem from the original author's Delphi 5 install, carrying
+rem -LE"c:\programmi\borland\delphi5\Projects\Bpl", a -U pointing at a
+rem source folder on his machine and -$D- against our -$D+. They are
+rem deleted; this refuses to compile if one ever comes back, because
+rem the alternative is a build configured by a file nobody read.
+set STRAYCFG=
+if exist "%ROOT%\Demos\CAD2D\VCL\CadSysVCL.cfg" set STRAYCFG=%ROOT%\Demos\CAD2D\VCL\CadSysVCL.cfg
+if defined STRAYCFG (
+  echo A stale project config is present: %STRAYCFG% > "%LOGS%\build-vcl.log"
+  echo dcc32 would read it instead of this script's. Delete it. >> "%LOGS%\build-vcl.log"
+  type "%LOGS%\build-vcl.log"
+  exit /b 2
+)
 
 pushd "%OUT%\vcl"
 echo === vcl build %DATE% %TIME% (BDS %BDSVER%) > "%LOGS%\build-vcl.log"

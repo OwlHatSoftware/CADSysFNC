@@ -21,3 +21,12 @@
 __history/
 /Test/Win32/
 /Test/Win64/
+
+# Generated per-framework unit copies. Sources is the master; these
+# are build artifacts and a clean checkout has to run
+# Tools\gen-units.cmd once before it can compile FMX or LCL.
+/Generated/
+
+# A real customer drawing, kept out deliberately - it is a fixture
+# for the legacy reader, not something to publish.
+/data/
