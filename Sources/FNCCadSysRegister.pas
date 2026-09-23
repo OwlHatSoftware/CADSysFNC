@@ -1,6 +1,6 @@
 unit FNCCadSysRegister;
 
-{$I CADSys.inc}
+{$I VCL.FNCCADSys.inc}
 
 interface
 

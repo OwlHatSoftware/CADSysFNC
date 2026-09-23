@@ -25,7 +25,7 @@
 }
 unit FNCCS4JSON;
 
-{$I CADSys.inc}
+{$I VCL.FNCCADSys.inc}
 
 interface
 

@@ -127,8 +127,9 @@ echo --- dcc32 config: >> "%LOGS%\build-vcl.log"
 type "%CFG%" >> "%LOGS%\build-vcl.log"
 rem The same project the IDE opens - Demos\CAD2D\VCL\CadSysVCL.dproj -
 rem so the two ways of building it cannot drift apart. CADSYS_VCL is
-rem not defined anywhere and does not need to be: CADSys.inc derives it
-rem for any Delphi project that does not ask for FMX.
+rem not defined anywhere and does not need to be: every library unit in
+rem Generated\VCL includes VCL.FNCCADSys.inc, which defines it. The tree
+rem decides the framework now, not the project.
 echo --- demo: Demos\CAD2D\VCL >> "%LOGS%\build-vcl.log"
 %DCC% -B "%ROOT%\Demos\CAD2D\VCL\CadSysVCL.dpr" >> "%LOGS%\build-vcl.log" 2>&1
 set DEMOERR=%ERRORLEVEL%

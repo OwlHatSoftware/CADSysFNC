@@ -27,7 +27,7 @@
 }
 unit FNCCS4GraphicsFNC;
 
-{$I CADSys.inc}
+{$I VCL.FNCCADSys.inc}
 
 {$RANGECHECKS OFF} // PCADPoints is a [0..0] array indexed past its bound
 

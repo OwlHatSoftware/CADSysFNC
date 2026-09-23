@@ -22,11 +22,7 @@
   TColorGrid.> }
 unit MainFrm;
 
-{$I ..\..\..\Sources\CADSys.inc}
-
-{$IFNDEF CADSYS_FMX}
-{$MESSAGE Fatal 'This demo must be compiled with CADSYS_FMX defined. Without it CADSys.inc selects the VCL, TFNCRuler and the viewports descend from the VCL TTMSFNCCustomControl, and their Parent is a TWinControl - which is what an unhelpful E2010 about TWinControl and TMainForm really means. Build it with Tools\build-fmx.cmd, or add CADSYS_FMX to the project conditional defines.'}
-{$ENDIF}
+{$I FMX.FNCCADSys.inc}
 
 interface
 

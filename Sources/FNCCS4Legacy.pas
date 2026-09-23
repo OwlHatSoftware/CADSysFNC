@@ -36,7 +36,7 @@
 }
 unit FNCCS4Legacy;
 
-{$I CADSys.inc}
+{$I VCL.FNCCADSys.inc}
 
 interface
 

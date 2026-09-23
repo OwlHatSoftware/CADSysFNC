@@ -59,16 +59,16 @@ requires
   FMXTMSFNCCorePkg;
 
 contains
-  FNCCADSys4 in '..\..\Sources\FNCCADSys4.pas',
-  FNCCS4BaseTypes in '..\..\Sources\FNCCS4BaseTypes.pas',
-  FNCCS4Graphics in '..\..\Sources\FNCCS4Graphics.pas',
-  FNCCS4JSON in '..\..\Sources\FNCCS4JSON.pas',
-  FNCCS4GraphicsFNC in '..\..\Sources\FNCCS4GraphicsFNC.pas',
-  FNCCS4DXFModule in '..\..\Sources\FNCCS4DXFModule.pas',
-  FNCCS4Legacy in '..\..\Sources\FNCCS4Legacy.pas',
-  FNCCS4Shapes in '..\..\Sources\FNCCS4Shapes.pas',
-  FNCCS4Tasks in '..\..\Sources\FNCCS4Tasks.pas',
-  FNCCS4Views in '..\..\Sources\FNCCS4Views.pas',
-  FNCCadSysRegister in '..\..\Sources\FNCCadSysRegister.pas';
+  FNCCADSys4 in '..\..\Generated\FMX\FNCCADSys4.pas',
+  FNCCS4BaseTypes in '..\..\Generated\FMX\FNCCS4BaseTypes.pas',
+  FNCCS4Graphics in '..\..\Generated\FMX\FNCCS4Graphics.pas',
+  FNCCS4JSON in '..\..\Generated\FMX\FNCCS4JSON.pas',
+  FNCCS4GraphicsFNC in '..\..\Generated\FMX\FNCCS4GraphicsFNC.pas',
+  FNCCS4DXFModule in '..\..\Generated\FMX\FNCCS4DXFModule.pas',
+  FNCCS4Legacy in '..\..\Generated\FMX\FNCCS4Legacy.pas',
+  FNCCS4Shapes in '..\..\Generated\FMX\FNCCS4Shapes.pas',
+  FNCCS4Tasks in '..\..\Generated\FMX\FNCCS4Tasks.pas',
+  FNCCS4Views in '..\..\Generated\FMX\FNCCS4Views.pas',
+  FNCCadSysRegister in '..\..\Generated\FMX\FNCCadSysRegister.pas';
 
 end.

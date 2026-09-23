@@ -27,7 +27,7 @@
 }
 unit FNCCS4Views;
 
-{$I CADSys.inc}
+{$I VCL.FNCCADSys.inc}
 
 interface
 

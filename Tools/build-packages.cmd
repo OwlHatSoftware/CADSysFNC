@@ -16,10 +16,11 @@ rem an installed package. It does not install anything either - a green
 rem run here means the package compiles and links, and installing is
 rem still a thing you do in the IDE.
 rem
-rem It does not run gen-units: the dpk files name their units through
-rem the contains clause, which points at Sources directly. That changes
-rem in step 2 of the packaging work, when the copies get their prefixes
-rem and the packages start listing the generated names.
+rem It runs gen-units first and builds each package from its own tree:
+rem the VCL package from Generated\VCL and the FMX one from
+rem Generated\FMX. That is what makes the framework a property of the
+rem tree rather than of a define somebody has to remember - the include
+rem at the top of each unit names its own framework file.
 rem
 rem Log: Tools\logs\build-packages.log
 rem ---------------------------------------------------------------------
@@ -87,6 +88,16 @@ if "%FNCCORE%"=="" (
   exit /b 2
 )
 
+rem --- the generated unit copies --------------------------------------
+rem Sources is the master and is still a valid VCL tree; the FMX one
+rem only exists once this has run.
+call "%~dp0gen-units.cmd" -Quiet
+if errorlevel 1 (
+  echo gen-units.cmd failed - see the output above. > "%LOG%"
+  type "%LOG%"
+  exit /b 2
+)
+
 rem --- a stray project .cfg would win ----------------------------------
 rem dcc32 reads a config named after the project it is compiling, from
 rem that project's own folder, as well as the dcc32.cfg in the current
@@ -115,9 +126,9 @@ rem Its own directory, its own dcc32.cfg, its own dcu folder: the two
 rem packages are built with different defines and different namespaces,
 rem and dcus from one are poison to the other.
 set CFG=%OUT%\pkg\dcc32.cfg
-> "%CFG%" echo -U"%BDSROOT%lib\Win32\release;%DCPDIR%;%ROOT%\Sources;%FNCCORE%"
->>"%CFG%" echo -I"%BDSROOT%lib\Win32\release;%ROOT%\Sources"
->>"%CFG%" echo -R"%BDSROOT%lib\Win32\release;%ROOT%\Sources;%ROOT%\Packages\delphi"
+> "%CFG%" echo -U"%BDSROOT%lib\Win32\release;%DCPDIR%;%ROOT%\Generated\VCL;%FNCCORE%"
+>>"%CFG%" echo -I"%BDSROOT%lib\Win32\release;%ROOT%\Generated\VCL"
+>>"%CFG%" echo -R"%BDSROOT%lib\Win32\release;%ROOT%\Generated\VCL;%ROOT%\Packages\delphi"
 >>"%CFG%" echo -O"%BDSROOT%lib\Win32\release"
 >>"%CFG%" echo -NSVcl;Vcl.Imaging;Vcl.Touch;Vcl.Samples;Vcl.Shell;System;Xml;Data;Datasnap;Web;Soap;Winapi;System.Win
 >>"%CFG%" echo -N0"%OUT%\pkg\dcu-vcl"
@@ -142,9 +153,9 @@ rem CADSYS_FMX on the command line, because the dpk relies on the dproj
 rem to define it and dcc32 never reads the dproj. FMX namespaces and
 rem not the Vcl ones, so a bare Graphics or Controls cannot quietly
 rem resolve to a VCL unit - the same rule as build-fmx.cmd.
-> "%CFG%" echo -U"%BDSROOT%lib\Win32\release;%DCPDIR%;%ROOT%\Sources;%FNCCORE%"
->>"%CFG%" echo -I"%BDSROOT%lib\Win32\release;%ROOT%\Sources"
->>"%CFG%" echo -R"%BDSROOT%lib\Win32\release;%ROOT%\Sources;%ROOT%\Packages\delphi"
+> "%CFG%" echo -U"%BDSROOT%lib\Win32\release;%DCPDIR%;%ROOT%\Generated\FMX;%FNCCORE%"
+>>"%CFG%" echo -I"%BDSROOT%lib\Win32\release;%ROOT%\Generated\FMX"
+>>"%CFG%" echo -R"%BDSROOT%lib\Win32\release;%ROOT%\Generated\FMX;%ROOT%\Packages\delphi"
 >>"%CFG%" echo -O"%BDSROOT%lib\Win32\release"
 >>"%CFG%" echo -NSSystem;Xml;Data;Datasnap;Web;Soap;FMX;Winapi;System.Win
 >>"%CFG%" echo -N0"%OUT%\pkg\dcu-fmx"

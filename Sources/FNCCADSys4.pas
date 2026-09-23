@@ -498,7 +498,7 @@
 }
 Unit FNCCADSys4;
 
-{$I CADSys.inc}
+{$I VCL.FNCCADSys.inc}
 
 { : Range checking is off for this unit, deliberately and necessarily.
 

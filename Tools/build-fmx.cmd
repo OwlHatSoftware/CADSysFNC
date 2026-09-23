@@ -137,10 +137,12 @@ if not "%ERR%"=="0" (
 )
 
 rem The same project the IDE opens - Demos\CAD2D\FMX\CadSysFMX.dproj -
-rem so the two ways of building it cannot drift apart. The .dproj sets
-rem CADSYS_FMX in its conditional defines; this script sets it in the
-rem generated cfg. Either way it must be defined, or CADSys.inc selects
-rem the VCL and nothing about the resulting errors says so.
+rem so the two ways of building it cannot drift apart. CADSYS_FMX is
+rem still set in both, and is now a belt to the tree's braces: every unit
+rem in Generated\FMX includes FMX.FNCCADSys.inc, which defines it. If the
+rem two ever disagree - an FMX project pointed at the VCL tree - the
+rem include says so at the first unit instead of at the first
+rem incompatible type.
 echo --- demo: Demos\CAD2D\FMX >> "%LOGS%\build-fmx.log"
 %DCC% -B "%ROOT%\Demos\CAD2D\FMX\CadSysFMX.dpr" >> "%LOGS%\build-fmx.log" 2>&1
 set DEMOERR=%ERRORLEVEL%

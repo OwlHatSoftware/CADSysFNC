@@ -14,7 +14,7 @@
 }
 unit FNCCS4DXFModule;
 
-{$I CADSys.inc}
+{$I VCL.FNCCADSys.inc}
 
 Interface
 

@@ -89,14 +89,15 @@
         <Base>true</Base>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base)'!=''">
-        <!-- CADSYS_FMX is not optional. Without it Sources\CADSys.inc
-             selects the VCL, every FNC control in the library descends
-             from the VCL TTMSFNCCustomControl, and the first thing that
-             fails is an E2010 about TWinControl and TMainForm - which
-             says nothing at all about the real cause. -->
+        <!-- CADSYS_FMX no longer selects anything: the library units
+             in Generated\FMX include FMX.FNCCADSys.inc, which defines it.
+             It is kept because it still guards the one mistake left -
+             pointing this project at the VCL tree - which the include
+             then reports at the first unit rather than as an E2010 about
+             TWinControl and TMainForm. -->
         <DCC_Define>CADSYS_FMX;$(DCC_Define)</DCC_Define>
-        <DCC_UnitSearchPath>..\..\..\Sources;..\..\common;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
-        <DCC_IncludePath>..\..\..\Sources;$(DCC_IncludePath)</DCC_IncludePath>
+        <DCC_UnitSearchPath>..\..\..\Generated\FMX;..\..\common;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_IncludePath>..\..\..\Generated\FMX;$(DCC_IncludePath)</DCC_IncludePath>
         <DCC_DcuOutput>.\$(Platform)\$(Config)</DCC_DcuOutput>
         <!-- Same folder the command-line build uses, so the exe always
              sits beside RomanC.json and TEST.DXF whichever way it was

@@ -18,7 +18,7 @@
 }
 unit FNCCS4GraphicsVCL;
 
-{$I CADSys.inc}
+{$I VCL.FNCCADSys.inc}
 
 { : Range checking off - see FNCCADSys4 for the reasoning. This unit
   indexes a 'array [0..0] of TPoint' through PCADPoints, which is the

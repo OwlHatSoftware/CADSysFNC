@@ -52,7 +52,19 @@ $ErrorActionPreference = 'Stop'
 # ---------------------------------------------------------------------
 $All = @('VCL', 'FMX', 'LCL')
 $Units = [ordered]@{
-  'CADSys.inc'             = $All
+  # The framework files. Each one is its own master: they differ by a
+  # single DEFINE, which a substitution cannot produce, so they are
+  # three small hand-written files rather than generated copies. Each
+  # goes to its own tree and nowhere else - that is what makes the copy
+  # the framework. CADSysCommon.inc carries everything they share.
+  #
+  # CADSys.inc is the compatibility shim for projects written against
+  # the old arrangement, and is VCL-only on purpose.
+  'CADSysCommon.inc'       = $All
+  'VCL.FNCCADSys.inc'      = @('VCL')
+  'FMX.FNCCADSys.inc'      = @('FMX')
+  'LCLFNCCADSys.inc'       = @('LCL')
+  'CADSys.inc'             = @('VCL')
   'FNCCADSys4.pas'         = $All
   'FNCCS4BaseTypes.pas'    = $All
   'FNCCS4DXFModule.pas'    = $All
@@ -71,9 +83,15 @@ $Units = [ordered]@{
 # ---------------------------------------------------------------------
 # What to replace, per framework, in order.
 #
-# Empty on purpose. This step proves the pipeline - that the suites and
-# the demos build from a generated tree - with the names unchanged, so
-# that when the table fills up there is only one new thing to debug.
+# One entry each, and for now it reaches exactly one thing: the include
+# directive at the top of every unit. VCL.FNCCADSys.inc becomes
+# FMX.FNCCADSys.inc, which defines CADSYS_FMX - so the tree a unit was
+# generated into is what decides its framework, and a project has
+# nothing left to forget or to get wrong.
+#
+# The unit names themselves follow in step 2b. They are a bigger change
+# because every uses clause in the demos and the tests has to name its
+# framework too, and this half is worth having on its own.
 #
 # Keep this table small when it does fill up. A substitution is
 # invisible at the point where it bites: it rewrites text inside dead
@@ -83,8 +101,8 @@ $Units = [ordered]@{
 # ---------------------------------------------------------------------
 $Subs = @{
   'VCL' = @()
-  'FMX' = @()
-  'LCL' = @()
+  'FMX' = @(, @('VCL.FNCC', 'FMX.FNCC'))
+  'LCL' = @(, @('VCL.FNCC', 'LCLFNCC'))
 }
 
 $Latin1 = [System.Text.Encoding]::GetEncoding(28591)

@@ -39,7 +39,7 @@
 }
 unit FNCCS4Tasks;
 
-{$I CADSys.inc}
+{$I VCL.FNCCADSys.inc}
 
 Interface
 

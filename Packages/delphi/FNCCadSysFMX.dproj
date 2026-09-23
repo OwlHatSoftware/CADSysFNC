@@ -50,8 +50,8 @@
         <SanitizedProjectName>FNCCadSysFMX</SanitizedProjectName>
         <DCC_Define>CADSYS_FMX;$(DCC_Define)</DCC_Define>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;FMX;$(DCC_Namespace)</DCC_Namespace>
-        <DCC_UnitSearchPath>..\..\Sources;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
-        <DCC_IncludePath>..\..\Sources;$(DCC_IncludePath)</DCC_IncludePath>
+        <DCC_UnitSearchPath>..\..\Generated\FMX;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_IncludePath>..\..\Generated\FMX;$(DCC_IncludePath)</DCC_IncludePath>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_MajorVer>4</VerInfo_MajorVer>
         <VerInfo_MinorVer>2</VerInfo_MinorVer>
@@ -88,17 +88,17 @@
         <DCCReference Include="bindengine.dcp"/>
         <DCCReference Include="bindcomp.dcp"/>
         <DCCReference Include="FMXTMSFNCCorePkg.dcp"/>
-        <DCCReference Include="..\..\Sources\FNCCADSys4.pas"/>
-        <DCCReference Include="..\..\Sources\FNCCS4BaseTypes.pas"/>
-        <DCCReference Include="..\..\Sources\FNCCS4Graphics.pas"/>
-        <DCCReference Include="..\..\Sources\FNCCS4JSON.pas"/>
-        <DCCReference Include="..\..\Sources\FNCCS4GraphicsFNC.pas"/>
-        <DCCReference Include="..\..\Sources\FNCCS4DXFModule.pas"/>
-        <DCCReference Include="..\..\Sources\FNCCS4Legacy.pas"/>
-        <DCCReference Include="..\..\Sources\FNCCS4Shapes.pas"/>
-        <DCCReference Include="..\..\Sources\FNCCS4Tasks.pas"/>
-        <DCCReference Include="..\..\Sources\FNCCS4Views.pas"/>
-        <DCCReference Include="..\..\Sources\FNCCadSysRegister.pas"/>
+        <DCCReference Include="..\..\Generated\FMX\FNCCADSys4.pas"/>
+        <DCCReference Include="..\..\Generated\FMX\FNCCS4BaseTypes.pas"/>
+        <DCCReference Include="..\..\Generated\FMX\FNCCS4Graphics.pas"/>
+        <DCCReference Include="..\..\Generated\FMX\FNCCS4JSON.pas"/>
+        <DCCReference Include="..\..\Generated\FMX\FNCCS4GraphicsFNC.pas"/>
+        <DCCReference Include="..\..\Generated\FMX\FNCCS4DXFModule.pas"/>
+        <DCCReference Include="..\..\Generated\FMX\FNCCS4Legacy.pas"/>
+        <DCCReference Include="..\..\Generated\FMX\FNCCS4Shapes.pas"/>
+        <DCCReference Include="..\..\Generated\FMX\FNCCS4Tasks.pas"/>
+        <DCCReference Include="..\..\Generated\FMX\FNCCS4Views.pas"/>
+        <DCCReference Include="..\..\Generated\FMX\FNCCadSysRegister.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

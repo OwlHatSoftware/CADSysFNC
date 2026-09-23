@@ -17,7 +17,7 @@
 }
 unit FNCCS4ExportVCL;
 
-{$I CADSys.inc}
+{$I VCL.FNCCADSys.inc}
 
 {$IFNDEF CADSYS_VCL}
 {$MESSAGE Fatal 'FNCCS4ExportVCL is VCL-only (the printing and clipboard helpers). Remove it from the FMX or LCL package rather than compiling it there.'}

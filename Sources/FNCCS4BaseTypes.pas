@@ -7,7 +7,7 @@
 }
 unit FNCCS4BaseTypes;
 
-{$I CADSys.inc}
+{$I VCL.FNCCADSys.inc}
 
 interface
 
