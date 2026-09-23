@@ -16,10 +16,10 @@ interface
 
 uses
   DUnitX.TestFramework,
-  FNCCS4BaseTypes,
-  FNCCADSys4,
-  FNCCS4Shapes,
-  FNCCadSysRegister;
+  VCL.FNCCS4BaseTypes,
+  VCL.FNCCADSys4,
+  VCL.FNCCS4Shapes,
+  VCL.FNCCadSysRegister;
 
 type
   { M12 - TContainer2D/TContainer3D.Assign used repeat..until, which executes
@@ -107,7 +107,7 @@ type
 
     [Test]
     [Ignore('TPointsSet3D.Expand Z-initialisation: Get() bounds-checks against fCount, ' +
-            'not fCapacity (FNCCADSys4.pas:13326), so grown-but-unwritten slots are ' +
+            'not fCapacity (VCL.FNCCADSys4.pas:13326), so grown-but-unwritten slots are ' +
             'unreachable through the public API. The fix is correct but unobservable ' +
             'without touching PointsReference directly, which would itself be UB.')]
     procedure PointsSet3D_ExpandInitialisesZ;
@@ -153,7 +153,7 @@ begin
       Src, Dst: TContainer2D;
     begin
       { [nil] is the documented way to build a void container - see the
-        TContainer2D.Create doc comment in FNCCADSys4.pas. }
+        TContainer2D.Create doc comment in VCL.FNCCADSys4.pas. }
       Src := TContainer2D.Create(1, [nil]);
       try
         Dst := TContainer2D.Create(2, [nil]);
@@ -339,7 +339,7 @@ begin
   { VectFonts2DRegistered is array[0..MAX_REGISTERED_FONTS] with
     MAX_REGISTERED_FONTS = 512. Before the fix this read past the end of the
     array and returned whatever pointer happened to be there. With no default
-    font registered (FNCCadSysRegister sets _DefaultFont := nil) the bounds check
+    font registered (VCL.FNCCadSysRegister sets _DefaultFont := nil) the bounds check
     now surfaces as a clean ECADObjClassNotFound. }
   Assert.WillRaise(
     procedure

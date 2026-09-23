@@ -2,7 +2,7 @@
 
   Three layers are covered:
 
-  1. FNCCS4JSON, the conversion helpers: value round trips and the lenient
+  1. VCL.FNCCS4JSON, the conversion helpers: value round trips and the lenient
      reading rules the format relies on.
   2. TGraphicObject.SaveToJSON / CreateFromJSON per shape family, through
      CADSysObjectToJSON / CADSysObjectFromJSON - the same path a document
@@ -10,7 +10,7 @@
   3. TFNCCADCmp2D whole-document round trips: layers, source blocks, files,
      text, and the document header.
 
-  FNCCadSysRegister is in the uses clause because its initialization section
+  VCL.FNCCadSysRegister is in the uses clause because its initialization section
   fills the class registry. Without it CADSysObjectFromJSON raises
   ECADObjClassNotFound for every shape.
 
@@ -25,7 +25,7 @@ uses
 
 type
 
-  { : The FNCCS4JSON value helpers. }
+  { : The VCL.FNCCS4JSON value helpers. }
   [TestFixture]
   TJSONHelperTests = class(TObject)
   public
@@ -169,14 +169,14 @@ uses
   System.Classes,
   System.IOUtils,
   System.JSON,
-  FNCCS4BaseTypes,
-  FNCCS4JSON,
-  FNCCS4Graphics,
-  FNCCADSys4,
-  FNCCS4Shapes,
+  VCL.FNCCS4BaseTypes,
+  VCL.FNCCS4JSON,
+  VCL.FNCCS4Graphics,
+  VCL.FNCCADSys4,
+  VCL.FNCCS4Shapes,
   { Required: its initialization section fills the persistence class
     registry and the font list. }
-  FNCCadSysRegister;
+  VCL.FNCCadSysRegister;
 
 const
   { Geometry must survive a Double round trip; the tolerance only keeps

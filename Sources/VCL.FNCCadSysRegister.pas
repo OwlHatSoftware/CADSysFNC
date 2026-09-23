@@ -1,11 +1,11 @@
-unit FNCCadSysRegister;
+unit VCL.FNCCadSysRegister;
 
 {$I VCL.FNCCADSys.inc}
 
 interface
 
 uses
-  Classes, FNCCS4Shapes, FNCCADSys4, FNCCS4BaseTypes, FNCCS4DXFModule;
+  Classes, VCL.FNCCS4Shapes, VCL.FNCCADSys4, VCL.FNCCS4BaseTypes, VCL.FNCCS4DXFModule;
 
 procedure register;
 
@@ -26,7 +26,7 @@ end;
 
 initialization
 
-// Spostata inizializzazione da FNCCADSys4 a FNCCS4Shapes perchè pare che venga fatta prima questa inizializzazione e poi quella di FNCCADSys4
+// Spostata inizializzazione da VCL.FNCCADSys4 a VCL.FNCCS4Shapes perchè pare che venga fatta prima questa inizializzazione e poi quella di VCL.FNCCADSys4
 CADSysInitClassRegister;
 
 CADSysRegisterClass(0, TContainer2D);

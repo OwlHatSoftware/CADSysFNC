@@ -10,12 +10,12 @@ program CADSys4Tests;
            CADSys4Tests.exe --exitbehavior:Continue    for CI (no pause)
            CADSys4Tests.exe --xmloutput:results.xml    NUnit XML for CI
 
-  Note:    FNCCadSysRegister is pulled in by the test units and its
+  Note:    VCL.FNCCadSysRegister is pulled in by the test units and its
            initialization section is what populates the class and font
            registries. Without it, anything that streams an object or looks
            a class up by name raises ECADObjClassNotFound.
 
-  Note:    FNCCS4ExportVCL is listed below with nothing testing it, on
+  Note:    VCL.FNCCS4ExportVCL is listed below with nothing testing it, on
            purpose. It has no tests because printing and the clipboard
            need a device; but it is a library unit, and a unit that no
            build ever compiles rots. It did: it sat broken from the day
@@ -47,7 +47,7 @@ uses
   CADSys4.Tests.DXF in 'CADSys4.Tests.DXF.pas',
   CADSys4.Tests.Legacy in 'CADSys4.Tests.Legacy.pas',
   CADSys4.Tests.Views in 'CADSys4.Tests.Views.pas',
-  FNCCS4ExportVCL;
+  VCL.FNCCS4ExportVCL;
 
 {$IFNDEF TESTINSIGHT}
 var

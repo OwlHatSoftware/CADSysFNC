@@ -89,7 +89,7 @@
         <VerInfo_Release>1</VerInfo_Release>
         <VerInfo_PreRelease>true</VerInfo_PreRelease>
         <VerInfo_Locale>1040</VerInfo_Locale>
-        <VerInfo_Keys>CompanyName=Piero Valagussa;FileDescription=CADSys 4.2 Lite Version (VCL);FileVersion=4.2.1.0;InternalName=CADSys422;LegalCopyright=Piero Valagussa;LegalTrademarks=;OriginalFilename=FNCCADSys4;ProductName=FNCCADSys4;ProductVersion=4.2.0.2;Comments=</VerInfo_Keys>
+        <VerInfo_Keys>CompanyName=Piero Valagussa;FileDescription=CADSys 4.2 Lite Version (VCL);FileVersion=4.2.1.0;InternalName=CADSys422;LegalCopyright=Piero Valagussa;LegalTrademarks=;OriginalFilename=VCL.FNCCADSys4;ProductName=VCL.FNCCADSys4;ProductVersion=4.2.0.2;Comments=</VerInfo_Keys>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;Vcl;Vcl.Imaging;Vcl.Touch;Vcl.Samples;Vcl.Shell;$(DCC_Namespace)</DCC_Namespace>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_OSX64)'!=''">
@@ -153,19 +153,19 @@
         <DCCReference Include="bindengine.dcp"/>
         <DCCReference Include="bindcomp.dcp"/>
         <DCCReference Include="VCLTMSFNCCorePkg.dcp"/>
-        <DCCReference Include="..\..\Generated\VCL\FNCCADSys4.pas"/>
-        <DCCReference Include="..\..\Generated\VCL\FNCCS4BaseTypes.pas"/>
-        <DCCReference Include="..\..\Generated\VCL\FNCCS4Graphics.pas"/>
-        <DCCReference Include="..\..\Generated\VCL\FNCCS4JSON.pas"/>
-        <DCCReference Include="..\..\Generated\VCL\FNCCS4GraphicsVCL.pas"/>
-        <DCCReference Include="..\..\Generated\VCL\FNCCS4GraphicsFNC.pas"/>
-        <DCCReference Include="..\..\Generated\VCL\FNCCS4ExportVCL.pas"/>
-        <DCCReference Include="..\..\Generated\VCL\FNCCS4DXFModule.pas"/>
-        <DCCReference Include="..\..\Generated\VCL\FNCCS4Legacy.pas"/>
-        <DCCReference Include="..\..\Generated\VCL\FNCCS4Shapes.pas"/>
-        <DCCReference Include="..\..\Generated\VCL\FNCCS4Tasks.pas"/>
-        <DCCReference Include="..\..\Generated\VCL\FNCCS4Views.pas"/>
-        <DCCReference Include="..\..\Generated\VCL\FNCCadSysRegister.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCADSys4.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4BaseTypes.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Graphics.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4JSON.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4GraphicsVCL.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4GraphicsFNC.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4ExportVCL.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4DXFModule.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Legacy.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Shapes.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Tasks.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Views.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCadSysRegister.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
@@ -214,8 +214,8 @@
                     <VersionInfoKeys Name="InternalName">CADSys422</VersionInfoKeys>
                     <VersionInfoKeys Name="LegalCopyright">Piero Valagussa</VersionInfoKeys>
                     <VersionInfoKeys Name="LegalTrademarks"/>
-                    <VersionInfoKeys Name="OriginalFilename">FNCCADSys4</VersionInfoKeys>
-                    <VersionInfoKeys Name="ProductName">FNCCADSys4</VersionInfoKeys>
+                    <VersionInfoKeys Name="OriginalFilename">VCL.FNCCADSys4</VersionInfoKeys>
+                    <VersionInfoKeys Name="ProductName">VCL.FNCCADSys4</VersionInfoKeys>
                     <VersionInfoKeys Name="ProductVersion">4.2.0.2</VersionInfoKeys>
                     <VersionInfoKeys Name="Comments"/>
                 </VersionInfoKeys>

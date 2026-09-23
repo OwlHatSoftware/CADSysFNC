@@ -11,7 +11,7 @@ program CADSysFNCTests;
            CADSys4Tests.exe --exitbehavior:Continue    for CI (no pause)
            CADSys4Tests.exe --xmloutput:results.xml    NUnit XML for CI
 
-  Note:    FNCCadSysRegister is pulled in by the test units and its
+  Note:    VCL.FNCCadSysRegister is pulled in by the test units and its
            initialization section is what populates the class and font
            registries. Without it, anything that streams an object or looks
            a class up by name raises ECADObjClassNotFound.

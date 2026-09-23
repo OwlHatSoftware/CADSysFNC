@@ -1,4 +1,4 @@
-{ : DUnitX tests for saved views (unit FNCCS4Views).
+{ : DUnitX tests for saved views (unit VCL.FNCCS4Views).
 
   Scope: TCADViewSpec as a value - its defaults, its JSON round trip, the
   layer list's text form, and the relative-in-the-file, absolute-in-memory
@@ -20,9 +20,9 @@ uses
   System.IOUtils,
   System.JSON,
   DUnitX.TestFramework,
-  FNCCS4BaseTypes,
-  FNCCS4JSON,
-  FNCCS4Views;
+  VCL.FNCCS4BaseTypes,
+  VCL.FNCCS4JSON,
+  VCL.FNCCS4Views;
 
 type
   [TestFixture]

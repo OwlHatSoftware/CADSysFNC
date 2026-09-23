@@ -12,7 +12,7 @@ procedure Register;
 implementation
 
 uses
-  FNCCADSys4;
+  LCLFNCCADSys4;
 
 {$R FNCCadSys.dcr}
 

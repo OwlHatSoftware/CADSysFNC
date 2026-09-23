@@ -41,18 +41,18 @@ requires
   VCLTMSFNCCorePkg;
 
 contains
-  FNCCADSys4 in '..\..\Generated\VCL\FNCCADSys4.pas',
-  FNCCS4BaseTypes in '..\..\Generated\VCL\FNCCS4BaseTypes.pas',
-  FNCCS4Graphics in '..\..\Generated\VCL\FNCCS4Graphics.pas',
-  FNCCS4JSON in '..\..\Generated\VCL\FNCCS4JSON.pas',
-  FNCCS4GraphicsVCL in '..\..\Generated\VCL\FNCCS4GraphicsVCL.pas',
-  FNCCS4GraphicsFNC in '..\..\Generated\VCL\FNCCS4GraphicsFNC.pas',
-  FNCCS4ExportVCL in '..\..\Generated\VCL\FNCCS4ExportVCL.pas',
-  FNCCS4DXFModule in '..\..\Generated\VCL\FNCCS4DXFModule.pas',
-  FNCCS4Legacy in '..\..\Generated\VCL\FNCCS4Legacy.pas',
-  FNCCS4Shapes in '..\..\Generated\VCL\FNCCS4Shapes.pas',
-  FNCCS4Tasks in '..\..\Generated\VCL\FNCCS4Tasks.pas',
-  FNCCS4Views in '..\..\Generated\VCL\FNCCS4Views.pas',
-  FNCCadSysRegister in '..\..\Generated\VCL\FNCCadSysRegister.pas';
+  VCL.FNCCADSys4 in '..\..\Generated\VCL\VCL.FNCCADSys4.pas',
+  VCL.FNCCS4BaseTypes in '..\..\Generated\VCL\VCL.FNCCS4BaseTypes.pas',
+  VCL.FNCCS4Graphics in '..\..\Generated\VCL\VCL.FNCCS4Graphics.pas',
+  VCL.FNCCS4JSON in '..\..\Generated\VCL\VCL.FNCCS4JSON.pas',
+  VCL.FNCCS4GraphicsVCL in '..\..\Generated\VCL\VCL.FNCCS4GraphicsVCL.pas',
+  VCL.FNCCS4GraphicsFNC in '..\..\Generated\VCL\VCL.FNCCS4GraphicsFNC.pas',
+  VCL.FNCCS4ExportVCL in '..\..\Generated\VCL\VCL.FNCCS4ExportVCL.pas',
+  VCL.FNCCS4DXFModule in '..\..\Generated\VCL\VCL.FNCCS4DXFModule.pas',
+  VCL.FNCCS4Legacy in '..\..\Generated\VCL\VCL.FNCCS4Legacy.pas',
+  VCL.FNCCS4Shapes in '..\..\Generated\VCL\VCL.FNCCS4Shapes.pas',
+  VCL.FNCCS4Tasks in '..\..\Generated\VCL\VCL.FNCCS4Tasks.pas',
+  VCL.FNCCS4Views in '..\..\Generated\VCL\VCL.FNCCS4Views.pas',
+  VCL.FNCCadSysRegister in '..\..\Generated\VCL\VCL.FNCCadSysRegister.pas';
 
 end.

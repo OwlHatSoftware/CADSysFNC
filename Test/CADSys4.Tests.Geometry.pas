@@ -1,13 +1,13 @@
 {: DUnitX tests for the pure geometry / math layer of CADSys 4.2.
 
-   Scope: the value types declared in FNCCS4BaseTypes and the free geometry
-   functions declared in the interface of FNCCADSys4. Nothing in this unit
+   Scope: the value types declared in VCL.FNCCS4BaseTypes and the free geometry
+   functions declared in the interface of VCL.FNCCADSys4. Nothing in this unit
    touches a TCanvas, a window handle or a TFNCCADViewport, and no Draw*
    method is called, so the suite runs in a plain console runner with no
    form and no window handle.
 
    Every expected value below was derived by reading the actual
-   implementation in FNCCADSys4.pas, not from a general assumption about
+   implementation in VCL.FNCCADSys4.pas, not from a general assumption about
    row/column conventions. In particular:
 
    - TransformPoint2D computes
@@ -36,8 +36,8 @@ uses
   System.Types,
   System.Math,
   DUnitX.TestFramework,
-  FNCCS4BaseTypes,
-  FNCCADSys4;
+  VCL.FNCCS4BaseTypes,
+  VCL.FNCCADSys4;
 
 type
   {: Degree/radian helpers. }
@@ -309,7 +309,7 @@ type
   end;
 
   {: The Liang-Barsky clipping helpers. These are declared in the
-     interface of FNCCADSys4 and take no canvas, so they are exercised here. }
+     interface of VCL.FNCCADSys4 and take no canvas, so they are exercised here. }
   [TestFixture]
   TClipping2DTests = class(TObject)
   public
@@ -438,7 +438,7 @@ implementation
 const
   EXACT_TOL = 1E-9;
   TRIG_TOL = 1E-6;
-  {: MaxCoord is declared as an untyped real constant in FNCCS4BaseTypes;
+  {: MaxCoord is declared as an untyped real constant in VCL.FNCCS4BaseTypes;
      this typed copy lets it be passed to Assert.AreEqual directly. }
   MAX_COORD_VALUE: TRealType = MaxCoord;
 

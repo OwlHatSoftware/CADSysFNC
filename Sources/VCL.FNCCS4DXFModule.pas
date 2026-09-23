@@ -1,7 +1,7 @@
 ﻿{ : This help file explain all the classes defined for DXF handling
   for the CADSys 4.0 library for both the 2D and 3D use.
 
-  These classes are defined in the FNCCS4DXFModule unit file
+  These classes are defined in the VCL.FNCCS4DXFModule unit file
   that you must include in the <B=uses> clause in all of your units
   that access the types mentioned here.
 
@@ -12,7 +12,7 @@
   Thanks also to <Code=Giuseppe Staltieri (sgs@@elios.net)>
   for his invaluable support and beta testing.
 }
-unit FNCCS4DXFModule;
+unit VCL.FNCCS4DXFModule;
 
 {$I VCL.FNCCADSys.inc}
 
@@ -26,10 +26,10 @@ uses
   System.SysUtils,
   System.Classes,
 {$ENDIF}
-  FNCCADSys4,
-  FNCCS4BaseTypes,
-  FNCCS4Graphics,
-  FNCCS4Shapes;
+  VCL.FNCCADSys4,
+  VCL.FNCCS4BaseTypes,
+  VCL.FNCCS4Graphics,
+  VCL.FNCCS4Shapes;
 
 type
   // -----===== Starting Cs4DXFReadWrite.pas =====-----

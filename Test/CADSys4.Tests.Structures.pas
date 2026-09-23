@@ -1,4 +1,4 @@
-{ : DUnitX tests for the core data structures of CADSys 4.2 (unit FNCCADSys4).
+{ : DUnitX tests for the core data structures of CADSys 4.2 (unit VCL.FNCCADSys4).
 
   Scope: TPointsSet2D / TPointsSet3D, TGraphicObjList and its iterators,
   TIndexedObjectList, TLayer / TLayers and TCADPrgParam.
@@ -20,11 +20,11 @@ uses
   System.Classes,
   Vcl.Graphics,
   DUnitX.TestFramework,
-  FNCCS4BaseTypes,
-  FNCCADSys4,
-  FNCCS4Shapes,
-  FNCCS4Graphics,
-  FNCCadSysRegister;
+  VCL.FNCCS4BaseTypes,
+  VCL.FNCCADSys4,
+  VCL.FNCCS4Shapes,
+  VCL.FNCCS4Graphics,
+  VCL.FNCCadSysRegister;
 
 type
   { : A minimal concrete TGraphicObject.
@@ -61,7 +61,7 @@ type
 
   { : A TPointsSet2D descendant that records every (PutIndex, ItemIndex) pair
     the virtual Put receives, so the shift contract documented around
-    FNCCADSys4.pas:848-860 can be pinned exactly.
+    VCL.FNCCADSys4.pas:848-860 can be pinned exactly.
   }
   TRecordingPointsSet2D = class(TPointsSet2D)
   private

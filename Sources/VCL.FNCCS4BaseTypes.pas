@@ -1,11 +1,11 @@
 {: This help file explain all the base types defined in
    the CADSys 4.0 library for both the 2D and 3D use.
 
-   These types are defined in the FNCCS4BaseTypes unit file
+   These types are defined in the VCL.FNCCS4BaseTypes unit file
    that you must include in the <B=uses> clause in all of your units
    that use CADSys.
 }
-unit FNCCS4BaseTypes;
+unit VCL.FNCCS4BaseTypes;
 
 {$I VCL.FNCCADSys.inc}
 
@@ -23,7 +23,7 @@ uses
     no framework type at all, which is the point of the whole seam. }
   Vcl.Graphics,
 {$ENDIF}
-  FNCCS4Graphics;
+  VCL.FNCCS4Graphics;
 
 type
   { : Signature of <See Var=CADSysOnWarning>. }
@@ -457,7 +457,7 @@ procedure CADSysWarn(const AMessage: String);
 implementation
 
 {$IFDEF CADSYS_VCL}
-uses FNCCS4GraphicsVCL;
+uses VCL.FNCCS4GraphicsVCL;
 {$ENDIF}
 
 procedure CADSysWarn(const AMessage: String);

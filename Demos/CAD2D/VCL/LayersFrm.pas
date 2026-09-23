@@ -21,7 +21,7 @@ interface
 uses
   System.SysUtils, System.Classes, System.Types, System.UITypes, System.Math,
   Vcl.Controls, Vcl.Forms, Vcl.StdCtrls, Vcl.ComCtrls, Vcl.ExtCtrls,
-  FNCCADSys4, FNCCS4Graphics;
+  VCL.FNCCADSys4, VCL.FNCCS4Graphics;
 
 type
   { : What a stacked row is, which decides its height. }

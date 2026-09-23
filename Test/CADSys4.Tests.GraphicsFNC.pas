@@ -1,4 +1,4 @@
-{ : DUnitX tests for the TMS FNC drawing backend (FNCCS4GraphicsFNC).
+{ : DUnitX tests for the TMS FNC drawing backend (VCL.FNCCS4GraphicsFNC).
 
   Everything is drawn into a TTMSFNCGraphics bitmap canvas with
   anti-aliasing off, and pixels are read back from its TBitmap. Only pixels
@@ -16,8 +16,8 @@ uses
   Vcl.Graphics,
   DUnitX.TestFramework,
   VCL.TMSFNCGraphics, VCL.TMSFNCGraphicsTypes,
-  FNCCS4BaseTypes, FNCCS4Graphics, FNCCS4GraphicsFNC,
-  FNCCADSys4, FNCCS4Shapes, FNCCadSysRegister;
+  VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsFNC,
+  VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCadSysRegister;
 
 type
   [TestFixture]

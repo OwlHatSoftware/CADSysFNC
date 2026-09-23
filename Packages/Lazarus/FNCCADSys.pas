@@ -8,8 +8,8 @@ unit FNCCADSys;
 interface
 
 uses
-  FNCCADSys4, FNCCS4BaseTypes, FNCCS4DXFModule, FNCCS4Shapes, FNCCS4Tasks, FNCCS4Graphics, 
-  FNCCS4GraphicsVCL, FNCCS4JSON, FNCCadSysReg, 
+  LCLFNCCADSys4, LCLFNCCS4BaseTypes, LCLFNCCS4DXFModule, LCLFNCCS4Shapes, LCLFNCCS4Tasks, LCLFNCCS4Graphics, 
+  LCLFNCCS4GraphicsVCL, LCLFNCCS4JSON, FNCCadSysReg, 
   LazarusPackageIntf;
 
 implementation

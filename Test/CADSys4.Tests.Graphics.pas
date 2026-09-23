@@ -1,4 +1,4 @@
-{ : DUnitX tests for the drawing layer (FNCCS4Graphics, FNCCS4GraphicsVCL) and for
+{ : DUnitX tests for the drawing layer (VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsVCL) and for
   TDecorativeCanvas on top of it.
 
   Two kinds of test live here:
@@ -20,8 +20,8 @@ uses
   System.SysUtils, System.Types, System.Classes,
   Vcl.Graphics,
   DUnitX.TestFramework,
-  FNCCS4BaseTypes, FNCCS4Graphics, FNCCS4GraphicsVCL,
-  FNCCADSys4, FNCCS4Shapes, FNCCadSysRegister;
+  VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsVCL,
+  VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCadSysRegister;
 
 type
   { A backend that records what it is asked to draw. }
@@ -375,11 +375,11 @@ begin
   { A system colour has its high byte set, so its low three bytes are an
     index into the theme rather than a BGR triple. The drawing layer cannot
     know what clBtnFace means - only the framework does - so a backend
-    installs CADResolveSystemColor and FNCCS4GraphicsVCL points it at
+    installs CADResolveSystemColor and VCL.FNCCS4GraphicsVCL points it at
     Vcl.Graphics.ColorToRGB. With that hook in place the conversion has to
     give the same answer as resolving by hand. }
   Assert.IsTrue(Assigned(CADResolveSystemColor),
-    'linking FNCCS4GraphicsVCL installs the resolver');
+    'linking VCL.FNCCS4GraphicsVCL installs the resolver');
   Assert.AreEqual<Cardinal>(Cardinal(TColorToCADColor(ColorToRGB(clBtnFace))),
     Cardinal(TColorToCADColor(clBtnFace)), 'resolved, not taken literally');
   Assert.AreNotEqual<Cardinal>(Cardinal(cadclBlack),

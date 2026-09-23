@@ -34,7 +34,7 @@
   CADSys42 repository and checked against real files. Where the old
   code branched on version, so does this.
 }
-unit FNCCS4Legacy;
+unit VCL.FNCCS4Legacy;
 
 {$I VCL.FNCCADSys.inc}
 
@@ -46,7 +46,7 @@ uses
 {$ELSE}
   System.Classes, System.SysUtils, System.UITypes,
 {$ENDIF}
-  FNCCS4BaseTypes, FNCCS4Graphics, FNCCADSys4, FNCCS4Shapes;
+  VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCADSys4, VCL.FNCCS4Shapes;
 
 type
   { : Raised when the stream is not a CADSys drawing, or stops making
@@ -1014,7 +1014,7 @@ end;
 initialization
 
 { So that TFNCCADCmp2D.LoadLegacyStream works for anyone who has this
-  unit in the program, without FNCCADSys4 having to know it exists. }
+  unit in the program, without VCL.FNCCADSys4 having to know it exists. }
 CADLegacyLoader := CADLoadLegacyStream;
 
 RegisterLegacyClass(LegacyContainer2D, BuildContainer2D);

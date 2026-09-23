@@ -1,7 +1,7 @@
 { : This help file explain all the interaction task classes defined in
   the CADSys 4.0 library for both the 2D and 3D use.
 
-  These classes are defined in the FNCCS4Tasks unit file
+  These classes are defined in the VCL.FNCCS4Tasks unit file
   that you must include in the <B=uses> clause in all of your units
   that access the types mentioned here.
 
@@ -37,7 +37,7 @@
   <B=Note>: All the 3D tasks work on the active
   <See=working plane@WORKPLANE> of the <See Class=TFNCCADPrg3D>.
 }
-unit FNCCS4Tasks;
+unit VCL.FNCCS4Tasks;
 
 {$I VCL.FNCCADSys.inc}
 
@@ -49,7 +49,7 @@ uses
 {$ELSE}
   System.SysUtils, System.Classes, System.Types, System.UITypes,
 {$ENDIF}
-  FNCCADSys4, FNCCS4BaseTypes, FNCCS4Shapes, FNCCS4Graphics;
+  VCL.FNCCADSys4, VCL.FNCCS4BaseTypes, VCL.FNCCS4Shapes, VCL.FNCCS4Graphics;
 
 type
   // TCAD2DDeleteObjects = class(TCADState)
@@ -1706,7 +1706,7 @@ begin
   { CS4-FIX (M6): the state is documented as taking no parameter, so the
     documented call StartOperation(TCADPrgPan, nil) faulted on StateParam.
     NOTE: StateParam is deliberately NOT freed here. SuspendOperation
-    (FNCCADSys4.pas ~20705) aliases the suspended state's own param into
+    (VCL.FNCCADSys4.pas ~20705) aliases the suspended state's own param into
     StateParam when the caller supplies none, so freeing it would destroy
     the suspended task's parameter. That leak is resolved together with the
     param-ownership rework (findings M7/M8/A3). }

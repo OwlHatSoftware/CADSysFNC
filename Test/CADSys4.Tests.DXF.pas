@@ -1,4 +1,4 @@
-{ : DUnitX tests for the DXF module (FNCCS4DXFModule.pas): group-level
+{ : DUnitX tests for the DXF module (VCL.FNCCS4DXFModule.pas): group-level
   round trips through TDXFWrite / TDXFRead, and one end-to-end import
   through TDXF2DImport.
 
@@ -15,7 +15,7 @@ uses
 
 type
 
-  { : TDXFWrite / TDXFRead group-level round trips (FNCCS4DXFModule.pas). }
+  { : TDXFWrite / TDXFRead group-level round trips (VCL.FNCCS4DXFModule.pas). }
   [TestFixture]
   TDXFGroupRoundTripTests = class(TObject)
   private
@@ -75,13 +75,13 @@ uses
   System.Variants,
   System.IOUtils,
   Winapi.Windows,
-  FNCCS4BaseTypes,
-  FNCCADSys4,
-  FNCCS4Shapes,
-  FNCCS4DXFModule,
+  VCL.FNCCS4BaseTypes,
+  VCL.FNCCADSys4,
+  VCL.FNCCS4Shapes,
+  VCL.FNCCS4DXFModule,
   { Required: its initialization section fills the persistence class
     registry and the font list. }
-  FNCCadSysRegister;
+  VCL.FNCCadSysRegister;
 
 const
   { Exact geometry must survive a Double round trip bit for bit; a
@@ -378,7 +378,7 @@ var
 begin
   { CS4-FIX: the upper bound on the extended-code branch was missing,
     so a code above 1256 wrote a Variant past the end of TGroupTable -
-    and every caller in FNCCS4DXFModule declares that table as a stack
+    and every caller in VCL.FNCCS4DXFModule declares that table as a stack
     local. 1300 must now be dropped entirely: neither stored nor
     allowed to disturb the surrounding groups. }
   WriteRawDXF(FTempFile, ['0', 'SECTION', '2', 'ENTITIES', '0', 'LINE',

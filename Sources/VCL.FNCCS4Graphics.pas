@@ -5,9 +5,9 @@
    <See Class=TCADGraphics>. TCADGraphics is abstract: a backend unit
    binds it to a real surface.
 
-   <LI=<I=FNCCS4GraphicsVCL> - a VCL TCanvas (GDI). Behaves exactly as the
+   <LI=<I=VCL.FNCCS4GraphicsVCL> - a VCL TCanvas (GDI). Behaves exactly as the
    library did before this layer existed.>
-   <LI=<I=FNCCS4GraphicsFNC> - a TMS FNC TTMSFNCGraphics, which runs on
+   <LI=<I=VCL.FNCCS4GraphicsFNC> - a TMS FNC TTMSFNCGraphics, which runs on
    VCL, FMX and LCL.>
 
    This unit must not use any VCL, FMX, LCL or Windows unit.
@@ -17,11 +17,11 @@
    written against TCanvas ports by dropping the ".Canvas" and adding a
    "c" prefix to the enum values.
 }
-unit FNCCS4Graphics;
+unit VCL.FNCCS4Graphics;
 
 {$I VCL.FNCCADSys.inc}
 
-{ : Range checking off - see FNCCADSys4 for the reasoning. This unit
+{ : Range checking off - see VCL.FNCCADSys4 for the reasoning. This unit
   indexes a 'array [0..0] of TPoint' through PCADPoints, which is the
   same variable-length-array idiom and equally cannot be range checked. }
 {$RANGECHECKS OFF}
@@ -136,7 +136,7 @@ var
 
     The drawing layer cannot know what clBtnFace means - that is a VCL
     idea, and this unit uses no framework at all - so a backend installs
-    the resolver. FNCCS4GraphicsVCL points it at Vcl.Graphics.ColorToRGB
+    the resolver. VCL.FNCCS4GraphicsVCL points it at Vcl.Graphics.ColorToRGB
     in its initialization section. With none installed a system colour
     falls back to opaque black.
   }

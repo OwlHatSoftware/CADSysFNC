@@ -1,4 +1,4 @@
-{ : DUnitX tests for the legacy .CS2 reader (FNCCS4Legacy).
+{ : DUnitX tests for the legacy .CS2 reader (VCL.FNCCS4Legacy).
 
   The streams are built here rather than loaded from files, for the
   same reason the DXF tests build theirs: a test that needs a fixture
@@ -18,8 +18,8 @@ interface
 uses
   System.SysUtils, System.Classes,
   DUnitX.TestFramework,
-  FNCCS4BaseTypes, FNCCS4Graphics, FNCCADSys4, FNCCS4Shapes, FNCCS4Legacy,
-  FNCCadSysRegister;
+  VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCS4Legacy,
+  VCL.FNCCadSysRegister;
 
 type
   { : Writes legacy drawings, so the reader has something to read. }
@@ -497,7 +497,7 @@ var
   TmpWriter: TLegacyWriter;
 begin
   { CAD.LoadLegacyStream reaches the reader through a hook, because
-    FNCCADSys4 cannot use the unit that uses it. This is the test that
+    VCL.FNCCADSys4 cannot use the unit that uses it. This is the test that
     the hook is actually installed - without it the method raises
     instead, and nothing else here would notice. }
   TmpWriter := TLegacyWriter.Create('CAD423', True, True);

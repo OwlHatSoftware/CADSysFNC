@@ -1,11 +1,11 @@
 ﻿{ : This help file explain all the entities classes defined in
   the CADSys 4.0 library for both the 2D and 3D use.
 
-  These classes are defined in the FNCCS4Shapes unit file
+  These classes are defined in the VCL.FNCCS4Shapes unit file
   that you must include in the <B=uses> clause in all of your units
   that access the types mentioned here.
 }
-unit FNCCS4Shapes;
+unit VCL.FNCCS4Shapes;
 
 {$I VCL.FNCCADSys.inc}
 
@@ -17,7 +17,7 @@ uses
 {$ELSE}
   System.SysUtils, System.Classes, System.Types, System.JSON,
 {$ENDIF}
-  FNCCADSys4, FNCCS4BaseTypes, FNCCS4Graphics, FNCCS4JSON;
+  VCL.FNCCADSys4, VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4JSON;
 
 type
 
@@ -779,7 +779,7 @@ type
     { : This property contains the <I=clipping flags> passed to
       <See Method=TCADGraphics@DrawText>.
 
-      They are the <I=CAD_DT_*> constants in FNCCS4Graphics, whose values
+      They are the <I=CAD_DT_*> constants in VCL.FNCCS4Graphics, whose values
       equal the Windows <I=DT_*> ones, so a value stored by an older
       version still means the same thing. By default they are 0, which is
       <I=CAD_DT_TOP or CAD_DT_LEFT>.
@@ -815,7 +815,7 @@ type
 
       <I=Img> is the picture to be drawed. It is copied, so the
       caller keeps ownership of it. Build one from a VCL bitmap
-      with <I=CADImageFromBitmap> in FNCCS4GraphicsVCL.
+      with <I=CADImageFromBitmap> in VCL.FNCCS4GraphicsVCL.
 
       <I=P1> and <I=P2> are the corner points of the bitmap
       in world coordinates (and the bitmap will be stretched
@@ -3092,9 +3092,9 @@ uses
 {$IFDEF CADSYS_LCL}
   { base64 is FPC's answer to System.NetEncoding; only TBitmap2D needs it,
     to put its PNG bytes in a JSON string. }
-  Math, base64, FNCCadSysRegister;
+  Math, base64, VCL.FNCCadSysRegister;
 {$ELSE}
-  Math, System.NetEncoding, FNCCadSysRegister;
+  Math, System.NetEncoding, VCL.FNCCadSysRegister;
 {$ENDIF}
 
 var

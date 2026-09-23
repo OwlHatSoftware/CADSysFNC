@@ -1,10 +1,10 @@
 ﻿{ : This help file explain all the classes and functions defined in
   the CADSys 4.0 library for both the 2D and 3D use.
 
-  These classes and functions are defined in the FNCCADSys4 unit file
+  These classes and functions are defined in the VCL.FNCCADSys4 unit file
   that you must include in the <B=uses> clause in all of your units
   that access the types and functions of the library.
-  For the forms there is no need to manually add FNCCADSys4 if you
+  For the forms there is no need to manually add VCL.FNCCADSys4 if you
   place the controls of the library on them.
 
   <See=Classes@CS4_CLASSLIST><BR>
@@ -20,10 +20,10 @@
   using an automatic in-source documentation extractor for Delphi.>
 
   <B=Units><BR>
-  <See Unit=FNCCADSys4><BR>
-  <See Unit=FNCCS4BaseTypes><BR>
-  <See Unit=FNCCS4Shapes><BR>
-  <See Unit=FNCCS4Tasks><BR>
+  <See Unit=VCL.FNCCADSys4><BR>
+  <See Unit=VCL.FNCCS4BaseTypes><BR>
+  <See Unit=VCL.FNCCS4Shapes><BR>
+  <See Unit=VCL.FNCCS4Tasks><BR>
 
   This is the help file for the CADSys 4.0 library, a complete
   2D/3D vectorial graphic library in floating point precision.
@@ -38,7 +38,7 @@
   create a new library from scratch).
 
   The library cames with all the sources of the controls, components,
-  graphical objects and tasks, and only need a separate DLL (FNCCADSys4.dll)
+  graphical objects and tasks, and only need a separate DLL (VCL.FNCCADSys4.dll)
   to work.
   This is not a library that do all the things for you, you have
   to write simple Object Pascal code in order to create the
@@ -54,7 +54,7 @@
 
 }
 { :<New topic=CS4_CLASSLIST@List of classes>
-  These are the classes defined in the FNCCADSys4 unit:
+  These are the classes defined in the VCL.FNCCADSys4 unit:
 
   <See Class=ECADSysException><BR>
   <See Class=ECADOutOfBound><BR>
@@ -113,12 +113,12 @@
   <See Class=TCADState3D><BR>
   <See Class=TFNCCADPrg3D><BR>
 
-  These are the classes defined in the FNCCS4BaseTypes unit:
+  These are the classes defined in the VCL.FNCCS4BaseTypes unit:
 
   <See Class=TDecorativePen><BR>
   <See Class=TDecorativeCanvas><BR>
 
-  These are the classes defined in the FNCCS4Shapes unit:
+  These are the classes defined in the VCL.FNCCS4Shapes unit:
 
   <See Class=TExtendedFont><BR>
   <See Class=TPrimitive2DClass class of TPrimitive2D><BR>
@@ -169,7 +169,7 @@
   <See Class=TRotationalOutline3D><BR>
   <See Class=TCameraObject3D><BR>
 
-  These are the classes defined in the FNCCS4Tasks unit:
+  These are the classes defined in the VCL.FNCCS4Tasks unit:
 
   <See Class=TCADPrgZoomParam><BR>
   <See Class=TCADPrgZoomState><BR>
@@ -245,7 +245,7 @@
   <See Class=TCAD3DEditPrimitive><BR>
   <See Class=TCAD3DEditSelectedObject><BR>
 
-  These are the classes defined in the FNCCS4DXFModule unit:
+  These are the classes defined in the VCL.FNCCS4DXFModule unit:
 
   <See Class=TDXFRead><BR>
   <See Class=TDXFWrite><BR>
@@ -255,7 +255,7 @@
 
 }
 { :<New topic=CS4_TYPELIST@List of types>
-  These are the types defined in the FNCCADSys4 unit:
+  These are the types defined in the VCL.FNCCADSys4 unit:
 
   <See Type=TCADVersion><BR>
   <See Type=TSourceBlockName><BR>
@@ -289,7 +289,7 @@
   <See Type=TMouse3DMoveFilter><BR>
   <See Type=TCADPrg3DSnapFilter><BR>
 
-  These are the types defined in the FNCCS4BaseTypes unit:
+  These are the types defined in the VCL.FNCCS4BaseTypes unit:
 
   <See Type=TRealType><BR>
   <See Type=TClipCode><BR>
@@ -310,7 +310,7 @@
   <See Type=TVectPoints3D><BR>
   <See Type=PVectPoints3D><BR>
 
-  These are the types defined in the FNCCS4Shapes unit:
+  These are the types defined in the VCL.FNCCS4Shapes unit:
 
   <See Type=TFaceName><BR>
   <See Type=TPrimitiveSavingType><BR>
@@ -318,13 +318,13 @@
   <See Type=THJustification><BR>
   <See Type=TVJustification><BR>
 
-  These are the types defined in the FNCCS4Tasks unit:
+  These are the types defined in the VCL.FNCCS4Tasks unit:
 
   <See Type=TSelection2DEvent><BR>
   <See Type=TSelection3DEvent><BR>
   <See Type=TCAD3DEditPrimMode><BR>
 
-  These are the types defined in the FNCCS4DXFModule unit:
+  These are the types defined in the VCL.FNCCS4DXFModule unit:
 
   <See Type=TSections><BR>
   <See Type=TGroupTable><BR>
@@ -334,7 +334,7 @@
 
 }
 { :<New topic=CS4_FUNCTIONLIST@List of functions/procedures>
-  These are the functions defined in the FNCCADSys4 unit:
+  These are the functions defined in the VCL.FNCCADSys4 unit:
 
   <See Procedure=MakeOrto2D><BR>
   <See Procedure=MakeOrto3D><BR>
@@ -482,7 +482,7 @@
   <See Function=CADSysFindClassByIndex><BR>
   <See Function=StringToBlockName><BR>
 
-  These are the functions defined in the FNCCS4Shapes unit:
+  These are the functions defined in the VCL.FNCCS4Shapes unit:
 
   <See Procedure=SetCamerasViewport><BR>
   <See Procedure=CADSysSetDefaultFont><BR>
@@ -496,7 +496,7 @@
   <See Function=CADSysFindFontByIndex><BR>
 
 }
-Unit FNCCADSys4;
+Unit VCL.FNCCADSys4;
 
 {$I VCL.FNCCADSys.inc}
 
@@ -543,17 +543,17 @@ uses
   { Vcl.Graphics is down to pf24bit and the back buffer's TCanvas, which
     only the GDI backend wants.
 
-    FNCCS4GraphicsVCL is here for its side effect, not for any identifier
+    VCL.FNCCS4GraphicsVCL is here for its side effect, not for any identifier
     - this unit names none of them. Linking it in is what installs
     CADResolveSystemColor, without which every clBtnFace and clWindow in
     a drawing would come out opaque black. Do not "tidy" it away. }
   Vcl.Graphics,
   VCL.TMSFNCTypes, VCL.TMSFNCGraphicsTypes, VCL.TMSFNCGraphics,
   VCL.TMSFNCCustomControl,
-  FNCCS4GraphicsVCL,
+  VCL.FNCCS4GraphicsVCL,
 {$ENDIF}
-  FNCCS4BaseTypes, FNCCS4Graphics, FNCCS4GraphicsFNC,
-  FNCCS4JSON, FNCCS4Views;
+  VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsFNC,
+  VCL.FNCCS4JSON, VCL.FNCCS4Views;
 
 type
   { : This type is used by the library for versioning control.
@@ -737,11 +737,11 @@ type
 
   { : Reads a drawing in the pre-JSON binary format into ACAD.
 
-    The reader lives in FNCCS4Legacy, which uses this unit, so this
+    The reader lives in VCL.FNCCS4Legacy, which uses this unit, so this
     unit cannot use it back. The hook is how
     <See Method=TFNCCADCmp2D@LoadLegacyStream> reaches it - the same
-    arrangement as CADResolveSystemColor in FNCCS4Graphics, and for the
-    same reason. FNCCS4Legacy installs it from its initialization, so
+    arrangement as CADResolveSystemColor in VCL.FNCCS4Graphics, and for the
+    same reason. VCL.FNCCS4Legacy installs it from its initialization, so
     putting that unit in a uses clause anywhere in the program is all
     it takes. }
   TCADLegacyLoader = procedure(const AStream: TStream;
@@ -1633,7 +1633,7 @@ type
 
     This class cannot be instantiated directly (and even derived from) but
     you must use instead the classes <See Class=TObject2D>, <See Class=TObject3D>
-    and the classes derived from them. See the unit <See unit=FNCCS4Shapes>.
+    and the classes derived from them. See the unit <See unit=VCL.FNCCS4Shapes>.
   }
   TGraphicObject = class(TInterfacedObject)
   private
@@ -3471,10 +3471,10 @@ type
       millimetres on a device with the given millimetres per pixel.
 
       Public, and it has to be: the calibration that used to live on
-      this class moved to FNCCS4ExportVCL in step 5b, because asking a
+      this class moved to VCL.FNCCS4ExportVCL in step 5b, because asking a
       device for its physical size is a GDI question and has no FMX
       answer. That companion is a separate unit, so this cannot stay
-      private - and it was, which is why FNCCS4ExportVCL had never
+      private - and it was, which is why VCL.FNCCS4ExportVCL had never
       actually compiled. The geometry stays here; only the question
       "how big is a pixel on this device" moved out. }
     procedure CalibrateMM(const AMMPerPixelX, AMMPerPixelY: TRealType;
@@ -5370,7 +5370,7 @@ type
         CAD.LoadLegacyFile('old.cs2');
         CAD.SaveToFile('new.json');
 
-      Requires FNCCS4Legacy to be in the program - it installs the
+      Requires VCL.FNCCS4Legacy to be in the program - it installs the
       reader on the way in. Without it this raises, saying so, rather
       than failing obscurely.
 
@@ -10149,7 +10149,7 @@ procedure CADSysUnregisterClass(Index: Word);
 function StringToBlockName(const Str: String): TSourceBlockName;
 
 var
-  { : Installed by FNCCS4Legacy. See <See Type=TCADLegacyLoader>. }
+  { : Installed by VCL.FNCCS4Legacy. See <See Type=TCADLegacyLoader>. }
   CADLegacyLoader: TCADLegacyLoader = nil;
 
 const
@@ -10160,16 +10160,16 @@ const
   { : This constant is the value of the "format" member of every CADSys
     JSON document.
   }
-  CADSysJSONFormat = FNCCS4JSON.CADSysJSONFormat;
+  CADSysJSONFormat = VCL.FNCCS4JSON.CADSysJSONFormat;
   { : This constant is the version of the JSON document format written by
     this version of the library.
 
-    Both of these now live in FNCCS4JSON, because a saved view is a
-    CADSys document too and FNCCS4Views cannot use this unit. They are
-    re-declared here so that code written against FNCCADSys4 keeps
+    Both of these now live in VCL.FNCCS4JSON, because a saved view is a
+    CADSys document too and VCL.FNCCS4Views cannot use this unit. They are
+    re-declared here so that code written against VCL.FNCCADSys4 keeps
     compiling.
   }
-  CADSysJSONVersion = FNCCS4JSON.CADSysJSONVersion;
+  CADSysJSONVersion = VCL.FNCCS4JSON.CADSysJSONVersion;
   { : This constant is used as <I=drawing mode> value for
     the <See Property=TFNCCADViewport@DrawMode>.
   }
@@ -10267,7 +10267,7 @@ const
 
 Implementation
 
-uses FNCCS4Shapes;
+uses VCL.FNCCS4Shapes;
 
 type
   // TGraphicClassRegistered = ;
@@ -16809,7 +16809,7 @@ begin
   { It used to read the device's size and resolution through GetDeviceCaps.
     Only the caller knows what surface it is going to draw on, so it passes
     the millimetres-per-pixel in - see CADCalibrateToCanvas in
-    FNCCS4ExportVCL for the VCL screen-or-printer version. }
+    VCL.FNCCS4ExportVCL for the VCL screen-or-printer version. }
   if (XScale = 0) or (YScale = 0) then
     Exit;
   if (AMMPerPixelX = 0) or (AMMPerPixelY = 0) then
@@ -18230,7 +18230,7 @@ begin
   if not Assigned(CADLegacyLoader) then
     Raise ECADSysException.Create
       ('TFNCCADCmp2D.LoadLegacyStream: no reader for the old binary format ' +
-      'is installed. Add FNCCS4Legacy to a uses clause in the program - it ' +
+      'is installed. Add VCL.FNCCS4Legacy to a uses clause in the program - it ' +
       'installs one from its initialization.');
   CADLegacyLoader(Stream, Self);
 end;

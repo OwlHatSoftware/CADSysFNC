@@ -25,7 +25,7 @@
    <LI=The clip rectangle is only narrowed, never widened, because FNC
    has no public way to read or reset it outside Save/RestoreState.>
 }
-unit FNCCS4GraphicsFNC;
+unit VCL.FNCCS4GraphicsFNC;
 
 {$I VCL.FNCCADSys.inc}
 
@@ -39,7 +39,7 @@ uses
 {$ELSE}
   System.Types, System.UITypes, System.Classes, System.SysUtils, System.Math,
 {$ENDIF}
-  FNCCS4Graphics,
+  VCL.FNCCS4Graphics,
 {$IFDEF CADSYS_FMX}
   FMX.TMSFNCTypes, FMX.TMSFNCGraphicsTypes, FMX.TMSFNCGraphics;
 {$ENDIF}
@@ -841,12 +841,12 @@ end;
 
 initialization
 
-{ The same hook FNCCS4GraphicsVCL installs, for the target that has no
+{ The same hook VCL.FNCCS4GraphicsVCL installs, for the target that has no
   VCL backend to install it. Without a resolver every clBtnFace and
   clWindow in a drawing converts to opaque black, because the drawing
   layer has no way to read a theme index.
 
-  Only LCL: on the VCL this unit is linked alongside FNCCS4GraphicsVCL
+  Only LCL: on the VCL this unit is linked alongside VCL.FNCCS4GraphicsVCL
   and must not race it for the hook, and FMX has no TColor system
   colours to resolve in the first place - its palette is TAlphaColor,
   and the clXxx values that do reach here come from System.UITypes and

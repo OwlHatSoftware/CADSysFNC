@@ -13,7 +13,7 @@
 
   The one substantive difference is at the bottom: printing and
   clipboard export are real here and stubbed on FMX. They are built on
-  the GDI canvas and TClipboard, live in FNCCS4ExportVCL, and have no
+  the GDI canvas and TClipboard, live in VCL.FNCCS4ExportVCL, and have no
   FMX equivalent in the library. }
 unit MainFrm;
 
@@ -25,13 +25,13 @@ uses
   Vcl.Controls, Vcl.Forms, Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.Menus,
   Vcl.Dialogs, Vcl.Printers, Vcl.ClipBrd, Vcl.Graphics,
   DemoLog, DemoDlg, LayersFrm,
-  FNCCS4BaseTypes, FNCCS4Graphics, FNCCADSys4, FNCCS4Shapes, FNCCS4Tasks,
-  FNCCS4DXFModule, FNCCS4Legacy, FNCCS4ExportVCL, FNCCS4Views,
-  { FNCCadSysRegister is here for its initialization section, not for
+  VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCS4Tasks,
+  VCL.FNCCS4DXFModule, VCL.FNCCS4Legacy, VCL.FNCCS4ExportVCL, VCL.FNCCS4Views,
+  { VCL.FNCCadSysRegister is here for its initialization section, not for
     the component palette: it is the only place that fills the class
     registry, and without it LoadFromFile and SaveToFile have no class
     to map the index they store onto. }
-  FNCCadSysRegister;
+  VCL.FNCCadSysRegister;
 
 type
   TMainForm = class(TForm)
@@ -1296,7 +1296,7 @@ end;
 
 { The four below are the substantive difference between this file and
   its FMX twin, where they all report that the feature does not exist.
-  CADCopyToCanvas and CADCopyToClipboard come from FNCCS4ExportVCL: they
+  CADCopyToCanvas and CADCopyToClipboard come from VCL.FNCCS4ExportVCL: they
   are built on the GDI canvas and TClipboard, and asking a device for
   its physical size has no FMX answer. }
 

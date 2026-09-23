@@ -16,24 +16,24 @@
    colour with alpha 0 is not drawn at all. The FNC backend blends for
    real.
 }
-unit FNCCS4GraphicsVCL;
+unit VCL.FNCCS4GraphicsVCL;
 
 {$I VCL.FNCCADSys.inc}
 
-{ : Range checking off - see FNCCADSys4 for the reasoning. This unit
+{ : Range checking off - see VCL.FNCCADSys4 for the reasoning. This unit
   indexes a 'array [0..0] of TPoint' through PCADPoints, which is the
   same variable-length-array idiom and equally cannot be range checked. }
 {$RANGECHECKS OFF}
 
 {$IFNDEF CADSYS_VCL}
-{$MESSAGE Fatal 'FNCCS4GraphicsVCL is VCL-only (the GDI backend). Remove it from the FMX or LCL package rather than compiling it there.'}
+{$MESSAGE Fatal 'VCL.FNCCS4GraphicsVCL is VCL-only (the GDI backend). Remove it from the FMX or LCL package rather than compiling it there.'}
 {$ENDIF}
 
 interface
 
 uses
   WinAPI.Windows, System.Types, System.UITypes, System.Classes,
-  System.SysUtils, Vcl.Graphics, Vcl.Imaging.pngimage, FNCCS4Graphics;
+  System.SysUtils, Vcl.Graphics, Vcl.Imaging.pngimage, VCL.FNCCS4Graphics;
 
 type
   TCADVCLGraphics = class;

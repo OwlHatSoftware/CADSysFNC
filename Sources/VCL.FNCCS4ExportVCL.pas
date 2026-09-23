@@ -4,7 +4,7 @@
    VCL: a <I=TCanvas>, a printer, the clipboard. The viewport itself no
    longer knows about any of those - it copies onto a
    <See Class=TDecorativeCanvas> and calibrates from a millimetres-per-pixel
-   figure - which is what lets FNCCADSys4 compile for FMX and LCL as well.
+   figure - which is what lets VCL.FNCCADSys4 compile for FMX and LCL as well.
 
    These are plain routines rather than methods so that the unit is purely
    additive: add it to your uses clause and the old calls keep their shape.
@@ -15,12 +15,12 @@
    Nothing in the library uses this unit, so a project that does not need
    it does not link it.
 }
-unit FNCCS4ExportVCL;
+unit VCL.FNCCS4ExportVCL;
 
 {$I VCL.FNCCADSys.inc}
 
 {$IFNDEF CADSYS_VCL}
-{$MESSAGE Fatal 'FNCCS4ExportVCL is VCL-only (the printing and clipboard helpers). Remove it from the FMX or LCL package rather than compiling it there.'}
+{$MESSAGE Fatal 'VCL.FNCCS4ExportVCL is VCL-only (the printing and clipboard helpers). Remove it from the FMX or LCL package rather than compiling it there.'}
 {$ENDIF}
 
 interface
@@ -28,7 +28,7 @@ interface
 uses
   WinAPI.Windows, System.Types, System.UITypes, System.Classes,
   Vcl.Graphics, Vcl.ClipBrd,
-  FNCCS4BaseTypes, FNCCS4Graphics, FNCCS4GraphicsVCL, FNCCADSys4;
+  VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsVCL, VCL.FNCCADSys4;
 
 {: The size of one pixel of <I=Cnv>, in millimetres. It is what
    <See Method=TFNCCADViewport@CalibrateMM> wants, and it is the one thing

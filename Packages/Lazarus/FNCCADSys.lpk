@@ -9,7 +9,7 @@
       <Version Value="11"/>
       <PathDelim Value="\"/>
       <SearchPaths>
-        <OtherUnitFiles Value="..\..\Sources"/>
+        <OtherUnitFiles Value="..\..\Generated\LCL"/>
         <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)"/>
       </SearchPaths>
       <Parsing>
@@ -51,36 +51,36 @@ SOFTWARE."/>
         <HasRegisterProc Value="True"/>
       </Item1>
       <Item2>
-        <Filename Value="..\..\Sources\FNCCADSys4.pas"/>
-        <UnitName Value="FNCCADSys4"/>
+        <Filename Value="..\..\Generated\LCL\LCLFNCCADSys4.pas"/>
+        <UnitName Value="LCLFNCCADSys4"/>
       </Item2>
       <Item3>
-        <Filename Value="..\..\Sources\FNCCS4BaseTypes.pas"/>
-        <UnitName Value="FNCCS4BaseTypes"/>
+        <Filename Value="..\..\Generated\LCL\LCLFNCCS4BaseTypes.pas"/>
+        <UnitName Value="LCLFNCCS4BaseTypes"/>
       </Item3>
       <Item4>
-        <Filename Value="..\..\Sources\FNCCS4DXFModule.pas"/>
-        <UnitName Value="FNCCS4DXFModule"/>
+        <Filename Value="..\..\Generated\LCL\LCLFNCCS4DXFModule.pas"/>
+        <UnitName Value="LCLFNCCS4DXFModule"/>
       </Item4>
       <Item5>
-        <Filename Value="..\..\Sources\FNCCS4Shapes.pas"/>
-        <UnitName Value="FNCCS4Shapes"/>
+        <Filename Value="..\..\Generated\LCL\LCLFNCCS4Shapes.pas"/>
+        <UnitName Value="LCLFNCCS4Shapes"/>
       </Item5>
       <Item6>
-        <Filename Value="..\..\Sources\FNCCS4Tasks.pas"/>
-        <UnitName Value="FNCCS4Tasks"/>
+        <Filename Value="..\..\Generated\LCL\LCLFNCCS4Tasks.pas"/>
+        <UnitName Value="LCLFNCCS4Tasks"/>
       </Item6>
       <Item7>
-        <Filename Value="..\..\Sources\FNCCS4Graphics.pas"/>
-        <UnitName Value="FNCCS4Graphics"/>
+        <Filename Value="..\..\Generated\LCL\LCLFNCCS4Graphics.pas"/>
+        <UnitName Value="LCLFNCCS4Graphics"/>
       </Item7>
       <Item8>
-        <Filename Value="..\..\Sources\FNCCS4GraphicsVCL.pas"/>
-        <UnitName Value="FNCCS4GraphicsVCL"/>
+        <Filename Value="..\..\Generated\LCL\LCLFNCCS4GraphicsVCL.pas"/>
+        <UnitName Value="LCLFNCCS4GraphicsVCL"/>
       </Item8>
       <Item9>
-        <Filename Value="..\..\Sources\FNCCS4JSON.pas"/>
-        <UnitName Value="FNCCS4JSON"/>
+        <Filename Value="..\..\Generated\LCL\LCLFNCCS4JSON.pas"/>
+        <UnitName Value="LCLFNCCS4JSON"/>
       </Item9>
       <Item10>
         <Filename Value="FNCCadSysReg.pas"/>

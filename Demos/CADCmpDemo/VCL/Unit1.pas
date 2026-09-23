@@ -6,7 +6,7 @@ interface
 
 uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
-  FNCCADSys4, FNCCS4Graphics, FNCCS4GraphicsVCL, FNCCS4Shapes,
+  VCL.FNCCADSys4, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsVCL, VCL.FNCCS4Shapes,
   StdCtrls, ExtCtrls;
 
 type

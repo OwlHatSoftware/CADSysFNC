@@ -43,7 +43,7 @@ $ErrorActionPreference = 'Stop'
 # Which units belong to which framework.
 #
 # Everything is in all three unless it names a framework in its own
-# right: FNCCS4GraphicsVCL is the GDI backend and FNCCS4ExportVCL is the
+# right: VCL.FNCCS4GraphicsVCL is the GDI backend and VCL.FNCCS4ExportVCL is the
 # metafile and clipboard export, and neither has an FMX or an LCL
 # meaning. Emitting them anyway would compile - they are only reached
 # through CADSYS_VCL - but it would put a unit that says VCL into the
@@ -60,24 +60,24 @@ $Units = [ordered]@{
   #
   # CADSys.inc is the compatibility shim for projects written against
   # the old arrangement, and is VCL-only on purpose.
-  'CADSysCommon.inc'       = $All
-  'VCL.FNCCADSys.inc'      = @('VCL')
-  'FMX.FNCCADSys.inc'      = @('FMX')
-  'LCLFNCCADSys.inc'       = @('LCL')
-  'CADSys.inc'             = @('VCL')
-  'FNCCADSys4.pas'         = $All
-  'FNCCS4BaseTypes.pas'    = $All
-  'FNCCS4DXFModule.pas'    = $All
-  'FNCCS4Graphics.pas'     = $All
-  'FNCCS4GraphicsFNC.pas'  = $All
-  'FNCCS4GraphicsVCL.pas'  = @('VCL')
-  'FNCCS4ExportVCL.pas'    = @('VCL')
-  'FNCCS4JSON.pas'         = $All
-  'FNCCS4Legacy.pas'       = $All
-  'FNCCS4Shapes.pas'       = $All
-  'FNCCS4Tasks.pas'        = $All
-  'FNCCS4Views.pas'        = $All
-  'FNCCadSysRegister.pas'  = $All
+  'CADSysCommon.inc'           = $All
+  'VCL.FNCCADSys.inc'          = @('VCL')
+  'FMX.FNCCADSys.inc'          = @('FMX')
+  'LCLFNCCADSys.inc'           = @('LCL')
+  'CADSys.inc'                 = @('VCL')
+  'VCL.FNCCADSys4.pas'         = $All
+  'VCL.FNCCS4BaseTypes.pas'    = $All
+  'VCL.FNCCS4DXFModule.pas'    = $All
+  'VCL.FNCCS4Graphics.pas'     = $All
+  'VCL.FNCCS4GraphicsFNC.pas'  = $All
+  'VCL.FNCCS4GraphicsVCL.pas'  = @('VCL')
+  'VCL.FNCCS4ExportVCL.pas'    = @('VCL')
+  'VCL.FNCCS4JSON.pas'         = $All
+  'VCL.FNCCS4Legacy.pas'       = $All
+  'VCL.FNCCS4Shapes.pas'       = $All
+  'VCL.FNCCS4Tasks.pas'        = $All
+  'VCL.FNCCS4Views.pas'        = $All
+  'VCL.FNCCadSysRegister.pas'  = $All
 }
 
 # ---------------------------------------------------------------------

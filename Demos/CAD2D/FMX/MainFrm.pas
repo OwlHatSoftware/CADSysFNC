@@ -11,7 +11,7 @@
 
   Three things are genuinely different from the VCL demo:
 
-  <LI=Printing and clipboard are absent. They live in FNCCS4ExportVCL,
+  <LI=Printing and clipboard are absent. They live in VCL.FNCCS4ExportVCL,
   which is VCL-only by construction - GDI and TClipboard have no FMX
   counterpart in this library yet. The menu items are present and say
   so, rather than being quietly missing.>
@@ -32,13 +32,13 @@ uses
   FMX.Types, FMX.Controls, FMX.Forms, FMX.StdCtrls, FMX.Menus, FMX.Dialogs,
   FMX.Layouts, FMX.Controls.Presentation,
   DemoLog, DemoDlg, LayersFrm,
-  FNCCS4BaseTypes, FNCCS4Graphics, FNCCADSys4, FNCCS4Shapes, FNCCS4Tasks,
-  FNCCS4DXFModule, FNCCS4Legacy, FNCCS4Views,
-  { FNCCadSysRegister is here for its initialization section, not for
+  FMX.FNCCS4BaseTypes, FMX.FNCCS4Graphics, FMX.FNCCADSys4, FMX.FNCCS4Shapes, FMX.FNCCS4Tasks,
+  FMX.FNCCS4DXFModule, FMX.FNCCS4Legacy, FMX.FNCCS4Views,
+  { FMX.FNCCadSysRegister is here for its initialization section, not for
     the component palette: it is the only place that fills the class
     registry, and without it LoadFromFile and SaveToFile have no class
     to map the index they store onto. }
-  FNCCadSysRegister;
+  FMX.FNCCadSysRegister;
 
 type
   TMainForm = class(TForm)
@@ -1262,7 +1262,7 @@ end;
 
 procedure TMainForm.NotOnFMX;
 begin
-  Say('Printing and clipboard export live in FNCCS4ExportVCL, which is '
+  Say('Printing and clipboard export live in VCL.FNCCS4ExportVCL, which is '
     + 'VCL-only: they are built on the GDI canvas and TClipboard. There '
     + 'is no FMX equivalent in the library yet.');
 end;

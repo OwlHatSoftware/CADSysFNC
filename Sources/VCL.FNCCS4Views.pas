@@ -25,7 +25,7 @@
    and <See Method=TCADViewSpec@SaveToFile> convert between the two, so a
    caller never juggles both.
 }
-unit FNCCS4Views;
+unit VCL.FNCCS4Views;
 
 {$I VCL.FNCCADSys.inc}
 
@@ -33,13 +33,13 @@ interface
 
 uses
 {$IFDEF CADSYS_LCL}
-  { fpjson for TJSONObject itself: FNCCS4JSON hides the difference
+  { fpjson for TJSONObject itself: VCL.FNCCS4JSON hides the difference
     between the two JSON APIs, but not the name of the class. }
   SysUtils, Classes, fpjson,
 {$ELSE}
   System.SysUtils, System.Classes, System.JSON,
 {$ENDIF}
-  FNCCS4BaseTypes, FNCCS4JSON;
+  VCL.FNCCS4BaseTypes, VCL.FNCCS4JSON;
 
 type
   { : Raised when a view document is not one, or names a drawing that
@@ -121,7 +121,7 @@ const
 
    Text rather than a JSON array of numbers on purpose. Building an array
    of numbers means naming a JSON number class, and the whole point of
-   FNCCS4JSON is that the library names one in exactly one unit, where
+   VCL.FNCCS4JSON is that the library names one in exactly one unit, where
    FPC's different spelling is one gap rather than three. A list of
    indices costs a split and reads better in the file than a bitmap.
 }
@@ -178,7 +178,7 @@ begin
   Result.Name := '';
   Result.DrawingFile := '';
   { Set field by field rather than through Rect2D: that lives in
-    FNCCADSys4, which uses this unit, and a view has no business
+    VCL.FNCCADSys4, which uses this unit, and a view has no business
     depending on the viewport it is applied to. W1 and W2 are the
     homogeneous components and are 1 for an ordinary rectangle. }
   Result.Window.Left := -100.0;

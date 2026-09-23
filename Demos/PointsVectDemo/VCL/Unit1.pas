@@ -12,7 +12,7 @@ interface
 
 uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
-  FNCCS4BaseTypes, FNCCS4Graphics, FNCCADSys4, StdCtrls, ExtCtrls;
+  VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCADSys4, StdCtrls, ExtCtrls;
 
 type
   TForm1 = class(TForm)

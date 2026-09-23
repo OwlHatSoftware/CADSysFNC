@@ -23,7 +23,7 @@
 
    This unit must not use any VCL, FMX, LCL or Windows unit.
 }
-unit FNCCS4JSON;
+unit VCL.FNCCS4JSON;
 
 {$I VCL.FNCCADSys.inc}
 
@@ -36,14 +36,14 @@ uses
     API (Add rather than AddPair, and Find rather than GetValue). This
     unit is deliberately the only place in the library that touches a
     JSON class, so that gap is one unit wide rather than three. }
-  SysUtils, Classes, fpjson, jsonparser, FNCCS4BaseTypes;
+  SysUtils, Classes, fpjson, jsonparser, VCL.FNCCS4BaseTypes;
 {$ELSE}
   { System.Generics.Collections is not used directly. It is here so the
     compiler can inline TJSONArray.GetValue, which it otherwise reports
     three times per build as H2443 - noise that makes a real diagnostic
     easy to miss. }
   System.SysUtils, System.Classes, System.JSON, System.Generics.Collections,
-  FNCCS4BaseTypes;
+  VCL.FNCCS4BaseTypes;
 {$ENDIF}
 
 type
@@ -70,7 +70,7 @@ const
   CADSysJSONFormat = 'cadsys-json';
   { : The version of the document format this library writes.
 
-    Here rather than in FNCCADSys4 because a drawing is not the only
+    Here rather than in VCL.FNCCADSys4 because a drawing is not the only
     kind of document any more - a saved view is one too, and it cannot
     use the unit that uses it. }
   CADSysJSONVersion = '5.0';
