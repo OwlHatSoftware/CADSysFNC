@@ -553,7 +553,7 @@ uses
   FNCCS4GraphicsVCL,
 {$ENDIF}
   FNCCS4BaseTypes, FNCCS4Graphics, FNCCS4GraphicsFNC,
-  FNCCS4JSON;
+  FNCCS4JSON, FNCCS4Views;
 
 type
   { : This type is used by the library for versioning control.
@@ -3800,6 +3800,22 @@ type
       The rectangle is in view plane coordinates.
     }
     procedure ZoomWindow(const NewWindow: TRect2D);
+    { : Reads the current framing into a saved view.
+
+      What comes back is what the viewport is showing now: the visual
+      rect, the aspect ratio, and - when there is a drawing - which
+      layers are hidden. The name and the drawing file are left to the
+      caller, because the viewport does not know either.
+    }
+    procedure CaptureView(out AView: TCADViewSpec);
+    { : Frames the drawing the way a saved view says.
+
+      Layers first, then the window, because the window ends in a
+      repaint and there is no reason to paint twice. The visual rect
+      afterwards need not equal <I=AView.Window>: ZoomWindow fits the
+      request to the shape of the control.
+    }
+    procedure ApplyView(const AView: TCADViewSpec);
     { : This method moves the current visual rect to a specified
       position.
 
@@ -10144,11 +10160,16 @@ const
   { : This constant is the value of the "format" member of every CADSys
     JSON document.
   }
-  CADSysJSONFormat = 'cadsys-json';
+  CADSysJSONFormat = FNCCS4JSON.CADSysJSONFormat;
   { : This constant is the version of the JSON document format written by
     this version of the library.
+
+    Both of these now live in FNCCS4JSON, because a saved view is a
+    CADSys document too and FNCCS4Views cannot use this unit. They are
+    re-declared here so that code written against FNCCADSys4 keeps
+    compiling.
   }
-  CADSysJSONVersion = '5.0';
+  CADSysJSONVersion = FNCCS4JSON.CADSysJSONVersion;
   { : This constant is used as <I=drawing mode> value for
     the <See Property=TFNCCADViewport@DrawMode>.
   }
@@ -16727,6 +16748,43 @@ end;
 procedure TFNCCADViewport.ZoomWindow(const NewWindow: TRect2D);
 begin
   ChangeViewportTransform(NewWindow);
+end;
+
+procedure TFNCCADViewport.CaptureView(out AView: TCADViewSpec);
+var
+  I: Integer;
+begin
+  AView := TCADViewSpec.Default;
+  AView.Window := fVisualWindow;
+  AView.AspectRatio := fAspectRatio;
+  if fCADCmp = nil then
+    Exit;
+  { A view captured from a live viewport always carries the layers,
+    because the alternative - capturing the framing and silently
+    leaving the layers to whatever the drawing happens to say when the
+    view is applied - is the behaviour nobody expects from something
+    called a saved view. A caller that wants the framing alone clears
+    UseLayerOverride afterwards. }
+  AView.UseLayerOverride := True;
+  AView.HiddenLayers := [];
+  for I := 0 to 255 do
+    if not fCADCmp.Layers[I].Visible then
+      Include(AView.HiddenLayers, Byte(I));
+end;
+
+procedure TFNCCADViewport.ApplyView(const AView: TCADViewSpec);
+var
+  I: Integer;
+begin
+  if (fCADCmp <> nil) and AView.UseLayerOverride then
+    for I := 0 to 255 do
+      fCADCmp.Layers[I].Visible := not (Byte(I) in AView.HiddenLayers);
+  { Negative would be nonsense and zero means "do not constrain", so
+    only a sensible figure is taken; an old view file that never had
+    the field leaves the viewport as it was. }
+  if AView.AspectRatio >= 0.0 then
+    fAspectRatio := AView.AspectRatio;
+  ZoomWindow(AView.Window);
 end;
 
 function TFNCCADViewport.GetAperture(const L: Word): TRealType;

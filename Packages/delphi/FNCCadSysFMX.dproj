@@ -97,6 +97,7 @@
         <DCCReference Include="..\..\Sources\FNCCS4Legacy.pas"/>
         <DCCReference Include="..\..\Sources\FNCCS4Shapes.pas"/>
         <DCCReference Include="..\..\Sources\FNCCS4Tasks.pas"/>
+        <DCCReference Include="..\..\Sources\FNCCS4Views.pas"/>
         <DCCReference Include="..\..\Sources\FNCCadSysRegister.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>

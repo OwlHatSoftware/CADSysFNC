@@ -64,6 +64,7 @@ $Units = [ordered]@{
   'FNCCS4Legacy.pas'       = $All
   'FNCCS4Shapes.pas'       = $All
   'FNCCS4Tasks.pas'        = $All
+  'FNCCS4Views.pas'        = $All
   'FNCCadSysRegister.pas'  = $All
 }
 

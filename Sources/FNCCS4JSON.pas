@@ -64,6 +64,17 @@ type
   TCADJSONValue = TJSONValue;
 {$ENDIF}
 
+const
+  { : The marker every CADSys JSON document carries, so that a file
+    that happens to be JSON is not mistaken for one of ours. }
+  CADSysJSONFormat = 'cadsys-json';
+  { : The version of the document format this library writes.
+
+    Here rather than in FNCCADSys4 because a drawing is not the only
+    kind of document any more - a saved view is one too, and it cannot
+    use the unit that uses it. }
+  CADSysJSONVersion = '5.0';
+
 { ---------------- writing ---------------- }
 
 procedure JSetStr(const O: TJSONObject; const Name, Value: string);

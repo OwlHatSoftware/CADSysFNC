@@ -26,7 +26,7 @@ uses
   Vcl.Dialogs, Vcl.Printers, Vcl.ClipBrd, Vcl.Graphics,
   DemoLog, DemoDlg, LayersFrm,
   FNCCS4BaseTypes, FNCCS4Graphics, FNCCADSys4, FNCCS4Shapes, FNCCS4Tasks,
-  FNCCS4DXFModule, FNCCS4Legacy, FNCCS4ExportVCL,
+  FNCCS4DXFModule, FNCCS4Legacy, FNCCS4ExportVCL, FNCCS4Views,
   { FNCCadSysRegister is here for its initialization section, not for
     the component palette: it is the only place that fills the class
     registry, and without it LoadFromFile and SaveToFile have no class
@@ -43,6 +43,10 @@ type
     fRuler: TFNCRuler;
     fVRuler: TFNCRuler;
     fPrg: TFNCCADPrg2D;
+    { : Where the drawing came from, so a saved view can name it.
+      Empty until the drawing has been loaded from or saved to a
+      file - a view of something unsaved has nothing to point at. }
+    fDrawingFile: String;
 
     fBar: TPanel;
     fMenu: TMainMenu;
@@ -180,6 +184,8 @@ type
     procedure MergeClick(Sender: TObject);
     procedure ImportDXFClick(Sender: TObject);
     procedure ImportLegacyClick(Sender: TObject);
+    procedure SaveViewClick(Sender: TObject);
+    procedure OpenViewClick(Sender: TObject);
     procedure LoadProgress(Sender: TObject; ReadPercent: Byte);
     procedure ViewPaint(Sender: TObject);
     procedure ExportDXFClick(Sender: TObject);
@@ -421,6 +427,9 @@ begin
   AddItem(TmpFile, 'Import DXF...', ImportDXFClick);
   AddItem(TmpFile, 'Import legacy .CS2...', ImportLegacyClick);
   AddItem(TmpFile, 'Export DXF...', ExportDXFClick);
+  AddSeparator(TmpFile);
+  AddItem(TmpFile, 'Save view...', SaveViewClick);
+  AddItem(TmpFile, 'Open view...', OpenViewClick);
   AddSeparator(TmpFile);
   TmpPrint := AddMenu(TmpFile, 'Print');
   AddItem(TmpPrint, 'Actual view', PrintActualClick);
@@ -1102,6 +1111,7 @@ begin
       finally
         fCAD.OnLoadProgress := nil;
       end;
+      fDrawingFile := TmpDlg.FileName;
     end;
   finally
     TmpDlg.Free;
@@ -1117,7 +1127,10 @@ begin
     TmpDlg.Filter := 'CADSys drawing (*.json)|*.json|All files (*.*)|*.*';
     TmpDlg.DefaultExt := 'json';
     if TmpDlg.Execute then
+    begin
       fCAD.SaveToFile(TmpDlg.FileName);
+      fDrawingFile := TmpDlg.FileName;
+    end;
   finally
     TmpDlg.Free;
   end;
@@ -1319,6 +1332,75 @@ end;
 procedure TMainForm.PrintScaleClick(Sender: TObject);
 begin
   PrintView(cvScale);
+end;
+
+procedure TMainForm.SaveViewClick(Sender: TObject);
+var
+  TmpDlg: TSaveDialog;
+  TmpView: TCADViewSpec;
+  TmpName: String;
+begin
+  { A view records which drawing it looks at, so there has to be one to
+    point at. An unsaved drawing has no path to store. }
+  if fDrawingFile = '' then
+  begin
+    Say('Save the drawing first. A view names the drawing it looks at, '
+      + 'and this one has not been saved anywhere yet.');
+    Exit;
+  end;
+  TmpName := 'View';
+  if not AskString('Save view', 'Name', TmpName) then
+    Exit;
+  TmpDlg := TSaveDialog.Create(Self);
+  try
+    TmpDlg.Filter := 'CADSys view (*.cadview)|*.cadview|All files (*.*)|*.*';
+    TmpDlg.DefaultExt := 'cadview';
+    if not TmpDlg.Execute then
+      Exit;
+    { Whatever the viewport is showing now, layers included. }
+    fView.CaptureView(TmpView);
+    TmpView.Name := TmpName;
+    TmpView.DrawingFile := fDrawingFile;
+    TmpView.SaveToFile(TmpDlg.FileName);
+    Log(Format('view saved: %s -> %s', [TmpDlg.FileName, fDrawingFile]));
+  finally
+    TmpDlg.Free;
+  end;
+end;
+
+procedure TMainForm.OpenViewClick(Sender: TObject);
+var
+  TmpDlg: TOpenDialog;
+  TmpView: TCADViewSpec;
+begin
+  TmpDlg := TOpenDialog.Create(Self);
+  try
+    TmpDlg.Filter := 'CADSys view (*.cadview)|*.cadview|All files (*.*)|*.*';
+    if not TmpDlg.Execute then
+      Exit;
+    TmpView.LoadFromFile(TmpDlg.FileName);
+  finally
+    TmpDlg.Free;
+  end;
+  if not TmpView.DrawingExists then
+  begin
+    { Named rather than silently empty: a view whose drawing has moved is
+      the one failure this feature will actually meet. }
+    Say('The drawing this view refers to was not found:' + sLineBreak
+      + TmpView.DrawingFile);
+    Exit;
+  end;
+  { The drawing first and the framing second: ApplyView sets layer
+    visibility on whatever drawing is loaded. }
+  fCAD.OnLoadProgress := LoadProgress;
+  try
+    fCAD.LoadFromFile(TmpView.DrawingFile);
+  finally
+    fCAD.OnLoadProgress := nil;
+  end;
+  fDrawingFile := TmpView.DrawingFile;
+  fView.ApplyView(TmpView);
+  Log(Format('view "%s" applied from %s', [TmpView.Name, TmpView.DrawingFile]));
 end;
 
 procedure TMainForm.ClipboardClick(Sender: TObject);
