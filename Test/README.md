@@ -78,10 +78,19 @@ records them as `[Ignore]`d tests whose ignore message says why and how to verif
 them by hand. That is most of the 8 ignored. The same applies to findings
 deliberately left unfixed: the placeholder is there so the gap stays visible.
 
-**There is no fixture from before the port.** `FNCCS4Legacy` reads the old binary
-format and is tested against streams the suite builds itself, but nothing in the
-repository is a drawing the original library wrote, so nothing here proves a real
-one loads.
+**The `.CS2` fixtures are synthesised, not inherited.** `Test\data` holds three
+legacy drawings written by `Tools\make-legacy-fixtures.py` - the same small
+drawing in the three combinations of character width and real width, since the
+file records neither and the two are independent. The generator shares no code
+with the library, which is the point: `TLegacyWriter` in
+`CADSys4.Tests.Legacy` and the reader it feeds were written by the same hand
+from the same reading of the format, and would agree with each other even if
+both were wrong. Regenerate with `python Tools\make-legacy-fixtures.py`; if a
+fixture changes, read the diff rather than committing it.
+
+No drawing the *original* library wrote is in the repository, so nothing here
+proves a real one loads. The reader was verified by hand against a 1.2 MB
+customer drawing that cannot be published.
 
 ## Running it against a memory-leak check
 

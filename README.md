@@ -76,6 +76,11 @@ the cause. Build 1 and 2 before 3 and 4, every time.
 Add `<repo>\Generated\VCL` (or `\FMX`) to the library path of any project that
 uses the units directly.
 
+> **About the unit names.** `VCL.FNCCADSys4`, `VCL.FNCCS4Shapes`, and so on:
+> `FNCC` is the stem every unit shares so the generator can turn one tree into
+> three with a single substitution, and the `VCL.` / `FMX.` / `LCL` prefix is
+> which tree you are looking at. Unlovely, and load-bearing.
+
 Both palettes can be installed at once, and both appear on a palette page called
 **FNCCadSys**: `TFNCCADCmp2D`, `TFNCCADViewport2D` and `TFNCCADPrg2D`.
 
@@ -175,8 +180,9 @@ Documentations\ the original CADSys 4.2 help file and change log
 * An opaque hatch pattern no longer fills the gaps between its lines.
 * `CopingFrequency` no longer shows partial results during a long repaint.
 * Printing is VCL-only and has no preview.
-* Nothing in the repository is a drawing made by the original library, so the
-  legacy `.CS2` reader has no fixture proving a real file loads.
+* No drawing made by the original library is in the repository - the `.CS2`
+  fixtures in `Test\data` were synthesised from the format description, not
+  written by a pre-port CADSys.
 
 ## Documentation
 
