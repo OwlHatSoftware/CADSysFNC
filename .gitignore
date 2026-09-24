@@ -3,6 +3,10 @@
 *.ppu
 *.o
 *.dcr
+# ...but the palette icon resources are source, not build output:
+# both design-time packages do {$R 'FNCCadSys.dcr'}.
+!/Packages/delphi/FNCCadSys.dcr
+!/Packages/Lazarus/FNCCadSys.dcr
 *.compiled
 /Demos/delphi/CAD2D/__history
 *.~dsk
@@ -19,8 +23,13 @@
 *.dsk
 *.stat
 __history/
-/Test/Win32/
-/Test/Win64/
+# Delphi build output, wherever it lands. Two files under
+# Demos\CADCmpDemo\VCL\Win32\Debug were tracked until 2026-09-24;
+# that demo loads Monotxt.json and test.bmp by bare relative name,
+# so copy them beside the exe before running it from the IDE.
+Win32/
+Win64/
+__recovery/
 
 # Generated per-framework unit copies. Sources is the master; these
 # are build artifacts and a clean checkout has to run

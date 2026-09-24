@@ -1,5 +1,5 @@
 { : Regression tests for defects found in the CADSys 4.2 optimization and
-  correctness review (docs/features/optimization-review.md).
+  correctness review (docs/port/optimization-review.md).
 
   Each test here corresponds to a specific finding ID. A test in this unit
   should FAIL on commit a0ccd7a (the pre-fix baseline) and PASS on the

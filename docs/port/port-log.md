@@ -8,7 +8,7 @@ Working copy: `delphi_libraries\CadSysFNC` (copied from `CADSys42`, branch `fix/
 |---|---|---|
 | 1 | DUnitX suite compiling and green on VCL | **done** - 477 pass, 0 fail, 8 ignored; the FNC suite 20/20 |
 | 2 | Drawing layer: shapes draw through a backend, not a `TCanvas` | **done** - both backends compiled and under test |
-| 2b | Persistence: JSON instead of binary `TStream` (see `json-persistence.md`) | **done** |
+| 2b | Persistence: JSON instead of binary `TStream` (see `../json-format.md`) | **done** |
 | 2c | Colours carry alpha (`TCADColor` = `$AARRGGBB`); `TLayer` drops the VCL pen and brush | **done** |
 | 3 | Remove the rest of the Windows-only code: `TLOGFONT`/`HFONT` in `TExtendedFont`, `TBitmap` in `TBitmap2D`, `WinAPI.Windows` uses | **done** |
 | 4a | Drop `TPaintingThread`; replace XOR rubber-banding with a redrawn overlay | **done** |

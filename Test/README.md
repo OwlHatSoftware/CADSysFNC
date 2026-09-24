@@ -1,61 +1,111 @@
-# CADSys 4.2 — DUnitX test suite
+# CADSysFNC — DUnitX test suites
 
-A console DUnitX suite for the library units in `..\Sources`. Built for **Delphi 11/12** using the DUnitX that ships with the IDE (`$(BDS)\source\DUnitX`).
+Two console DUnitX suites for the library units, built for **Delphi 12** with the
+DUnitX that ships with the IDE (`$(BDS)\source\DUnitX`).
 
-> **This suite has never been compiled.** It was written by reading the sources, not by building against them. Every library symbol it calls was checked against a declaration in `..\Sources`, but the first build will still surface mistakes. Treat the first run as part of writing the suite, not as a verdict on the library.
+| Project | Covers | Last run |
+|---|---|---|
+| `CADSys4Tests` | the library: geometry, structures, shapes, JSON, DXF, the legacy reader, saved views, the drawing layer and its VCL backend | 518 found, 510 passed, 0 failed, 8 ignored |
+| `CADSysFNCTests` | the FNC backend, drawn into a `TTMSFNCGraphics` bitmap | 20 / 20 |
 
-## Building and running
+They are separate projects so the main suite does not need TMS FNC to run.
 
-Open `CADSys4Tests.dproj` in the IDE and build, or from the command line:
+## Running them
 
 ```
-msbuild CADSys4Tests.dproj /p:Config=Debug /p:Platform=Win32
+Tools\build-and-test.cmd [BDSVER]      default BDSVER is 23.0 (Delphi 12)
 ```
 
-The project sets `..\Sources` as its unit search path, so the tests always compile against the real library units rather than a stale `.dcu`. No library unit is listed in the `.dpr`.
+That regenerates the per-framework units, builds both runners and runs both,
+writing `build.log`, `test.log`, `results.xml`, `build-fnc.log`, `test-fnc.log`
+and `results-fnc.xml` into `Tools\logs\`.
+
+To run one by hand:
 
 ```
 CADSys4Tests.exe                              full run, console output
-CADSys4Tests.exe --exitbehavior:Continue      for CI — no "press Enter" pause
-CADSys4Tests.exe --xmloutput:results.xml      NUnit XML for a CI report
+CADSys4Tests.exe --exitbehavior:Continue      for CI - no "press Enter" pause
+CADSys4Tests.exe --xmloutput:results.xml      NUnit XML
 ```
 
-The exit code is non-zero if anything failed, so it drops straight into the existing `.github/workflows` setup.
+The exit code is non-zero if anything failed.
 
-The Debug configuration does **not** turn on range or overflow checking. The library's own convention is range-checks-off — `CADSys4.pas` wraps only `DotProduct3D`/`CrossProd3D` in `{$R+}` (to catch an `Extended`→`Double` narrowing) and then does `{$R-}` for the rest of the unit — so `{$R+}` project-wide is not a baseline this code was written to satisfy.
+**The projects compile against `..\Generated\VCL`, not `..\Sources`.** `Sources`
+holds the master copy of each unit; `Tools\gen-units.cmd` writes the
+per-framework trees, and that is what everything builds from. The build script
+runs the generator first, so a hand-run of `msbuild` against a stale `Generated`
+is the one way to test yesterday's code by accident.
 
-It is still worth running that way deliberately. Range checking is how the `Word` capacity truncation (M2) and the draw-helper overruns (P3b) become visible at all. Tick **Range checking** and **Overflow checking** under Project → Options → Building → Delphi Compiler → Compiling, expect `ERangeError` to surface in places the library has always been sloppy about, and treat each one as a finding to triage rather than a build break.
+`msbuild` is avoided in the script for an unrelated reason: it hands the compiler
+the IDE's entire Win32 library search path on the command line, which with enough
+TMS products installed exceeds Windows' 32000-character limit and dies with
+MSB6003 before reading a line of Pascal. The script calls `dcc32` directly.
+
+The Debug configuration does **not** turn on range or overflow checking. The
+library's convention is range-checks-off, and three units now declare
+`{$RANGECHECKS OFF}` themselves because `PVectPoints2D` is the
+variable-length-array idiom. Turning them on project-wide is still worth doing
+deliberately — it is how the `Word` capacity truncation and the draw-helper
+overruns become visible at all — but expect `ERangeError` in places the library
+has always been sloppy about, and triage each one rather than treating it as a
+build break.
 
 ## What is in here
 
 | Unit | Covers |
 |---|---|
-| `CADSys4.Tests.Geometry` | `CS4BaseTypes` value types and every canvas-free geometry function in `CADSys4`: vector algebra, homogeneous coordinates, the 2D/3D transform algebra, box algebra, distance and clipping helpers. |
+| `CADSys4.Tests.Geometry` | `FNCCS4BaseTypes` value types and every canvas-free geometry function in `FNCCADSys4`: vector algebra, homogeneous coordinates, the 2D/3D transform algebra, box algebra, distance and clipping helpers. |
 | `CADSys4.Tests.Structures` | `TPointsSet2D`/`3D`, `TGraphicObjList` and its iterators, `TIndexedObjectList`, `TLayer`/`TLayers`, `TCADPrgParam` ownership. |
 | `CADSys4.Tests.Shapes` | Eight 2D shape families: construction, `Assign` round-trips and independence, bounding boxes, the `BeginUseProfilePoints` protocol, `OnMe` hit-testing, curve precision. |
-| `CADSys4.Tests.Persistence` | JSON persistence: the `CS4JSON` helpers, per-shape `SaveToJSON`/`CreateFromJSON`, whole-document round trips (layers, blocks, files, text) and the class registry. |
-| `CADSys4.Tests.DXF` | DXF group-level round trips and one end-to-end import; split out of the persistence suite when the drawing format moved to JSON. |
-| `CADSys4.Tests.Graphics` | The drawing layer: VCL backend pixel tests and shapes drawn through a recording backend. |
-| `CADSys4.Tests.Regressions` | One test per defect from `docs/features/optimization-review.md`. These should fail on commit `a0ccd7a` and pass on the fix branch. |
+| `CADSys4.Tests.Persistence` | JSON: the `FNCCS4JSON` helpers, per-shape `SaveToJSON`/`CreateFromJSON`, whole-document round trips (layers, blocks, files, text) and the class registry. |
+| `CADSys4.Tests.DXF` | DXF group-level round trips and one end-to-end import. |
+| `CADSys4.Tests.Legacy` | The old binary `.CS2` reader, against synthesised streams. |
+| `CADSys4.Tests.Views` | `TCADViewSpec`: defaults, the layer set, JSON and file round trips. |
+| `CADSys4.Tests.Graphics` | The drawing layer: VCL backend pixel tests, and shapes drawn through a recording backend (which proves no `TCanvas` is needed). |
+| `CADSys4.Tests.GraphicsFNC` | The FNC backend. In `CADSysFNCTests`, not the main suite. |
+| `CADSys4.Tests.Regressions` | One test per defect from `docs/port/optimization-review.md`. |
 
 ## Two things to know before you read the results
 
-**Some tests pin defects rather than correct behaviour.** The suite documents what the library *currently does*, including where that is wrong. The clearest case is the on-disk format: `TCADVersion` and `TSourceBlockName` are `array of Char`, so `SizeOf` doubled under Unicode Delphi and the format silently changed (findings X3/X4). `CADSys4.Tests.Persistence` asserts the *current* byte counts so that when the version gate lands, the diff on this suite states exactly what changed. Those tests are named and commented to make it obvious they are pinning a defect.
+**Some tests pin defects rather than correct behaviour.** The suite documents
+what the library *currently does*, including where that is wrong. Those tests are
+named and commented to make it obvious.
 
-**Some findings cannot be reached from a console runner.** Anything behind the interaction FSM or a canvas — the pan double-free (M1), the draw-helper overruns (P3b), the GDI font churn (P4) — needs a live viewport. Rather than drop them, `CADSys4.Tests.Regressions` records them as `[Ignore]`d tests whose ignore message says why and how to verify them by hand. The same applies to findings deliberately left unfixed (M2, M5/M7/M8, X3/X4): the placeholder is there so the gap stays visible.
+**Some findings cannot be reached from a console runner.** Anything behind the
+interaction FSM or a live viewport — the pan double-free, the draw-helper
+overruns, the GDI font churn — needs a window. `CADSys4.Tests.Regressions`
+records them as `[Ignore]`d tests whose ignore message says why and how to verify
+them by hand. That is most of the 8 ignored. The same applies to findings
+deliberately left unfixed: the placeholder is there so the gap stays visible.
+
+**There is no fixture from before the port.** `FNCCS4Legacy` reads the old binary
+format and is tested against streams the suite builds itself, but nothing in the
+repository is a drawing the original library wrote, so nothing here proves a real
+one loads.
 
 ## Running it against a memory-leak check
 
-Most of the review's findings are lifetime bugs, so the suite is most useful with FastMM4 in full-debug mode. Add `FastMM4` as the first unit in the `.dpr` uses clause, drop `FastMM_FullDebugMode.dll` beside the exe, and set:
+Most of the review's findings are lifetime bugs, so the suite is most useful with
+FastMM4 in full-debug mode. Add `FastMM4` as the first unit in the `.dpr` uses
+clause, drop `FastMM_FullDebugMode.dll` beside the exe, and set:
 
 ```pascal
 ReportMemoryLeaksOnShutdown := True;
 ```
 
-Every fixture frees what it creates through `try/finally`, so a clean shutdown report is the expected result. A leak report naming a library class is a real finding.
+Every fixture frees what it creates through `try/finally`, so a clean shutdown
+report is the expected result. A leak report naming a library class is a real
+finding.
 
 ## Adding to it
 
-Fixtures self-register in each unit's `initialization` via `TDUnitX.RegisterTestFixture`, so a new fixture needs no change to the `.dpr` — only a new unit added to the project's `DCCReference` list if it lives in a new file.
+Fixtures self-register in each unit's `initialization` via
+`TDUnitX.RegisterTestFixture`, so a new fixture needs no change to the `.dpr` —
+only a new unit added to the project's `DCCReference` list if it lives in a new
+file.
 
-When you add a test, the house rule that produced this suite is worth keeping: check the declaration in `..\Sources` before you call anything, and where a numeric result depends on flattening detail or accumulated floating point, assert the invariant (the box contains the points; the count grew by one) rather than a constant you computed by hand.
+The house rule that produced this suite is worth keeping: check the declaration
+in `..\Sources` before you call anything, and where a numeric result depends on
+flattening detail or accumulated floating point, assert the invariant (the box
+contains the points; the count grew by one) rather than a constant you computed
+by hand.

@@ -11,7 +11,7 @@
    usually reads <I=IFNDEF CADSYS_FMX> - meaning VCL and LCL together -
    rather than naming the two.
 
-   Known differences from the GDI backend (see docs/features/fnc-port.md):
+   Known differences from the GDI backend (see docs/port/port-log.md):
    <LI=There are no raster operations. A pen whose Mode is not cpmCopy
    (the library uses cpmXor for rubber-banding) draws in
    <See Property=TCADFNCGraphics@XorColor>. The viewport has to redraw

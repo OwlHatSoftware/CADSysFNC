@@ -1,6 +1,12 @@
-# CADSys JSON persistence
+# The CADSysFNC document format
 
-The binary `TStream` format is gone. Drawings, block libraries and vector fonts are JSON documents.
+Drawings, block libraries and vector fonts are JSON documents. CADSys 4.2's
+binary `TStream` format is no longer what `SaveToFile` writes; it can still be
+**read**, for migration, through `FNCCS4Legacy` (`LoadLegacyFile`,
+`LoadLegacyStream`).
+
+The text is UTF-8 without a BOM. Everything in this document is stable: a reader
+may rely on the member names below.
 
 ## Document shapes
 
@@ -68,7 +74,18 @@ Reading is lenient: a missing member takes its default, an unknown enum name fal
 
 Vector fonts are JSON too (`"kind": "font"`, a `chars` array of `{ "code", "vectors" }`). `CADSysRegisterFontFromFile` reads a JSON font; `CADSysSaveFontToFile` writes one. The demo fonts were converted: `RomanC.json` and `Monotxt.json` sit beside the old `.fnt` files, which the library can no longer read.
 
-## What this does not do
+## Reading a CADSys 4.2 drawing
 
-* No converter for existing `.cad` drawings. Files written by the old binary format cannot be read any more.
-* `TBitmap2D` still encodes through `Vcl.Imaging.pngimage`, so that shape stays VCL-only until step 3.
+`FNCCS4Legacy` reads the old binary format. It is a one-way migration path, not a
+supported format: load the file, then save it as JSON.
+
+```pascal
+uses VCL.FNCCS4Legacy;
+
+fCAD.LoadLegacyFile('old-drawing.CS2');
+fCAD.SaveToFile('new-drawing.json');
+```
+
+Nothing in this repository is a drawing the original library made, so the legacy
+reader is covered by synthesised fixtures only. If you have a real `.CS2` that
+fails to load, it is worth reporting.
