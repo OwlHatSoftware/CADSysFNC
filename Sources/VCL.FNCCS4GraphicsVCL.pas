@@ -1,4 +1,4 @@
-{: VCL (GDI) backend for the CADSys drawing layer.
+﻿{: VCL (GDI) backend for the CADSys drawing layer.
 
    <See Class=TCADVCLGraphics> wraps a VCL TCanvas. Pen and brush values
    are read from and written to the canvas itself, so code that still
@@ -83,6 +83,10 @@ type
     fFontHandle: HFONT;
     fFontSpec: TCADFontSpec;
     fFontSelected: Boolean;
+    { : The clip region in force before PushClip, or 0 for "there was
+      none". Zero is not a missing value here - SelectClipRgn(DC, 0) is
+      how a device context is told it has no clip again. }
+    fSavedClipRgn: HRGN;
     procedure FreeFontHandle;
   protected
     function CreatePen: TCADPen; override;
@@ -93,6 +97,8 @@ type
     procedure SetTransparent(const Value: Boolean); override;
     function GetClipRect: TRect; override;
     procedure SetBlendBackground(const Value: TCADColor); override;
+    procedure DoPushClip(const R: TRect); override;
+    procedure DoPopClip; override;
   public
     constructor Create(const ACanvas: TCanvas);
     destructor Destroy; override;
@@ -457,6 +463,31 @@ end;
 function TCADVCLGraphics.GetClipRect: TRect;
 begin
   Result := fCanvas.ClipRect;
+end;
+
+procedure TCADVCLGraphics.DoPushClip(const R: TRect);
+begin
+  { A region rather than SaveDC: SaveDC would also put back the pen,
+    brush and font, and the caller has just set those on purpose.
+    GetClipRgn returns 1 when there was a region, 0 when there was none
+    - and the difference matters, because "none" has to be given back as
+    none rather than as the whole surface, which is not the same thing
+    on a printer. }
+  fSavedClipRgn := CreateRectRgn(0, 0, 1, 1);
+  if GetClipRgn(fCanvas.Handle, fSavedClipRgn) <> 1 then
+  begin
+    DeleteObject(fSavedClipRgn);
+    fSavedClipRgn := 0;
+  end;
+  IntersectClipRect(fCanvas.Handle, R.Left, R.Top, R.Right, R.Bottom);
+end;
+
+procedure TCADVCLGraphics.DoPopClip;
+begin
+  SelectClipRgn(fCanvas.Handle, fSavedClipRgn);
+  if fSavedClipRgn <> 0 then
+    DeleteObject(fSavedClipRgn);
+  fSavedClipRgn := 0;
 end;
 
 procedure TCADVCLGraphics.MoveTo(const X, Y: Integer);

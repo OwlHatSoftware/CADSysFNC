@@ -1,4 +1,4 @@
-{: TMS FNC backend for the CADSys drawing layer.
+﻿{: TMS FNC backend for the CADSys drawing layer.
 
    <See Class=TCADFNCGraphics> draws through a TTMSFNCGraphics, so the
    same shape code renders on VCL, FMX and LCL.
@@ -96,6 +96,10 @@ type
     { Non-nil while a clip of ours is in force. FNC's RestoreState frees
       the state object, so this is a one-shot handle, not a cache. }
     fClipState: TTMSFNCGraphicsSaveState;
+    { : The same one-shot handle, for the PushClip/PopClip pair. Kept
+      apart from fClipState because the two nest: the attach clip is the
+      control, and a page clip sits inside it. }
+    fPushState: TTMSFNCGraphicsSaveState;
     fClip: TRect;
     fCurPt: TPoint;
     fFontColor: TCADColor;
@@ -121,6 +125,8 @@ type
     function GetTransparent: Boolean; override;
     procedure SetTransparent(const Value: Boolean); override;
     function GetClipRect: TRect; override;
+    procedure DoPushClip(const R: TRect); override;
+    procedure DoPopClip; override;
   public
     {: Wraps AGraphics. ABounds is the drawable area in pixels; it is the
        initial clip rectangle and is what shapes use to clip geometry. }
@@ -372,6 +378,7 @@ end;
 
 destructor TCADFNCGraphics.Destroy;
 begin
+  PopClip;
   ReleaseClip;
   if fOwnsGraphics then
     fGraphics.Free;
@@ -498,7 +505,10 @@ procedure TCADFNCGraphics.Attach(const AGraphics: TTMSFNCGraphics;
   const ABounds: TRect);
 begin
   { Any clip we are still holding belongs to the graphics we are about
-    to let go of, so it has to go back first. }
+    to let go of, so it has to go back first. Both of them: the attach
+    clip, and a page clip if CADDrawPage was interrupted between its
+    PushClip and its PopClip. }
+  PopClip;
   ReleaseClip;
   if fOwnsGraphics and (fGraphics <> nil) and (fGraphics <> AGraphics) then
     FreeAndNil(fGraphics);
@@ -541,6 +551,29 @@ begin
   else
     fClipState.Free;
   fClipState := nil;
+end;
+
+procedure TCADFNCGraphics.DoPushClip(const R: TRect);
+begin
+  if not fReady then
+    Exit;
+  { Canvas state only, for the same reason ApplyClip gives: the full
+    SaveState copies Fill, Stroke and Font as well, and restoring those
+    would discard the pen and brush the caller has just set. }
+  fPushState := fGraphics.SaveState(True);
+  fGraphics.ClipRect(RectF(R.Left, R.Top, R.Right, R.Bottom));
+end;
+
+procedure TCADFNCGraphics.DoPopClip;
+begin
+  if fPushState = nil then
+    Exit;
+  if fGraphics <> nil then
+    { RestoreState frees the state object itself. }
+    fGraphics.RestoreState(fPushState, True)
+  else
+    fPushState.Free;
+  fPushState := nil;
 end;
 
 function TCADFNCGraphics.IsReady: Boolean;

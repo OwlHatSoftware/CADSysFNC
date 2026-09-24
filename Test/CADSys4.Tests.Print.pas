@@ -66,6 +66,8 @@ type
     [Test]
     procedure DrawPage_PutsTheDrawingInsideTheMargins;
     [Test]
+    procedure DrawPage_ClipsToThePrintableArea;
+    [Test]
     procedure DrawPage_LeavesTheCanvasScaleAsItFoundIt;
     [Test]
     procedure HiddenLayers_AreNotPrinted;
@@ -90,6 +92,8 @@ type
     procedure HatchSpacingCanBeGivenPerCall;
     [Test]
     procedure SaveAndRestoreCarryTheWeight;
+    [Test]
+    procedure AClipDoesNotStack;
   end;
 
 implementation
@@ -382,6 +386,46 @@ begin
   end;
 end;
 
+procedure TCADPageModelTests.DrawPage_ClipsToThePrintableArea;
+var
+  TmpSetup: TCADPageSetup;
+  TmpRec: TRecordingGraphics;
+  TmpCanvas: TDecorativeCanvas;
+  TmpLog: string;
+begin
+  { Without this, a drawing spread over several sheets draws all of
+    itself on every one of them - over the margins, off the paper, and
+    on a preview control across the rest of the window. Found by looking
+    at a tiled preview; nothing in the geometry was wrong.
+
+    The transform's window cannot do the job: a shape uses it to decide
+    whether to draw at all, and a line crossing the page boundary has to
+    be drawn because part of it belongs here. Only the device can cut it
+    at the edge, which is why TCADGraphics grew PushClip. }
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(-500, -500),
+    Point2D(5000, 5000)));
+  TmpSetup := A4;
+  TmpRec := TRecordingGraphics.Create(Rect(0, 0, 210, 297));
+  try
+    TmpCanvas := TDecorativeCanvas.Create(TmpRec, False);
+    try
+      CADDrawPage(FCAD, TmpSetup, TCADPageDevice.FromDPI(25.4, 25.4), 0,
+        TmpCanvas);
+    finally
+      TmpCanvas.Free;
+    end;
+    TmpLog := TmpRec.Log.Text;
+    Assert.IsTrue(TmpLog.Contains('PushClip 10,10,200,287'),
+      'clipped to the printable rectangle, not the paper or the surface: '
+      + TmpLog);
+    Assert.AreEqual(1, TmpRec.CountOf('PopClip'),
+      'and given back - a clip left behind takes the next thing drawn '
+      + 'with it');
+  finally
+    TmpRec.Free;
+  end;
+end;
+
 procedure TCADPageModelTests.DrawPage_LeavesTheCanvasScaleAsItFoundIt;
 var
   TmpSetup: TCADPageSetup;
@@ -566,6 +610,28 @@ begin
   Assert.AreEqual(Length(CADHatchLines(TmpPoly, cbsHorizontal)),
     Length(CADHatchLines(TmpPoly, cbsHorizontal, 0)),
     'and zero means the pixel default, as it always did');
+end;
+
+procedure TPhysicalSizeTests.AClipDoesNotStack;
+var
+  TmpRec: TRecordingGraphics;
+begin
+  { One level deep, and a second push is ignored rather than stacked.
+    Nothing in the library nests clips, and a clip stack that silently
+    loses a level is worse than one that refuses to grow: the drawing
+    that comes out is wrong in a way nobody can see until it is on
+    paper. }
+  TmpRec := TRecordingGraphics.Create(Rect(0, 0, 100, 100));
+  try
+    TmpRec.PushClip(Rect(10, 10, 90, 90));
+    TmpRec.PushClip(Rect(20, 20, 80, 80));
+    TmpRec.PopClip;
+    TmpRec.PopClip;
+    Assert.AreEqual(1, TmpRec.CountOf('PushClip'), 'one clip went down');
+    Assert.AreEqual(1, TmpRec.CountOf('PopClip'), 'and one came back up');
+  finally
+    TmpRec.Free;
+  end;
 end;
 
 procedure TPhysicalSizeTests.SaveAndRestoreCarryTheWeight;

@@ -350,6 +350,7 @@ type
     fBrush: TCADBrush;
     fBlendBackground: TCADColor;
     fPixelsPerMM: Double;
+    fClipped: Boolean;
   protected
     function CreatePen: TCADPen; virtual; abstract;
     function CreateBrush: TCADBrush; virtual; abstract;
@@ -359,6 +360,14 @@ type
     procedure SetTransparent(const Value: Boolean); virtual; abstract;
     function GetClipRect: TRect; virtual; abstract;
     procedure SetBlendBackground(const Value: TCADColor); virtual;
+
+    { : Narrow the device clip to R, and give it back.
+
+      The base does nothing at all, which is the honest answer for a
+      backend that cannot clip: the drawing overflows where you can see
+      it, rather than being silently wrong somewhere else. }
+    procedure DoPushClip(const R: TRect); virtual;
+    procedure DoPopClip; virtual;
 
     { : The filled primitives as the backend draws them, with whatever
       the backend makes of the current brush.
@@ -426,6 +435,22 @@ type
 
     procedure Lock; virtual;
     procedure Unlock; virtual;
+
+    { : Restricts drawing to R until the matching PopClip.
+
+      The library had no framework-free way to say this until printing
+      needed one. The viewport never did: it draws into a back buffer
+      the size of the control, so the buffer's edge was the clip. A page
+      is a rectangle inside a bigger surface, and a drawing laid out
+      across several sheets runs off every one of them - the clip is the
+      only thing that makes a sheet a sheet.
+
+      One level deep. Calls must balance, and a second PushClip before
+      the first PopClip is ignored rather than stacked: nothing here
+      needs nesting, and a clip stack that silently loses a level is
+      worse than one that refuses to grow. }
+    procedure PushClip(const R: TRect);
+    procedure PopClip;
 
     property Pen: TCADPen read fPen;
     property Brush: TCADBrush read fBrush;
@@ -1274,6 +1299,30 @@ procedure TCADGraphics.Polygon(const Pts: array of TPoint);
 begin
   if Length(Pts) > 0 then
     Polygon(@Pts[0], Length(Pts));
+end;
+
+procedure TCADGraphics.DoPushClip(const R: TRect);
+begin
+end;
+
+procedure TCADGraphics.DoPopClip;
+begin
+end;
+
+procedure TCADGraphics.PushClip(const R: TRect);
+begin
+  if fClipped then
+    Exit;
+  fClipped := True;
+  DoPushClip(R);
+end;
+
+procedure TCADGraphics.PopClip;
+begin
+  if not fClipped then
+    Exit;
+  fClipped := False;
+  DoPopClip;
 end;
 
 procedure TCADGraphics.SetBlendBackground(const Value: TCADColor);

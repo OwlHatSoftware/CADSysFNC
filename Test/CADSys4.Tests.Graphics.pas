@@ -1,4 +1,4 @@
-{ : DUnitX tests for the drawing layer (VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsVCL) and for
+﻿{ : DUnitX tests for the drawing layer (VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsVCL) and for
   TDecorativeCanvas on top of it.
 
   Two kinds of test live here:
@@ -68,6 +68,11 @@ type
     function GetTransparent: Boolean; override;
     procedure SetTransparent(const Value: Boolean); override;
     function GetClipRect: TRect; override;
+    { : Logged rather than applied - there is no device to clip. What a
+      test of CADDrawPage needs to know is that the clip was asked for
+      and given back, which is exactly what a log records. }
+    procedure DoPushClip(const R: TRect); override;
+    procedure DoPopClip; override;
   public
     constructor Create(const AClip: TRect);
     destructor Destroy; override;
@@ -275,6 +280,16 @@ procedure TRecordingGraphics.SetFontColor(const Value: TCADColor); begin fFontCo
 function TRecordingGraphics.GetTransparent: Boolean; begin Result := fTransparent; end;
 procedure TRecordingGraphics.SetTransparent(const Value: Boolean); begin fTransparent := Value; end;
 function TRecordingGraphics.GetClipRect: TRect; begin Result := fClip; end;
+
+procedure TRecordingGraphics.DoPushClip(const R: TRect);
+begin
+  fLog.Add(Format('PushClip %d,%d,%d,%d', [R.Left, R.Top, R.Right, R.Bottom]));
+end;
+
+procedure TRecordingGraphics.DoPopClip;
+begin
+  fLog.Add('PopClip');
+end;
 
 procedure TRecordingGraphics.MoveTo(const X, Y: Integer);
 begin

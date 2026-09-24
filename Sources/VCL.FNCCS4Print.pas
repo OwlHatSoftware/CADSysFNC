@@ -583,6 +583,16 @@ begin
 
   TmpSavedPPMM := ACanvas.Graphics.PixelsPerMM;
   ACanvas.Graphics.PixelsPerMM := ADevice.PixelsPerMM;
+  { The clip is what makes a sheet a sheet. Without it, a drawing laid
+    out across several pages draws all of itself on every one of them -
+    over the margins, off the paper, and across whatever else is on the
+    surface, which on a preview control is the rest of the window.
+
+    The window handed to the transform is not a clip and cannot be one.
+    Shapes use it to decide whether to bother drawing at all, and a line
+    that crosses the page boundary is worth drawing precisely because
+    part of it belongs here. Only the device can cut it at the edge. }
+  ACanvas.Graphics.PushClip(TmpDest);
   try
     TmpIter := ACAD.ObjectsIterator;
     try
@@ -602,6 +612,7 @@ begin
       TmpIter.Free;
     end;
   finally
+    ACanvas.Graphics.PopClip;
     { The canvas may be the screen's, and leaving a printer's
       millimetre scale on it would make every subsequent line six
       times too thick. }
