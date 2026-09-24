@@ -1,4 +1,4 @@
-{ : The print preview dialog, VCL.
+﻿{ : The print preview dialog, VCL.
 
   Demos\CAD2D\FMX\PrintPrvFrm.pas is the same dialog written for FMX -
   same class name, same Execute, same handler names, same order. Diff
@@ -18,7 +18,7 @@ uses
   Vcl.Graphics, Vcl.Printers,
   DemoLog,
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCADSys4, VCL.FNCCS4Views,
-  VCL.FNCCS4Print, VCL.FNCCS4Preview, VCL.FNCCS4ExportVCL;
+  VCL.FNCCS4Print, VCL.FNCCS4Preview, VCL.FNCCS4PDF, VCL.FNCCS4ExportVCL;
 
 type
   TPrintPreviewForm = class(TForm)
@@ -32,7 +32,7 @@ type
     fTiled: TCheckBox;
     fMargin: TEdit;
     fPageLabel: TLabel;
-    fPrevBtn, fNextBtn, fPrintBtn, fCloseBtn: TButton;
+    fPrevBtn, fNextBtn, fPrintBtn, fPDFBtn, fCloseBtn: TButton;
     { : The bar's controls in the order they were added, which is the
       order they are laid out in. A list rather than ControlCount,
       because the VCL orders aligned controls by position and the
@@ -61,6 +61,7 @@ type
     procedure SettingChanged(Sender: TObject);
     procedure PrevClick(Sender: TObject);
     procedure NextClick(Sender: TObject);
+    procedure PDFClick(Sender: TObject);
     procedure PrintClick(Sender: TObject);
     procedure CloseClick(Sender: TObject);
     procedure PageChanged(Sender: TObject; const APageIndex,
@@ -182,6 +183,7 @@ begin
   fNextBtn := AddButton('>', NextClick);
   fPageLabel := AddLabel('Page 1 of 1');
   fPrintBtn := AddButton('Print...', PrintClick);
+  fPDFBtn := AddButton('PDF...', PDFClick);
   fCloseBtn := AddButton('Close', CloseClick);
 
   fPreview := TFNCPrintPreview.Create(Self);
@@ -354,6 +356,30 @@ begin
   fPageLabel.Caption := Format('Page %d of %d', [APageIndex + 1, APageCount]);
   fPrevBtn.Enabled := APageIndex > 0;
   fNextBtn.Enabled := APageIndex < APageCount - 1;
+end;
+
+procedure TPrintPreviewForm.PDFClick(Sender: TObject);
+var
+  TmpDlg: TSaveDialog;
+  TmpName: String;
+begin
+  TmpDlg := TSaveDialog.Create(Self);
+  try
+    TmpDlg.Filter := 'PDF document|*.pdf';
+    TmpDlg.DefaultExt := 'pdf';
+    if not TmpDlg.Execute then
+      Exit;
+    TmpName := TmpDlg.FileName;
+  finally
+    TmpDlg.Free;
+  end;
+  { Byte for byte the same routine on both frameworks, because the PDF
+    path is framework-free: the page model lays the page out and FNC's
+    own PDF engine is a TTMSFNCGraphics like any other. This handler is
+    identical in the VCL twin - diff them. }
+  Log('PrintPreview: writing ' + TmpName);
+  CADSavePagesToPDF(fCAD, fSetup, TmpName);
+  Log('PrintPreview: written');
 end;
 
 procedure TPrintPreviewForm.PrintClick(Sender: TObject);

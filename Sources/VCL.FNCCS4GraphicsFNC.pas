@@ -115,7 +115,8 @@ type
     procedure ApplyFont;
     function DecodeImage(const Image: TCADImage): TTMSFNCBitmapHelperClass;
     function PixelOffset: Single;
-    procedure LoadPoly(const Pts: Pointer; const Count: Integer);
+    procedure LoadPoly(const Pts: Pointer; const Count: Integer;
+      const AClose: Boolean = False);
     procedure SetXorColor(const Value: TCADColor);
   protected
     function CreatePen: TCADPen; override;
@@ -600,9 +601,10 @@ begin
     Result := 0;
 end;
 
-procedure TCADFNCGraphics.LoadPoly(const Pts: Pointer; const Count: Integer);
+procedure TCADFNCGraphics.LoadPoly(const Pts: Pointer; const Count: Integer;
+  const AClose: Boolean);
 var
-  I: Integer;
+  I, TmpCount: Integer;
   O: Single;
   Src: PCADPoints;
 begin
@@ -610,10 +612,26 @@ begin
     Exit;
   O := PixelOffset;
   Src := PCADPoints(Pts);
-  if Length(fPoly) <> Count then
-    SetLength(fPoly, Count);
+  TmpCount := Count;
+  { A closed shape is closed here, by repeating its first point, rather
+    than left to the backend to close for us.
+
+    On screen FNC's DrawPolygon closes the outline itself, so this
+    looks like belt and braces - but its PDF engine ends the path with
+    the PDF operator B, which fills a path as though it were closed and
+    strokes it as though it were not. The last edge of every polygon
+    was missing from a PDF and from nothing else. A shape that carries
+    its own closing point cannot be closed by only one of them, and the
+    curves in this library already do exactly that. }
+  if AClose and (Count > 2) and
+    ((Src^[0].X <> Src^[Count - 1].X) or (Src^[0].Y <> Src^[Count - 1].Y)) then
+    Inc(TmpCount);
+  if Length(fPoly) <> TmpCount then
+    SetLength(fPoly, TmpCount);
   for I := 0 to Count - 1 do
     fPoly[I] := PointF(Src^[I].X + O, Src^[I].Y + O);
+  if TmpCount > Count then
+    fPoly[Count] := fPoly[0];
 end;
 
 procedure TCADFNCGraphics.MoveTo(const X, Y: Integer);
@@ -661,7 +679,7 @@ begin
     Exit;
   if (Pts = nil) or (Count <= 0) then
     Exit;
-  LoadPoly(Pts, Count);
+  LoadPoly(Pts, Count, True);
   fGraphics.DrawPolygon(fPoly);
 end;
 

@@ -90,6 +90,7 @@ contains
   FMX.FNCCS4Views in '..\..\Generated\FMX\FMX.FNCCS4Views.pas',
   FMX.FNCCS4Print in '..\..\Generated\FMX\FMX.FNCCS4Print.pas',
   FMX.FNCCS4Preview in '..\..\Generated\FMX\FMX.FNCCS4Preview.pas',
+  FMX.FNCCS4PDF in '..\..\Generated\FMX\FMX.FNCCS4PDF.pas',
   FMX.FNCCadSysRegister in '..\..\Generated\FMX\FMX.FNCCadSysRegister.pas';
 
 end.

@@ -1,4 +1,4 @@
-{ : DUnitX tests for the TMS FNC drawing backend (VCL.FNCCS4GraphicsFNC).
+﻿{ : DUnitX tests for the TMS FNC drawing backend (VCL.FNCCS4GraphicsFNC).
 
   Everything is drawn into a TTMSFNCGraphics bitmap canvas with
   anti-aliasing off, and pixels are read back from its TBitmap. Only pixels
@@ -53,6 +53,8 @@ type
     procedure ClipRect_IsTheBounds;
     [Test]
     procedure DecorativeCanvas_HasNoVCLCanvas;
+    [Test]
+    procedure APolygonDrawsItsClosingEdge;
     [Test]
     procedure Polygon_FillsWithTheBrush;
     [Test]
@@ -204,6 +206,54 @@ begin
   Assert.AreEqual(0, R.Top);
   Assert.AreEqual(W, R.Right);
   Assert.AreEqual(H, R.Bottom);
+end;
+
+procedure TCADFNCGraphicsTests.APolygonDrawsItsClosingEdge;
+var
+  TmpPts: array [0 .. 3] of TPoint;
+
+  function AnyInk(const AX, AY: Integer): Boolean;
+  var
+    D: Integer;
+  begin
+    { A one pixel line sits on a half-pixel boundary - see PixelOffset -
+      so the row it lands on is not worth being dogmatic about. }
+    Result := False;
+    for D := -1 to 1 do
+      Result := Result or (Pixel(AX, AY + D) <> clWhite);
+  end;
+
+begin
+  { The closing edge of a polygon is the one nobody draws.
+
+    Three of the four edges are between points the caller gave; the
+    fourth is implied, and whether it appears depends entirely on what
+    the backend does with a path it was not told to close. On screen
+    FNC closes it. Its PDF engine ends the path with the operator B,
+    which fills as though the path were closed and strokes as though it
+    were not - so every polygon in a PDF was missing one edge, and
+    nothing else showed it.
+
+    The outline only, so the fill cannot be mistaken for the edge. }
+  FCnv.Pen.Color := cadclRed;
+  FCnv.Pen.Width := 1;
+  FCnv.Pen.Style := cpsSolid;
+  FCnv.Brush.Style := cbsClear;
+
+  TmpPts[0] := Point(10, 50);
+  TmpPts[1] := Point(10, 10);
+  TmpPts[2] := Point(50, 10);
+  TmpPts[3] := Point(50, 50);
+  FCnv.Graphics.Polygon(TmpPts);
+
+  Assert.IsTrue(AnyInk(30, 10),
+    'the top edge, which is between two given points, was drawn');
+  Assert.IsTrue(AnyInk(30, 50),
+    'and so was the bottom one, which is the closing edge nobody asked ' +
+    'for by name');
+  Assert.AreEqual(clWhite, Pixel(30, 30),
+    'with a clear brush the inside is still paper, so what was measured ' +
+    'above is the outline and not the fill');
 end;
 
 procedure TCADFNCGraphicsTests.DecorativeCanvas_HasNoVCLCanvas;

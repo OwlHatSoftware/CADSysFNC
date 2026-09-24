@@ -20,11 +20,11 @@ the controls descend from `TTMSFNCCustomControl`. See
 * An **interaction engine** (`TFNCCADPrg`) built from small state classes:
   select, move, rotate, edit control points, draw each primitive. Writing a new
   tool means writing a state, not touching the viewport.
-* **Printing**, with a page model that knows about paper: standard sizes,
-  margins, fit-to-page or a stated scale, and multi-page tiling. A preview
-  control draws through the same code the printer does, so the two cannot
-  drift. Line weights can be given in millimetres, which is what makes a print
-  look like a drawing rather than a fax.
+* **Printing and PDF**, with a page model that knows about paper: standard
+  sizes, margins, fit-to-page or a stated scale, and multi-page tiling. The
+  preview control, the printer and the PDF writer all draw through the same
+  routine, so they cannot drift. Line weights can be given in millimetres, which
+  is what makes a print look like a drawing rather than a fax.
 * **Import/export**: JSON (the native format), DXF in and out, the legacy binary
   `.CS2` format for reading old drawings, and — on VCL — printing and clipboard.
 * Everything is source. New shapes and new operations are the intended way to use
@@ -184,10 +184,10 @@ Documentations\ the original CADSys 4.2 help file and change log
   rebuilt.
 * An opaque hatch pattern no longer fills the gaps between its lines.
 * `CopingFrequency` no longer shows partial results during a long repaint.
-* The print **preview** works on VCL and FMX; the **printer** path is VCL-only,
-  because it wants a `TPrinter` and a GDI device context. The page model
-  underneath is framework-free, so an FMX printer is a unit to write rather than
-  a design to redo. There is no PDF output yet.
+* The print **preview** and **PDF output** work on VCL and FMX alike. Sending
+  pages to a **printer** is VCL-only, because that path wants a `TPrinter` and a
+  GDI device context; the page model underneath is framework-free, so an FMX
+  printer is a unit to write rather than a design to redo.
 * Everything the library measures other than a line weight is still in pixels —
   the pick aperture, control-point handles, ruler ticks. Only pen weight and
   hatch spacing have a physical size.

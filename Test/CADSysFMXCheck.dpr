@@ -32,6 +32,7 @@ uses
   FMX.FNCCS4Views,
   FMX.FNCCS4Print,
   FMX.FNCCS4Preview,
+  FMX.FNCCS4PDF,
   FMX.FNCCadSysRegister;
 
 begin
@@ -45,4 +46,6 @@ begin
   Writeln('  page model    : ', CADPaperKindName(pkA3), ' ',
     TCADPageSetup.Default.UnitsPerMM:0:1, ' units/mm');
   Writeln('  preview       : ', TFNCPrintPreview.ClassName);
+  Writeln('  pdf           : ', CADPDFResolution, ' dpi layout, ',
+    CADPDFPointsPerMM:0:3, ' points/mm');
 end.

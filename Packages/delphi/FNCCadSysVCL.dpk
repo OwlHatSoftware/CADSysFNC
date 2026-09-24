@@ -54,6 +54,7 @@ contains
   VCL.FNCCS4Views in '..\..\Generated\VCL\VCL.FNCCS4Views.pas',
   VCL.FNCCS4Print in '..\..\Generated\VCL\VCL.FNCCS4Print.pas',
   VCL.FNCCS4Preview in '..\..\Generated\VCL\VCL.FNCCS4Preview.pas',
+  VCL.FNCCS4PDF in '..\..\Generated\VCL\VCL.FNCCS4PDF.pas',
   VCL.FNCCadSysRegister in '..\..\Generated\VCL\VCL.FNCCadSysRegister.pas';
 
 end.

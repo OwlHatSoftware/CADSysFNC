@@ -166,6 +166,7 @@
         <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Views.pas"/>
         <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Print.pas"/>
         <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Preview.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4PDF.pas"/>
         <DCCReference Include="..\..\Generated\VCL\VCL.FNCCadSysRegister.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
