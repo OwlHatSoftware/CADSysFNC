@@ -89,7 +89,7 @@
         <VerInfo_Release>1</VerInfo_Release>
         <VerInfo_PreRelease>true</VerInfo_PreRelease>
         <VerInfo_Locale>1040</VerInfo_Locale>
-        <VerInfo_Keys>CompanyName=Piero Valagussa;FileDescription=CADSys 4.2 Lite Version (VCL);FileVersion=4.2.1.0;InternalName=CADSys422;LegalCopyright=Piero Valagussa;LegalTrademarks=;OriginalFilename=VCL.FNCCADSys4;ProductName=VCL.FNCCADSys4;ProductVersion=4.2.0.2;Comments=</VerInfo_Keys>
+        <VerInfo_Keys>CompanyName=OwlHatSoftware;FileDescription=CADSysFNC runtime (VCL);FileVersion=4.2.1.0;InternalName=FNCCadSysVCL;LegalCopyright=Copyright (c) 2001 Piero Valagussa, (c) 2026 OwlHatSoftware - MIT;LegalTrademarks=;OriginalFilename=FNCCadSysVCL;ProductName=FNCCadSysVCL;ProductVersion=4.2.0.2;Comments=</VerInfo_Keys>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;Vcl;Vcl.Imaging;Vcl.Touch;Vcl.Samples;Vcl.Shell;$(DCC_Namespace)</DCC_Namespace>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_OSX64)'!=''">

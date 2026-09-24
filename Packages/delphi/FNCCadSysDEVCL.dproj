@@ -73,7 +73,7 @@
         <VerInfo_MinorVer>2</VerInfo_MinorVer>
         <VerInfo_Release>1</VerInfo_Release>
         <VerInfo_Locale>1033</VerInfo_Locale>
-        <VerInfo_Keys>CompanyName=Piero Valagussa;FileDescription=CADSys 4.2 Lite Version (design-time, VCL);FileVersion=4.2.1.0;InternalName=FNCCadSysDEVCL;LegalCopyright=Piero Valagussa;LegalTrademarks=;OriginalFilename=FNCCadSysDEVCL;ProductName=FNCCadSysDEVCL;ProductVersion=4.2.0.2;Comments=</VerInfo_Keys>
+        <VerInfo_Keys>CompanyName=OwlHatSoftware;FileDescription=CADSysFNC design-time (VCL);FileVersion=4.2.1.0;InternalName=FNCCadSysDEVCL;LegalCopyright=Copyright (c) 2001 Piero Valagussa, (c) 2026 OwlHatSoftware - MIT;LegalTrademarks=;OriginalFilename=FNCCadSysDEVCL;ProductName=FNCCadSysDEVCL;ProductVersion=4.2.0.2;Comments=</VerInfo_Keys>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_OSX64)'!=''">
         <DCC_UsePackage>FNCCadSysVCL;$(DCC_UsePackage)</DCC_UsePackage>
