@@ -1,4 +1,4 @@
-{ : DUnitX tests for the legacy .CS2 reader (VCL.FNCCS4Legacy).
+﻿{ : DUnitX tests for the legacy .CS2 reader (VCL.FNCCS4Legacy).
 
   The streams are built here rather than loaded from files, for the
   same reason the DXF tests build theirs: a test that needs a fixture
@@ -82,6 +82,46 @@ type
     procedure TheComponentMethodReadsItToo;
     [Test]
     procedure ProgressRisesOnceToAHundred;
+  end;
+
+  { : The same reader, against the .CS2 files committed in Test\data.
+
+    Every other test in this unit writes its own bytes with
+    TLegacyWriter above, which is the right way to reach the reader's
+    branches - but a writer and a reader written by the same hand from
+    the same reading of the format will agree with each other whether
+    or not either agrees with the format.
+
+    The three fixtures were written by Tools\make-legacy-fixtures.py,
+    which shares no code with the library and was written from the
+    format description alone. They hold the same small drawing in the
+    three combinations that matter: the two widths the file does not
+    record are independent, so a Unicode build still writing the CAD422
+    version string produces wide characters and narrow reals together.
+
+    If these fail and the rest of the unit passes, suspect the reader
+    before the fixtures. }
+  [TestFixture]
+  TLegacyFixtureFileTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    { : Walks up from the executable looking for Test\data. The runner
+      is built into Tools\build\bin and the working directory is
+      wherever the build script was started, so neither is a base worth
+      trusting. Returns '' if it is not there. }
+    function FixturePath(const AName: string): string;
+    function FindByID(const AID: LongInt): TObject2D;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    [Test]
+    [TestCase('narrow chars, single reals', 'narrow-chars-single-reals.CS2')]
+    [TestCase('wide chars, double reals', 'wide-chars-double-reals.CS2')]
+    [TestCase('wide chars, single reals', 'wide-chars-single-reals.CS2')]
+    procedure EveryFixtureHoldsTheSameDrawing(const AFileName: string);
   end;
 
 implementation
@@ -516,8 +556,118 @@ begin
   Assert.AreEqual(42, FirstLine(FCAD).ID, 'and it is the right one');
 end;
 
+{ TLegacyFixtureFileTests }
+
+procedure TLegacyFixtureFileTests.Setup;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+end;
+
+procedure TLegacyFixtureFileTests.TearDown;
+begin
+  FCAD.Free;
+  FCAD := nil;
+end;
+
+function TLegacyFixtureFileTests.FixturePath(const AName: string): string;
+var
+  TmpDir, TmpUp: string;
+  Cont: Integer;
+begin
+  TmpDir := ExtractFilePath(ParamStr(0));
+  for Cont := 0 to 6 do
+  begin
+    Result := TmpDir + 'Test' + PathDelim + 'data' + PathDelim + AName;
+    if FileExists(Result) then
+      Exit;
+    TmpUp := ExtractFilePath(ExcludeTrailingPathDelimiter(TmpDir));
+    if (TmpUp = '') or (TmpUp = TmpDir) then
+      Break;
+    TmpDir := TmpUp;
+  end;
+  Result := '';
+end;
+
+function TLegacyFixtureFileTests.FindByID(const AID: LongInt): TObject2D;
+var
+  TmpIter: TGraphicObjIterator;
+  TmpObj: TGraphicObject;
+begin
+  Result := nil;
+  TmpIter := FCAD.ObjectsIterator;
+  try
+    TmpObj := TmpIter.First;
+    while (TmpObj <> nil) and (Result = nil) do
+    begin
+      if (TmpObj is TObject2D) and (TmpObj.ID = AID) then
+        Result := TObject2D(TmpObj);
+      TmpObj := TmpIter.Next;
+    end;
+  finally
+    TmpIter.Free;
+  end;
+end;
+
+procedure TLegacyFixtureFileTests.EveryFixtureHoldsTheSameDrawing
+  (const AFileName: string);
+var
+  TmpPath: string;
+  TmpLine: TLine2D;
+  TmpPoly: TPolyline2D;
+  TmpEllipse: TEllipse2D;
+  TmpArc: TArc2D;
+begin
+  TmpPath := FixturePath(AFileName);
+  if TmpPath = '' then
+    Assert.Fail(AFileName + ' was not found. It is committed in Test\data, ' +
+      'and Tools\make-legacy-fixtures.py writes it. The search walks up ' +
+      'from ' + ParamStr(0));
+
+  CADLoadLegacyFile(TmpPath, FCAD);
+
+  { The point of three files rather than one: whatever the header said
+    about character and real width, what comes out is the same drawing.
+    The coordinates are whole numbers so a Single file and a Double one
+    can be held to the same assertions. }
+  Assert.AreEqual(4, CountObjects(FCAD), 'four objects came across');
+
+  Assert.AreEqual('WALLS', String(FCAD.Layers[3].Name), 'the layer name');
+  Assert.AreEqual($0000FF, Integer(CADColorToTColor(FCAD.Layers[3].Pen.Color)),
+    'the layer pen colour');
+  Assert.AreEqual(2, Integer(FCAD.Layers[3].Pen.Width), 'the layer pen width');
+
+  TmpLine := FindByID(101) as TLine2D;
+  Assert.AreEqual(10.0, TmpLine.Points[0].X, 0.001, 'the line''s first X');
+  Assert.AreEqual(20.0, TmpLine.Points[0].Y, 0.001, 'the line''s first Y');
+  Assert.AreEqual(110.0, TmpLine.Points[1].X, 0.001, 'the line''s second X');
+  Assert.AreEqual(220.0, TmpLine.Points[1].Y, 0.001, 'the line''s second Y');
+  Assert.AreEqual(3, Integer(TmpLine.Layer), 'the line''s layer');
+
+  TmpPoly := FindByID(102) as TPolyline2D;
+  Assert.AreEqual(3, Integer(TmpPoly.Points.Count),
+    'the polyline kept all three points');
+  Assert.AreEqual(50.0, TmpPoly.Points[2].X, 0.001, 'the last point''s X');
+  Assert.AreEqual(40.0, TmpPoly.Points[2].Y, 0.001, 'the last point''s Y');
+
+  { The curve tail - precision and saving type - is written after the
+    points and is the field most easily lost by a mis-sized real. }
+  TmpEllipse := FindByID(103) as TEllipse2D;
+  Assert.AreEqual(60, Integer(TmpEllipse.CurvePrecision),
+    'the ellipse''s curve precision');
+  Assert.AreEqual(Ord(stSpace), Ord(TmpEllipse.SavingType),
+    'the ellipse''s saving type');
+
+  { And the arc has one byte after the tail that nothing else has. }
+  TmpArc := FindByID(104) as TArc2D;
+  Assert.AreEqual(Ord(adClockwise), Ord(TmpArc.Direction),
+    'the arc''s direction');
+  Assert.AreEqual(60, Integer(TmpArc.CurvePrecision),
+    'the arc''s curve precision');
+end;
+
 initialization
 
 TDUnitX.RegisterTestFixture(TLegacyReaderTests);
+TDUnitX.RegisterTestFixture(TLegacyFixtureFileTests);
 
 end.

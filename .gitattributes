@@ -27,6 +27,10 @@
 *.dcu binary
 *.exe binary
 *.zip binary
+# The legacy .CS2 fixtures are byte fixtures: the whole point of them
+# is that the bytes are what a pre-port CADSys wrote. Never normalised.
+*.CS2 binary
+*.cs2 binary
 
 # DXF is text, but TEST.DXF is a parser fixture: it is read byte for
 # byte by the DXF tests, so it stays exactly as it was written.
