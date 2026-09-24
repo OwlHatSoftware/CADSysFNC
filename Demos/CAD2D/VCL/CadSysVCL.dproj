@@ -149,6 +149,7 @@
         <DCCReference Include="..\..\common\DemoLog.pas"/>
         <DCCReference Include="DemoDlg.pas"/>
         <DCCReference Include="LayersFrm.pas"/>
+        <DCCReference Include="PrintPrvFrm.pas"/>
         <DCCReference Include="MainFrm.pas">
             <Form>MainForm</Form>
         </DCCReference>

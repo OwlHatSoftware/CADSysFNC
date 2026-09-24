@@ -15035,6 +15035,10 @@ begin
   JSetInt(TmpPen, 'width', fPen.Width);
   JSetEnum(TmpPen, 'style', Ord(fPen.Style), CADPenStyleNames);
   JSetEnum(TmpPen, 'mode', Ord(fPen.Mode), CADPenModeNames);
+  { Written only when it is set, so every drawing made before line
+    weights existed round-trips byte for byte. }
+  if fPen.LineWeightMM > 0 then
+    JSetReal(TmpPen, 'weightMM', fPen.LineWeightMM);
   JSetValue(AJSON, 'pen', TmpPen);
 
   TmpBrush := TJSONObject.Create;
@@ -15072,6 +15076,7 @@ begin
       CADPenStyleNames));
     fPen.Mode := TCADPenMode(JGetEnum(TmpPen, 'mode', Ord(fPen.Mode),
       CADPenModeNames));
+    fPen.LineWeightMM := JGetReal(TmpPen, 'weightMM', fPen.LineWeightMM);
   end;
 
   TmpBrush := JGetObject(AJSON, 'brush');

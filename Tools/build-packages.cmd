@@ -232,6 +232,16 @@ echo PACKAGES OK - nothing installed. Built into Tools\build\pkg:
 for %%f in ("%OUT%\pkg\*.bpl") do echo   %%~nxf
 echo.
 echo This is a compile check. The IDE does not search that folder, so to
-echo install, build the three .dproj files in the IDE - which writes to the
-echo IDE's own Bpl folder - and install FNCCadSysDE.
+echo install, open the four .dproj files in the IDE - which write to the
+echo IDE's own Bpl folder - and build them in this order:
+echo.
+echo   1. FNCCadSysVCL      runtime, VCL     build only
+echo   2. FNCCadSysFMX      runtime, FMX     build only
+echo   3. FNCCadSysDEVCL    design-time      build, then install
+echo   4. FNCCadSysDEFMX    design-time      build, then install
+echo.
+echo The order matters and nothing warns about it: the runtime packages
+echo carry the classes and the design-time ones only reference them, so a
+echo DE package installed against a stale runtime bpl fails in ways that
+echo do not name the cause.
 exit /b 0

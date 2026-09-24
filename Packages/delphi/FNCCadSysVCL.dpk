@@ -1,4 +1,4 @@
-package FNCCadSysVCL;
+﻿package FNCCadSysVCL;
 
 {$R *.res}
 {$IFDEF IMPLICITBUILDING This IFDEF should not be used by users}
@@ -52,6 +52,8 @@ contains
   VCL.FNCCS4Shapes in '..\..\Generated\VCL\VCL.FNCCS4Shapes.pas',
   VCL.FNCCS4Tasks in '..\..\Generated\VCL\VCL.FNCCS4Tasks.pas',
   VCL.FNCCS4Views in '..\..\Generated\VCL\VCL.FNCCS4Views.pas',
+  VCL.FNCCS4Print in '..\..\Generated\VCL\VCL.FNCCS4Print.pas',
+  VCL.FNCCS4Preview in '..\..\Generated\VCL\VCL.FNCCS4Preview.pas',
   VCL.FNCCadSysRegister in '..\..\Generated\VCL\VCL.FNCCadSysRegister.pas';
 
 end.

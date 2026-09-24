@@ -1,4 +1,4 @@
-{ : The FMX port of the CAD2D demo.
+﻿{ : The FMX port of the CAD2D demo.
 
   It follows Demos\CAD2D\VCL\MainFrm.pas handler for handler, so the
   two can be compared side by side and a difference in behaviour is a
@@ -31,9 +31,9 @@ uses
   System.DateUtils,
   FMX.Types, FMX.Controls, FMX.Forms, FMX.StdCtrls, FMX.Menus, FMX.Dialogs,
   FMX.Layouts, FMX.Controls.Presentation,
-  DemoLog, DemoDlg, LayersFrm,
+  DemoLog, DemoDlg, LayersFrm, PrintPrvFrm,
   FMX.FNCCS4BaseTypes, FMX.FNCCS4Graphics, FMX.FNCCADSys4, FMX.FNCCS4Shapes, FMX.FNCCS4Tasks,
-  FMX.FNCCS4DXFModule, FMX.FNCCS4Legacy, FMX.FNCCS4Views,
+  FMX.FNCCS4DXFModule, FMX.FNCCS4Legacy, FMX.FNCCS4Print, FMX.FNCCS4Views,
   { FMX.FNCCadSysRegister is here for its initialization section, not for
     the component palette: it is the only place that fills the class
     registry, and without it LoadFromFile and SaveToFile have no class
@@ -191,6 +191,7 @@ type
     procedure LoadProgress(Sender: TObject; ReadPercent: Byte);
     procedure ViewPaint(Sender: TObject);
     procedure ExportDXFClick(Sender: TObject);
+    procedure PrintPreviewClick(Sender: TObject);
     procedure PrintActualClick(Sender: TObject);
     procedure PrintFitClick(Sender: TObject);
     procedure PrintScaleClick(Sender: TObject);
@@ -396,6 +397,7 @@ begin
   AddItem(TmpFile, 'Open view...', OpenViewClick);
   AddSeparator(TmpFile);
   TmpPrint := AddMenu(TmpFile, 'Print');
+  AddItem(TmpPrint, 'Preview...', PrintPreviewClick);
   { Present, and honest about why they do nothing. Leaving them out
     would hide a real gap in the port. }
   AddItem(TmpPrint, 'Actual view', PrintActualClick);
@@ -1265,6 +1267,21 @@ begin
   Say('Printing and clipboard export live in VCL.FNCCS4ExportVCL, which is '
     + 'VCL-only: they are built on the GDI canvas and TClipboard. There '
     + 'is no FMX equivalent in the library yet.');
+end;
+
+procedure TMainForm.PrintPreviewClick(Sender: TObject);
+var
+  TmpSetup: TCADPageSetup;
+  TmpView: TCADViewSpec;
+begin
+  { Seeded from what is on screen, so the preview opens on the view the
+    user is looking at rather than on the whole drawing. A saved view is
+    most of a page setup already - which is why the setup holds one
+    rather than a window of its own. }
+  fView.CaptureView(TmpView);
+  TmpSetup := TCADPageSetup.Default;
+  TmpSetup.View := TmpView;
+  TPrintPreviewForm.Execute(Self, fCAD, TmpSetup);
 end;
 
 procedure TMainForm.PrintActualClick(Sender: TObject);

@@ -1,4 +1,4 @@
-{: The design-time half of registration: the component palette.
+﻿{: The design-time half of registration: the component palette.
 
    Separate from VCL.FNCCadSysRegister because the two have different
    homes. The class registry is needed by every application; the palette
@@ -23,7 +23,7 @@ implementation
 uses
   { For the components themselves, and for the class registry that
     anything streamed from the palette is going to need. }
-  VCL.FNCCADSys4, VCL.FNCCadSysRegister;
+  VCL.FNCCADSys4, VCL.FNCCS4Preview, VCL.FNCCadSysRegister;
 
 procedure Register;
 begin
@@ -33,7 +33,7 @@ begin
     two through TFmxObject - which is why they descend from it on FMX.
     See TFNCCADCmp. }
   RegisterComponents('FNCCadSys',
-    [TFNCCADCmp2D, TFNCCADViewport2D, TFNCCADPrg2D]);
+    [TFNCCADCmp2D, TFNCCADViewport2D, TFNCCADPrg2D, TFNCPrintPreview]);
 end;
 
 end.

@@ -1,4 +1,4 @@
-program CadSysFMX;
+﻿program CadSysFMX;
 
 uses
   System.StartUpCopy,
@@ -7,6 +7,7 @@ uses
   DemoDlg in 'DemoDlg.pas',
   DemoLog in '..\..\common\DemoLog.pas',
   LayersFrm in 'LayersFrm.pas',
+  PrintPrvFrm in 'PrintPrvFrm.pas',
   MainFrm in 'MainFrm.pas' {MainForm};
 
 {$R *.res}

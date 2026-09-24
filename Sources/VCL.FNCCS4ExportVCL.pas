@@ -1,4 +1,4 @@
-{: VCL export helpers for CADSys.
+﻿{: VCL export helpers for CADSys.
 
    Everything here puts a drawing onto something that only exists on the
    VCL: a <I=TCanvas>, a printer, the clipboard. The viewport itself no
@@ -27,8 +27,9 @@ interface
 
 uses
   WinAPI.Windows, System.Types, System.UITypes, System.Classes,
-  Vcl.Graphics, Vcl.ClipBrd,
-  VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsVCL, VCL.FNCCADSys4;
+  Vcl.Graphics, Vcl.ClipBrd, Vcl.Printers,
+  VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsVCL, VCL.FNCCADSys4,
+  VCL.FNCCS4Print;
 
 {: The size of one pixel of <I=Cnv>, in millimetres. It is what
    <See Method=TFNCCADViewport@CalibrateMM> wants, and it is the one thing
@@ -57,6 +58,32 @@ procedure CADCopyToCanvas(const V: TFNCCADViewport; const Cnv: TCanvas;
 
 {: Puts the viewport's off-screen buffer on the clipboard. }
 procedure CADCopyToClipboard(const V: TFNCCADViewport; const Clp: TClipboard);
+
+{: The page device for a printer: its real resolution, and where the
+   sheet's corner is relative to the canvas.
+
+   A printer canvas starts at the printable area, not at the paper, so
+   the sheet begins above and to the left of pixel zero - which is why
+   the offsets come back negative. Get them wrong and everything prints
+   a few millimetres off, consistently, which reads as a margin bug.
+
+   Valid while the printer has a device context: between BeginDoc and
+   EndDoc for certain. }
+function CADPrinterPageDevice(const APrinter: TPrinter): TCADPageDevice;
+
+{: Prints ASetup's pages of ACAD.
+
+   The whole print path, and it is short on purpose: the page model
+   works out what goes on each sheet and CADDrawPage draws it. The only
+   thing this adds is the printer.
+
+   ALastPage of -1 means "to the end". The printer's orientation is set
+   from the setup, because a landscape page setup sent to a portrait
+   printer is simply wrong and there is nothing to be gained by letting
+   the two disagree. }
+procedure CADPrintPages(const ACAD: TFNCCADCmp2D; const ASetup: TCADPageSetup;
+  const APrinter: TPrinter; const AFirstPage: Integer = 0;
+  const ALastPage: Integer = -1);
 
 implementation
 
@@ -159,6 +186,74 @@ begin
   if (V = nil) or (Clp = nil) then
     Exit;
   Clp.Assign(V.OffScreenBitmap);
+end;
+
+function CADPrinterPageDevice(const APrinter: TPrinter): TCADPageDevice;
+var
+  TmpDC: HDC;
+begin
+  Result := TCADPageDevice.FromDPI(96, 96);
+  if APrinter = nil then
+    Exit;
+  TmpDC := APrinter.Handle;
+  if TmpDC = 0 then
+    Exit;
+  Result := TCADPageDevice.FromDPI(GetDeviceCaps(TmpDC, LOGPIXELSX),
+    GetDeviceCaps(TmpDC, LOGPIXELSY));
+  Result.OffsetXPx := -GetDeviceCaps(TmpDC, PHYSICALOFFSETX);
+  Result.OffsetYPx := -GetDeviceCaps(TmpDC, PHYSICALOFFSETY);
+end;
+
+procedure CADPrintPages(const ACAD: TFNCCADCmp2D; const ASetup: TCADPageSetup;
+  const APrinter: TPrinter; const AFirstPage, ALastPage: Integer);
+var
+  TmpSetup: TCADPageSetup;
+  TmpDevice: TCADPageDevice;
+  TmpCanvas: TDecorativeCanvas;
+  TmpCount, TmpFirst, TmpLast, Cont: Integer;
+begin
+  if (ACAD = nil) or (APrinter = nil) then
+    Exit;
+  { A copy, because the query methods are not const and a const record
+    parameter cannot be asked anything. }
+  TmpSetup := ASetup;
+  TmpCount := TmpSetup.PageCount(ACAD);
+  TmpFirst := AFirstPage;
+  if TmpFirst < 0 then
+    TmpFirst := 0;
+  TmpLast := ALastPage;
+  if (TmpLast < 0) or (TmpLast > TmpCount - 1) then
+    TmpLast := TmpCount - 1;
+  if TmpLast < TmpFirst then
+    Exit;
+
+  if TmpSetup.Orientation = pgoLandscape then
+    APrinter.Orientation := Vcl.Printers.poLandscape
+  else
+    APrinter.Orientation := Vcl.Printers.poPortrait;
+
+  APrinter.BeginDoc;
+  try
+    { After BeginDoc: that is when the printing device context exists,
+      and it is the one the canvas draws on. }
+    TmpDevice := CADPrinterPageDevice(APrinter);
+    TmpCanvas := TDecorativeCanvas.Create(APrinter.Canvas);
+    try
+      for Cont := TmpFirst to TmpLast do
+      begin
+        if Cont > TmpFirst then
+          APrinter.NewPage;
+        CADDrawPage(ACAD, TmpSetup, TmpDevice, Cont, TmpCanvas);
+      end;
+    finally
+      TmpCanvas.Free;
+    end;
+  except
+    { A half-printed document left in the spooler is worse than none. }
+    APrinter.Abort;
+    Raise;
+  end;
+  APrinter.EndDoc;
 end;
 
 end.

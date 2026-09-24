@@ -1,4 +1,4 @@
-{: Platform-neutral drawing layer for CADSys 4.
+﻿{: Platform-neutral drawing layer for CADSys 4.
 
    Every shape, grid and handle in the library draws through a
    <See Class=TDecorativeCanvas>, and a TDecorativeCanvas draws through a
@@ -149,7 +149,14 @@ type
      values live: the VCL backend reads and writes the TCanvas pen
      directly, so the two can never disagree. }
   TCADPen = class(TObject)
+  private
+    fLineWeightMM: Double;
+    fOwnerGraphics: TCADGraphics;
   protected
+    { : Millimetres rather than TRealType, because this unit cannot use
+      VCL.FNCCS4BaseTypes - that unit uses this one. They are the same
+      type; TRealType is Double. }
+    procedure SetLineWeightMM(const Value: Double); virtual;
     function GetColor: TCADColor; virtual; abstract;
     procedure SetColor(const Value: TCADColor); virtual; abstract;
     function GetWidth: Integer; virtual; abstract;
@@ -164,6 +171,25 @@ type
     property Width: Integer read GetWidth write SetWidth;
     property Style: TCADPenStyle read GetStyle write SetStyle;
     property Mode: TCADPenMode read GetMode write SetMode;
+    { : The line's physical width in millimetres, or 0 for "use Width".
+
+      Zero by default, which is every drawing that existed before this
+      property did, and it means the pen behaves exactly as it always
+      has: Width pixels, whatever a pixel happens to be on this device.
+
+      Set it to a real weight - 0.18, 0.25, 0.35, as a draughtsman's pen
+      set is numbered - and the pen asks its graphics how many pixels
+      that is, the moment it is told. On a surface that does not know
+      its own physical scale (PixelsPerMM = 0, which is every screen
+      unless something sets it) nothing happens and Width still rules;
+      on a printer's it comes out the width it says.
+
+      The order in Assign is Width first and this second, so a pen that
+      carries both gives the millimetres the last word. }
+    property LineWeightMM: Double read fLineWeightMM write SetLineWeightMM;
+    { : The graphics this pen belongs to, or nil for a stored pen such
+      as a layer's. }
+    property OwnerGraphics: TCADGraphics read fOwnerGraphics;
   end;
 
   {: Brush of a <See Class=TCADGraphics>. }
@@ -228,6 +254,7 @@ type
     PenWidth: Integer;
     PenStyle: TCADPenStyle;
     PenMode: TCADPenMode;
+    PenLineWeightMM: Double;
     BrushColor: TCADColor;
     BrushStyle: TCADBrushStyle;
   end;
@@ -322,6 +349,7 @@ type
     fPen: TCADPen;
     fBrush: TCADBrush;
     fBlendBackground: TCADColor;
+    fPixelsPerMM: Double;
   protected
     function CreatePen: TCADPen; virtual; abstract;
     function CreateBrush: TCADBrush; virtual; abstract;
@@ -410,6 +438,25 @@ type
     {: When True, text is drawn without filling its background. }
     property Transparent: Boolean read GetTransparent write SetTransparent;
     property ClipRect: TRect read GetClipRect;
+    {: How many device pixels make a millimetre on this surface, or 0
+       for "not known".
+
+       Zero is the default and means the whole library behaves as it did
+       before: pen widths and hatch spacing are pixel figures and a
+       pixel is whatever the device says. That is right for a screen,
+       where nobody measures the picture with a ruler.
+
+       It is wrong for paper. At 600 dpi a pixel is a twenty-fourth of a
+       millimetre, so a one-pixel line is invisible and eight-pixel
+       hatching is a solid black fill. Whoever draws on a physical
+       device sets this - VCL.FNCCS4Print.CADDrawPage does, for the
+       duration of one page - and then LineWeightMM and the millimetre
+       hatch figures start to mean something.
+
+       It is not a scale factor for coordinates. The geometry is
+       already correct; this is only for the things that have a
+       physical size of their own. }
+    property PixelsPerMM: Double read fPixelsPerMM write fPixelsPerMM;
   end;
 
 {: Builds a colour from its components. }
@@ -460,6 +507,19 @@ var
     is left unfilled rather than freezing the repaint. }
   CADHatchMaxLines: Integer = 4096;
 
+  { : Millimetres between hatch lines on a surface that knows its
+    physical scale - see <See Property=TCADGraphics@PixelsPerMM>.
+
+    Two, because that is roughly what the eight-pixel screen figure
+    comes to at 96 dpi, so a drawing printed and a drawing on screen
+    look like the same drawing. Ignored where PixelsPerMM is 0. }
+  CADHatchSpacingMM: Double = 2.0;
+
+  { : The weight of a hatch line itself, in millimetres, on a surface
+    that knows its physical scale. A thin pen: hatching is texture, and
+    it should not read as heavily as the outline it fills. }
+  CADHatchLineWeightMM: Double = 0.18;
+
 { : The hatch lines for a polygon, in device coordinates.
 
   Pure geometry: no canvas, no backend, no state. That is the point -
@@ -473,7 +533,8 @@ var
   which is what makes a hatched CAD drawing look deliberate rather
   than assembled. }
 function CADHatchLines(const APoly: array of TPoint;
-  const AStyle: TCADBrushStyle): TCADHatchSegments;
+  const AStyle: TCADBrushStyle; const ASpacing: Integer = 0)
+  : TCADHatchSegments;
 
 implementation
 
@@ -488,9 +549,10 @@ const
   HatchAngleBDiag = -Pi / 4;
 
 function CADHatchLines(const APoly: array of TPoint;
-  const AStyle: TCADBrushStyle): TCADHatchSegments;
+  const AStyle: TCADBrushStyle; const ASpacing: Integer): TCADHatchSegments;
 var
   Count: Integer;
+  Spacing: Integer;
 
   { One family of parallel lines at AAngle.
 
@@ -537,16 +599,14 @@ var
         MaxY := RotY[Cont];
     end;
 
-    if CADHatchSpacing < 1 then
-      CADHatchSpacing := 1;
-    First := Ceil(MinY / CADHatchSpacing);
-    Last := Floor(MaxY / CADHatchSpacing);
+    First := Ceil(MinY / Spacing);
+    Last := Floor(MaxY / Spacing);
     if Last - First > CADHatchMaxLines then
       Exit;
 
     for Line := First to Last do
     begin
-      Y := Line * CADHatchSpacing;
+      Y := Line * Spacing;
       Hit := 0;
       { Half-open on purpose: an edge counts at its top end and not at
         its bottom, so a vertex shared by two edges is crossed once and
@@ -600,6 +660,15 @@ var
   end;
 
 begin
+  { A caller with a physical surface passes the spacing it wants;
+    everyone else gets the pixel figure. Clamped here rather than
+    by writing back to the global, which two threads could race on. }
+  if ASpacing > 0 then
+    Spacing := ASpacing
+  else
+    Spacing := CADHatchSpacing;
+  if Spacing < 1 then
+    Spacing := 1;
   Result := nil;
   Count := 0;
   case AStyle of
@@ -712,6 +781,27 @@ begin
   Width := Source.Width;
   Style := Source.Style;
   Mode := Source.Mode;
+  { Last, so that a pen carrying both a pixel width and a millimetre
+    weight lands on the millimetres wherever the device knows what one
+    is. On a screen this line does nothing at all. }
+  LineWeightMM := Source.LineWeightMM;
+end;
+
+procedure TCADPen.SetLineWeightMM(const Value: Double);
+var
+  TmpWidth: Integer;
+begin
+  fLineWeightMM := Value;
+  if (Value <= 0) or (fOwnerGraphics = nil) or
+    (fOwnerGraphics.PixelsPerMM <= 0) then
+    Exit;
+  { Never thinner than one pixel: a weight that rounds to nothing would
+    disappear rather than come out fine, and a line nobody can see is
+    not a thin line, it is a missing one. }
+  TmpWidth := Round(Value * fOwnerGraphics.PixelsPerMM);
+  if TmpWidth < 1 then
+    TmpWidth := 1;
+  Width := TmpWidth;
 end;
 
 { TCADBrush }
@@ -996,8 +1086,14 @@ constructor TCADGraphics.Create;
 begin
   inherited Create;
   fBlendBackground := cadclWhite;
+  fPixelsPerMM := 0;
   fPen := CreatePen;
   fBrush := CreateBrush;
+  { So a pen can convert its own millimetres. Only the graphics' own
+    pen gets this; a layer's stored pen has no surface and no business
+    guessing at one. }
+  if fPen <> nil then
+    fPen.fOwnerGraphics := Self;
 end;
 
 destructor TCADGraphics.Destroy;
@@ -1013,6 +1109,7 @@ begin
   Result.PenWidth := fPen.Width;
   Result.PenStyle := fPen.Style;
   Result.PenMode := fPen.Mode;
+  Result.PenLineWeightMM := fPen.LineWeightMM;
   Result.BrushColor := fBrush.Color;
   Result.BrushStyle := fBrush.Style;
 end;
@@ -1023,6 +1120,11 @@ begin
   fPen.Width := State.PenWidth;
   fPen.Style := State.PenStyle;
   fPen.Mode := State.PenMode;
+  { The weight first, then the width, so the width that was actually in
+    force is what comes back - restoring a weight afterwards would
+    recompute it and could land a pixel away. }
+  fPen.fLineWeightMM := State.PenLineWeightMM;
+  fPen.Width := State.PenWidth;
   fBrush.Color := State.BrushColor;
   fBrush.Style := State.BrushStyle;
 end;
@@ -1050,7 +1152,14 @@ begin
   for Cont := 0 to Count - 1 do
     Poly[Cont] := PCADPoints(Pts)^[Cont];
 
-  Segs := CADHatchLines(Poly, Brush.Style);
+  { On a surface that knows its physical scale the spacing is a
+    millimetre figure, so a hatch keeps its density on paper instead of
+    closing up into a solid fill at the printer's resolution. }
+  if fPixelsPerMM > 0 then
+    Segs := CADHatchLines(Poly, Brush.Style,
+      Round(CADHatchSpacingMM * fPixelsPerMM))
+  else
+    Segs := CADHatchLines(Poly, Brush.Style);
 
   State := SaveState;
   try
@@ -1065,7 +1174,10 @@ begin
       its width. }
     Pen.Color := Brush.Color;
     Pen.Style := cpsSolid;
+    Pen.LineWeightMM := 0;
     Pen.Width := 1;
+    if fPixelsPerMM > 0 then
+      Pen.LineWeightMM := CADHatchLineWeightMM;
     for Cont := 0 to High(Segs) do
     begin
       MoveTo(Segs[Cont].P1.X, Segs[Cont].P1.Y);

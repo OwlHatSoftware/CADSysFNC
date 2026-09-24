@@ -1,4 +1,4 @@
-package FNCCadSysFMX;
+﻿package FNCCadSysFMX;
 
 { The FMX build of the CADSys FNC library.
 
@@ -88,6 +88,8 @@ contains
   FMX.FNCCS4Shapes in '..\..\Generated\FMX\FMX.FNCCS4Shapes.pas',
   FMX.FNCCS4Tasks in '..\..\Generated\FMX\FMX.FNCCS4Tasks.pas',
   FMX.FNCCS4Views in '..\..\Generated\FMX\FMX.FNCCS4Views.pas',
+  FMX.FNCCS4Print in '..\..\Generated\FMX\FMX.FNCCS4Print.pas',
+  FMX.FNCCS4Preview in '..\..\Generated\FMX\FMX.FNCCS4Preview.pas',
   FMX.FNCCadSysRegister in '..\..\Generated\FMX\FMX.FNCCadSysRegister.pas';
 
 end.

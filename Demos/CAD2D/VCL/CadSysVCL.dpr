@@ -1,4 +1,4 @@
-program CadSysVCL;
+﻿program CadSysVCL;
 
 uses
   {$IFDEF EurekaLog}
@@ -21,6 +21,7 @@ uses
   DemoLog in '..\..\common\DemoLog.pas',
   DemoDlg in 'DemoDlg.pas',
   LayersFrm in 'LayersFrm.pas',
+  PrintPrvFrm in 'PrintPrvFrm.pas',
   MainFrm in 'MainFrm.pas' {MainForm};
 
 {$R *.RES}

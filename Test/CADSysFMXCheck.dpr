@@ -1,4 +1,4 @@
-{ : Compiles the whole library with CADSYS_FMX defined, and does nothing
+﻿{ : Compiles the whole library with CADSYS_FMX defined, and does nothing
   else.
 
   There is no FMX demo or test suite yet, and writing one before the
@@ -30,6 +30,8 @@ uses
   FMX.FNCCS4DXFModule,
   FMX.FNCCS4Legacy,
   FMX.FNCCS4Views,
+  FMX.FNCCS4Print,
+  FMX.FNCCS4Preview,
   FMX.FNCCadSysRegister;
 
 begin
@@ -40,4 +42,7 @@ begin
   Writeln('  shapes        : ', TLine2D.ClassName);
   Writeln('  viewport      : ', TFNCCADViewport2D.ClassName);
   Writeln('  tasks         : ', TCAD2DExplodeObjects.ClassName);
+  Writeln('  page model    : ', CADPaperKindName(pkA3), ' ',
+    TCADPageSetup.Default.UnitsPerMM:0:1, ' units/mm');
+  Writeln('  preview       : ', TFNCPrintPreview.ClassName);
 end.

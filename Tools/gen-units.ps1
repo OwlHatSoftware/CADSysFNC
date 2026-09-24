@@ -1,4 +1,4 @@
-<#
+﻿<#
   Generates the per-framework copies of the library's units.
 
   The arrangement is TMS FNC's own, and the reasoning behind adopting it
@@ -77,6 +77,8 @@ $Units = [ordered]@{
   'VCL.FNCCS4Shapes.pas'       = $All
   'VCL.FNCCS4Tasks.pas'        = $All
   'VCL.FNCCS4Views.pas'        = $All
+  'VCL.FNCCS4Print.pas'        = $All
+  'VCL.FNCCS4Preview.pas'      = $All
   'VCL.FNCCadSysRegister.pas'  = $All
   'VCL.FNCCadSysRegisterDE.pas' = $All
 }

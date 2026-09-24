@@ -1,4 +1,4 @@
-program CADSys4Tests;
+﻿program CADSys4Tests;
 
 { DUnitX console test runner for the CADSys 4.2 library.
 
@@ -47,6 +47,7 @@ uses
   CADSys4.Tests.DXF in 'CADSys4.Tests.DXF.pas',
   CADSys4.Tests.Legacy in 'CADSys4.Tests.Legacy.pas',
   CADSys4.Tests.Views in 'CADSys4.Tests.Views.pas',
+  CADSys4.Tests.Print in 'CADSys4.Tests.Print.pas',
   VCL.FNCCS4ExportVCL;
 
 {$IFNDEF TESTINSIGHT}

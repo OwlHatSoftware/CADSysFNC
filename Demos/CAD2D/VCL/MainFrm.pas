@@ -1,4 +1,4 @@
-{ : The VCL CAD2D demo.
+﻿{ : The VCL CAD2D demo.
 
   This file and Demos\CAD2D\FMX\MainFrm.pas are deliberately the same
   program written twice, once per framework: same handler names, same
@@ -24,9 +24,9 @@ uses
   System.DateUtils,
   Vcl.Controls, Vcl.Forms, Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.Menus,
   Vcl.Dialogs, Vcl.Printers, Vcl.ClipBrd, Vcl.Graphics,
-  DemoLog, DemoDlg, LayersFrm,
+  DemoLog, DemoDlg, LayersFrm, PrintPrvFrm,
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCS4Tasks,
-  VCL.FNCCS4DXFModule, VCL.FNCCS4Legacy, VCL.FNCCS4ExportVCL, VCL.FNCCS4Views,
+  VCL.FNCCS4DXFModule, VCL.FNCCS4Legacy, VCL.FNCCS4Print, VCL.FNCCS4ExportVCL, VCL.FNCCS4Views,
   { VCL.FNCCadSysRegister is here for its initialization section, not for
     the component palette: it is the only place that fills the class
     registry, and without it LoadFromFile and SaveToFile have no class
@@ -189,6 +189,7 @@ type
     procedure LoadProgress(Sender: TObject; ReadPercent: Byte);
     procedure ViewPaint(Sender: TObject);
     procedure ExportDXFClick(Sender: TObject);
+    procedure PrintPreviewClick(Sender: TObject);
     procedure PrintActualClick(Sender: TObject);
     procedure PrintFitClick(Sender: TObject);
     procedure PrintScaleClick(Sender: TObject);
@@ -432,6 +433,7 @@ begin
   AddItem(TmpFile, 'Open view...', OpenViewClick);
   AddSeparator(TmpFile);
   TmpPrint := AddMenu(TmpFile, 'Print');
+  AddItem(TmpPrint, 'Preview...', PrintPreviewClick);
   AddItem(TmpPrint, 'Actual view', PrintActualClick);
   AddItem(TmpPrint, 'Fit to page', PrintFitClick);
   AddItem(TmpPrint, 'To scale', PrintScaleClick);
@@ -1317,6 +1319,21 @@ begin
   finally
     Printer.EndDoc;
   end;
+end;
+
+procedure TMainForm.PrintPreviewClick(Sender: TObject);
+var
+  TmpSetup: TCADPageSetup;
+  TmpView: TCADViewSpec;
+begin
+  { Seeded from what is on screen, so the preview opens on the view the
+    user is looking at rather than on the whole drawing. A saved view is
+    most of a page setup already - which is why the setup holds one
+    rather than a window of its own. }
+  fView.CaptureView(TmpView);
+  TmpSetup := TCADPageSetup.Default;
+  TmpSetup.View := TmpView;
+  TPrintPreviewForm.Execute(Self, fCAD, TmpSetup);
 end;
 
 procedure TMainForm.PrintActualClick(Sender: TObject);
