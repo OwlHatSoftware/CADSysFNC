@@ -529,6 +529,9 @@ uses
     coordinates and the canvas is scaled down to match - see
     TFNCCADViewport.Draw. }
   System.Math.Vectors,
+  { FMX.Types for TFmxObject: it is what gives the non-visual
+    components an FMX identity - see TFNCCADCmp. }
+  FMX.Types,
   FMX.TMSFNCTypes, FMX.TMSFNCGraphicsTypes, FMX.TMSFNCGraphics,
   FMX.TMSFNCCustomControl,
 {$ENDIF}
@@ -2593,7 +2596,25 @@ type
     special 3D operation (like implementing spatial partitioning
     with BSP).
   }
+{$IFDEF CADSYS_FMX}
+  { TFmxObject rather than TComponent, and the reason is the IDE.
+
+    A component descending straight from TComponent has nothing in it
+    that says which framework it belongs to, so the VCL and the FMX
+    copies of this class look identical to the IDE and only one of
+    them can be on a palette: the second package to register it is
+    refused with "already been registered by package ...". TFmxObject
+    is the lightest thing that carries an FMX identity - no size, no
+    painting, no parent required - and it is a TComponent descendant,
+    so nothing else about this class changes.
+
+    It does bring AddObject and RemoveObject of its own, which the
+    ones below hide. That is deliberate and FMX-only; a caller who
+    wants TFmxObject.AddObject qualifies it. }
+  TFNCCADCmp = class(TFmxObject)
+{$ELSE}
   TFNCCADCmp = class(TComponent)
+{$ENDIF}
   private
     fVersion: TCADVersion; { The version info is used in file I/O. }
     fListOfObjects, fListOfBlocks: TGraphicObjList;
@@ -7373,7 +7394,13 @@ type
 
     See also <See Class=TCADState> class for details.
   }
+{$IFDEF CADSYS_FMX}
+  { TFmxObject for the same reason as TFNCCADCmp: without it the IDE
+    cannot tell this class from its VCL namesake. }
+  TFNCCADPrg = class(TFmxObject)
+{$ELSE}
   TFNCCADPrg = class(TComponent)
+{$ENDIF}
   private
     fLinkedViewport: TFNCCADViewport;
     fIsBusy, fIsSuspended: Boolean;

@@ -1433,7 +1433,12 @@ type
 
 implementation
 
-uses Math;
+uses
+{$IFDEF CADSYS_LCL}
+  Math;
+{$ELSE}
+  System.Math;
+{$ENDIF}
 
 type
   // -----===== Starting Cs4CADPrgTasks.pas =====-----

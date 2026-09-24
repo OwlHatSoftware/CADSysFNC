@@ -78,6 +78,7 @@ $Units = [ordered]@{
   'VCL.FNCCS4Tasks.pas'        = $All
   'VCL.FNCCS4Views.pas'        = $All
   'VCL.FNCCadSysRegister.pas'  = $All
+  'VCL.FNCCadSysRegisterDE.pas' = $All
 }
 
 # ---------------------------------------------------------------------

@@ -3094,7 +3094,7 @@ uses
     to put its PNG bytes in a JSON string. }
   Math, base64, VCL.FNCCadSysRegister;
 {$ELSE}
-  Math, System.NetEncoding, VCL.FNCCadSysRegister;
+  System.Math, System.NetEncoding, VCL.FNCCadSysRegister;
 {$ENDIF}
 
 var

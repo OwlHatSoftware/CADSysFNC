@@ -1,3 +1,12 @@
+{: The runtime half of registration: the class registry.
+
+   Its initialization is the only thing that fills the class registry, so
+   this unit belongs in every package and in every application that loads
+   a drawing - without it LoadFromFile has no class to map a stored index
+   onto. It is not the component palette; that is
+   VCL.FNCCadSysRegisterDE, which lives in the design-time package because
+   only the IDE has any use for it.
+}
 unit VCL.FNCCadSysRegister;
 
 {$I VCL.FNCCADSys.inc}
@@ -7,8 +16,6 @@ interface
 uses
   Classes, VCL.FNCCS4Shapes, VCL.FNCCADSys4, VCL.FNCCS4BaseTypes, VCL.FNCCS4DXFModule;
 
-procedure register;
-
 var
   _NullChar: TVectChar;
   _DefaultFont: TVectFont;
@@ -16,13 +23,6 @@ var
   _DefaultHandler3D: TPrimitive3DHandler;
 
 implementation
-
-procedure register;
-begin
-  RegisterComponents('FNCCadSys', [TFNCCADPrg2D]);
-  RegisterComponents('FNCCadSys', [TFNCCADCmp2D]);
-  RegisterComponents('FNCCadSys', [TFNCCADViewport2D]);
-end;
 
 initialization
 

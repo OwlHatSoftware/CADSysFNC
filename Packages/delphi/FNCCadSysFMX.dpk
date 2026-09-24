@@ -2,22 +2,20 @@ package FNCCadSysFMX;
 
 { The FMX build of the CADSys FNC library.
 
-  Runtime only, on purpose. This package contains the same unit names
-  as the VCL package FNCCadSysVCL - FMX.FNCCADSys4, FMX.FNCCS4Shapes and the
-  rest are one source for all three frameworks - and the IDE refuses
-  to load a design package whose units another loaded package already
-  provides. So installing this one would knock the VCL package out of
-  the IDE and vice versa. RUNONLY makes that impossible to do by
-  accident: the IDE will not offer to install it, while an FMX
-  application can still link it or list it under runtime packages.
+  Runtime only, and now for the ordinary reason rather than the awkward
+  one. It used to be RUNONLY because it shared every unit name with the
+  VCL package, so installing it would have knocked that one out of the
+  IDE. Since the units were framework-prefixed the two no longer
+  collide, and the package that gets installed is FNCCadSysDE, which
+  requires both runtime packages and registers both palettes.
 
-  Giving FMX its own component palette entry would mean
-  framework-prefixed unit names (FMX.FNCCADSys4, the way TMS itself
-  splits VCL.TMSFNC* from FMX.TMSFNC*), which is a rename across the
-  whole library. See the port notes before starting that.
+  An FMX application links this package or lists it under runtime
+  packages, exactly as before.
 
-  CADSYS_FMX must be defined for this to build - it is in the dproj,
-  and CADSys.inc quietly selects the VCL otherwise. }
+  CADSYS_FMX no longer selects anything: the units in Generated\FMX
+  include the FMX framework file, which defines it. It is still set in
+  the dproj, where it catches this package being pointed at the VCL
+  tree. }
 
 {$R *.res}
 {$IFDEF IMPLICITBUILDING This IFDEF should not be used by users}
@@ -45,8 +43,29 @@ package FNCCadSysFMX;
 {$DEFINE DEBUG}
 {$ENDIF IMPLICITBUILDING}
 {$DESCRIPTION 'CADSys 4.2 Lite Version (FMX)'}
-{$LIBSUFFIX AUTO}
-{$RUNONLY}
+{ No LIBSUFFIX.
+
+  It was AUTO, and every install failed the same way: the compiler wrote
+  FNCCadSysFMX290.bpl while the IDE went looking for FNCCadSysFMX.bpl.
+  Three packages, three times. No dproj carries a LibSuffix property, so
+  the IDE would drop the directive on its next regeneration of this file
+  anyway - it already did that to DESIGNONLY.
+
+  The suffix exists so several IDE versions can keep their bpls in one
+  folder. That matters to a library shipped as binaries; it is nothing
+  but a name to get wrong for one built from source. }
+{ Not RUNONLY, deliberately - see FNCCadSysDE.
+
+  It was, and a design-time package requiring a RUNONLY package is what
+  the IDE fell over on: the IDE has to load this BPL into its own process
+  as a dependency, and RUNONLY is the flag that says it may not. TMS FNC
+  Core ships exactly this shape - three runtime packages and one
+  design-time package requiring them - and marks none of the runtime ones
+  RUNONLY. Copied from something that demonstrably installs on this
+  machine rather than reasoned about again.
+
+  What stops the wrong one being installed is that this package registers
+  nothing. Install FNCCadSysDE. }
 {$IMPLICITBUILD OFF}
 
 requires

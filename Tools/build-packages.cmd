@@ -1,6 +1,6 @@
 @echo off
 rem ---------------------------------------------------------------------
-rem Builds both library packages with dcc32, outside the IDE.
+rem Builds all three library packages with dcc32, outside the IDE.
 rem
 rem   build-packages.cmd [BDSVER]      BDSVER defaults to 23.0 (Delphi 12)
 rem
@@ -37,6 +37,11 @@ if not exist "%OUT%\pkg" mkdir "%OUT%\pkg"
 if not exist "%OUT%\pkg\dcp" mkdir "%OUT%\pkg\dcp"
 if not exist "%OUT%\pkg\dcu-vcl" mkdir "%OUT%\pkg\dcu-vcl"
 if not exist "%OUT%\pkg\dcu-fmx" mkdir "%OUT%\pkg\dcu-fmx"
+rem Old bpls and dcps from before a rename or a LIBSUFFIX change would sit
+rem here looking current. FNCCadSysVCL.bpl and FNCCadSysVCL290.bpl side by
+rem side is a question nobody should have to answer.
+del /q "%OUT%\pkg\*.bpl" >nul 2>&1
+del /q "%OUT%\pkg\dcp\*.dcp" >nul 2>&1
 
 rem --- where is Delphi -------------------------------------------------
 set BDSROOT=
@@ -110,6 +115,8 @@ rem the alternative is a build configured by a file nobody read.
 set STRAYCFG=
 if exist "%ROOT%\Packages\delphi\FNCCadSysVCL.cfg" set STRAYCFG=%ROOT%\Packages\delphi\FNCCadSysVCL.cfg
 if exist "%ROOT%\Packages\delphi\FNCCadSysFMX.cfg" set STRAYCFG=%ROOT%\Packages\delphi\FNCCadSysFMX.cfg
+if exist "%ROOT%\Packages\delphi\FNCCadSysDEVCL.cfg" set STRAYCFG=%ROOT%\Packages\delphi\FNCCadSysDEVCL.cfg
+if exist "%ROOT%\Packages\delphi\FNCCadSysDEFMX.cfg" set STRAYCFG=%ROOT%\Packages\delphi\FNCCadSysDEFMX.cfg
 if defined STRAYCFG (
   echo A stale project config is present: %STRAYCFG% > "%LOG%"
   echo dcc32 would read it instead of this script's. Delete it. >> "%LOG%"
@@ -117,6 +124,7 @@ if defined STRAYCFG (
   exit /b 2
 )
 
+set DEERR=0
 echo === package build %DATE% %TIME% (BDS %BDSVER%) > "%LOG%"
 echo --- dcp folder: %DCPDIR% >> "%LOG%"
 echo --- fnc core:   %FNCCORE% >> "%LOG%"
@@ -176,14 +184,54 @@ set FMXERR=%ERRORLEVEL%
 echo === dcc32 exit %FMXERR% >> "%LOG%"
 popd
 
+rem --- design-time, one per framework ----------------------------------
+rem Two of them, because Delphi keys its component registry by class name
+rem globally and both frameworks declare the same class names - which is
+rem the point of the port. One package registering both raises EFilerError
+rem at install. TMS FNC has the same situation and answers it the same
+rem way: install the framework you are working in.
+for %%k in (VCL FMX) do (
+  > "%CFG%" echo -U"%BDSROOT%lib\Win32\release;%DCPDIR%;%OUT%\pkg\dcp;%ROOT%\Generated\%%k;%FNCCORE%"
+  >>"%CFG%" echo -I"%BDSROOT%lib\Win32\release;%ROOT%\Generated\%%k"
+  >>"%CFG%" echo -R"%BDSROOT%lib\Win32\release;%ROOT%\Packages\delphi"
+  >>"%CFG%" echo -O"%BDSROOT%lib\Win32\release"
+  >>"%CFG%" echo -NSSystem;Xml;Data;Datasnap;Web;Soap;Winapi;System.Win
+  >>"%CFG%" echo -N0"%OUT%\pkg\dcu-de-%%k"
+  >>"%CFG%" echo -LE"%OUT%\pkg"
+  >>"%CFG%" echo -LN"%OUT%\pkg\dcp"
+  >>"%CFG%" echo -$D+
+  >>"%CFG%" echo -$L+
+  >>"%CFG%" echo -$Y+
+  >>"%CFG%" echo -DDEBUG
+  if not exist "%OUT%\pkg\dcu-de-%%k" mkdir "%OUT%\pkg\dcu-de-%%k"
+  pushd "%OUT%\pkg"
+  echo. >> "%LOG%"
+  echo --- package: FNCCadSysDE%%k.dpk >> "%LOG%"
+  echo --- dcc32 config: >> "%LOG%"
+  type "%CFG%" >> "%LOG%"
+  %DCC% -B "%ROOT%\Packages\delphi\FNCCadSysDE%%k.dpk" >> "%LOG%" 2>&1
+  if errorlevel 1 set DEERR=1
+  echo === dcc32 finished FNCCadSysDE%%k >> "%LOG%"
+  popd
+)
+
 if not "%VCLERR%"=="0" (
   echo VCL PACKAGE FAILED - see Tools\logs\build-packages.log
 )
 if not "%FMXERR%"=="0" (
   echo FMX PACKAGE FAILED - see Tools\logs\build-packages.log
 )
+if not "%DEERR%"=="0" (
+  echo A DESIGN-TIME PACKAGE FAILED - see Tools\logs\build-packages.log
+)
 if not "%VCLERR%"=="0" exit /b %VCLERR%
 if not "%FMXERR%"=="0" exit /b %FMXERR%
+if not "%DEERR%"=="0" exit /b %DEERR%
 
-echo PACKAGES OK - bpl and dcp in Tools\build\pkg (nothing installed)
+echo PACKAGES OK - nothing installed. Built into Tools\build\pkg:
+for %%f in ("%OUT%\pkg\*.bpl") do echo   %%~nxf
+echo.
+echo This is a compile check. The IDE does not search that folder, so to
+echo install, build the three .dproj files in the IDE - which writes to the
+echo IDE's own Bpl folder - and install FNCCadSysDE.
 exit /b 0
