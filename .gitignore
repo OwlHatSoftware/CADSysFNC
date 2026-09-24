@@ -19,6 +19,11 @@
 /Tools/logs/
 /Tools/build/
 *.identcache
+# Third-party IDE add-in configs. They are per-machine, they are not
+# part of this library, and the EurekaLog one carries an installation
+# hash - none of it belongs in a public repository.
+*.eof
+*.skincfg
 *.dproj.local
 *.dsk
 *.stat
