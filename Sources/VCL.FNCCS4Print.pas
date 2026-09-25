@@ -259,6 +259,55 @@ function CADSheetViewportRectPx(const ASheet: TCADSheet;
 function CADSheetPrintableRectPx(const ASheet: TCADSheet;
   const ADevice: TCADPageDevice): TRect;
 
+{ : The transform CADDrawSheet draws AViewport's model with: model
+  coordinates in, device pixels out.
+
+  The same expression the renderer uses, handed out rather than
+  restated - so an application that inverts it is inverting what was
+  actually drawn. Identity when the viewport has no area on the
+  device, which is the one answer that cannot mislead: it maps every
+  point to itself and any hit test on it fails honestly. }
+function CADSheetViewportTransform(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet; const AViewport: TCADSheetViewport;
+  const ADevice: TCADPageDevice): TTransf2D;
+
+{ : APoint, in device pixels, as a point in ASheet's own millimetres -
+  origin at the bottom-left corner of the paper, Y upwards.
+
+  What a click on the sheet itself means: where a title block's
+  objects live. }
+function CADSheetPointToMM(const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice; const APoint: TPoint): TPoint2D;
+{ : The reverse, and the same arithmetic the clip rectangles use. }
+function CADSheetMMToPoint(const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice; const APointMM: TPoint2D): TPoint;
+
+{ : The index of the viewport under APoint, or -1 for none.
+
+  Searched from the end, because CADDrawSheet draws the viewports in
+  order and the last one drawn is the one on top. Where two overlap,
+  the answer is the one the user can see. }
+function CADSheetViewportIndexAt(const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice; const APoint: TPoint): Integer;
+{ : The same, as the viewport itself, or nil. }
+function CADSheetViewportAt(const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice; const APoint: TPoint): TCADSheetViewport;
+
+{ : APoint as a model coordinate, seen through AViewport.
+
+  The point does not have to be inside the viewport - the arithmetic
+  is a transform, not a test. Ask
+  <See Procedure=CADSheetViewportIndexAt> first if it matters, which
+  for editing it does: a drag that leaves the viewport is still a drag
+  in that viewport's model. }
+function CADSheetPointToModel(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet; const AViewport: TCADSheetViewport;
+  const ADevice: TCADPageDevice; const APoint: TPoint): TPoint2D;
+{ : The reverse: where a model point lands on the paper. }
+function CADSheetModelToPoint(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet; const AViewport: TCADSheetViewport;
+  const ADevice: TCADPageDevice; const APointModel: TPoint2D): TPoint;
+
 implementation
 
 { ==================================================================
@@ -653,17 +702,125 @@ begin
   Result := SheetRectPx(ASheet, ADevice, ASheet.PrintableRect2D);
 end;
 
+function CADSheetViewportTransform(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet; const AViewport: TCADSheetViewport;
+  const ADevice: TCADPageDevice): TTransf2D;
+var
+  TmpWindow: TRect2D;
+  TmpDest: TRect;
+begin
+  Result := IdentityTransf2D;
+  if (ASheet = nil) or (AViewport = nil) then
+    Exit;
+  TmpDest := CADSheetViewportRectPx(ASheet, AViewport, ADevice);
+  if (TmpDest.Right <= TmpDest.Left) or (TmpDest.Bottom <= TmpDest.Top) then
+    Exit;
+  TmpWindow := AViewport.ModelWindow(ACAD);
+  Result := GetVisualTransform2D(TmpWindow, TmpDest, 0);
+end;
+
+function CADSheetPointToMM(const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice; const APoint: TPoint): TPoint2D;
+var
+  TmpPaperW, TmpPaperH: TRealType;
+begin
+  Result := Point2D(0, 0);
+  if (ASheet = nil) or (ADevice.PixelsPerMMX <= 0) or
+    (ADevice.PixelsPerMMY <= 0) then
+    Exit;
+  ASheet.SizeMM(TmpPaperW, TmpPaperH);
+  { The inverse of SheetRectPx, written out rather than taken from the
+    drawing transform: the rectangles a user can see - the sheet clip,
+    the viewport borders - come from that arithmetic, and a hit test
+    that disagreed with them by the drawing transform's half pixel
+    would be a bug report nobody could reproduce. }
+  Result.X := (APoint.X - ADevice.OffsetXPx) / ADevice.PixelsPerMMX;
+  Result.Y := TmpPaperH - (APoint.Y - ADevice.OffsetYPx) /
+    ADevice.PixelsPerMMY;
+end;
+
+function CADSheetMMToPoint(const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice; const APointMM: TPoint2D): TPoint;
+var
+  TmpPaperW, TmpPaperH: TRealType;
+begin
+  Result := Point(0, 0);
+  if ASheet = nil then
+    Exit;
+  ASheet.SizeMM(TmpPaperW, TmpPaperH);
+  Result.X := ADevice.OffsetXPx + ADevice.MMToPxX(APointMM.X);
+  Result.Y := ADevice.OffsetYPx + ADevice.MMToPxY(TmpPaperH - APointMM.Y);
+end;
+
+function CADSheetViewportIndexAt(const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice; const APoint: TPoint): Integer;
+var
+  TmpRect: TRect;
+  Cont: Integer;
+begin
+  Result := -1;
+  if ASheet = nil then
+    Exit;
+  for Cont := ASheet.ViewportCount - 1 downto 0 do
+  begin
+    TmpRect := CADSheetViewportRectPx(ASheet, ASheet.Viewports[Cont], ADevice);
+    if (APoint.X >= TmpRect.Left) and (APoint.X <= TmpRect.Right) and
+      (APoint.Y >= TmpRect.Top) and (APoint.Y <= TmpRect.Bottom) then
+    begin
+      Result := Cont;
+      Exit;
+    end;
+  end;
+end;
+
+function CADSheetViewportAt(const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice; const APoint: TPoint): TCADSheetViewport;
+var
+  TmpIndex: Integer;
+begin
+  Result := nil;
+  TmpIndex := CADSheetViewportIndexAt(ASheet, ADevice, APoint);
+  if TmpIndex >= 0 then
+    Result := ASheet.Viewports[TmpIndex];
+end;
+
+function CADSheetPointToModel(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet; const AViewport: TCADSheetViewport;
+  const ADevice: TCADPageDevice; const APoint: TPoint): TPoint2D;
+begin
+  Result := TransformPoint2D(Point2D(APoint.X, APoint.Y),
+    InvertTransform2D(CADSheetViewportTransform(ACAD, ASheet, AViewport,
+    ADevice)));
+end;
+
+function CADSheetModelToPoint(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet; const AViewport: TCADSheetViewport;
+  const ADevice: TCADPageDevice; const APointModel: TPoint2D): TPoint;
+var
+  TmpPt: TPoint2D;
+begin
+  TmpPt := TransformPoint2D(APointModel,
+    CADSheetViewportTransform(ACAD, ASheet, AViewport, ADevice));
+  Result := Point(Round(TmpPt.X), Round(TmpPt.Y));
+end;
+
 { : One viewport: its border, and the model seen through it. }
 procedure DrawSheetViewport(const ACAD: TFNCCADCmp2D;
-  const AViewport: TCADSheetViewport; const ADest: TRect;
-  const ACanvas: TDecorativeCanvas; const ADrawMode: Cardinal);
+  const ASheet: TCADSheet; const AViewport: TCADSheetViewport;
+  const ADevice: TCADPageDevice; const ACanvas: TDecorativeCanvas;
+  const ADrawMode: Cardinal);
 var
   TmpWindow, TmpClip: TRect2D;
   TmpTransf: TTransf2D;
+  TmpDest: TRect;
   TmpIter: TGraphicObjIterator;
   TmpObj: TObject2D;
 begin
-  if (ADest.Right <= ADest.Left) or (ADest.Bottom <= ADest.Top) then
+  { Worked out here rather than handed in, so that the rectangle drawn,
+    the rectangle clipped to and the rectangle an application hit-tests
+    against are one expression with one place to be wrong. }
+  TmpDest := CADSheetViewportRectPx(ASheet, AViewport, ADevice);
+  if (TmpDest.Right <= TmpDest.Left) or (TmpDest.Bottom <= TmpDest.Top) then
     Exit;
   { The border is drawn in layer zero's pen, and as a polyline rather
     than a rectangle: a rectangle is filled with the brush, and a
@@ -672,20 +829,23 @@ begin
   if AViewport.ShowBorder then
   begin
     ACAD.Layers.SetCanvas(ACanvas, 0);
-    ACanvas.Graphics.Polyline([Point(ADest.Left, ADest.Top),
-      Point(ADest.Right, ADest.Top), Point(ADest.Right, ADest.Bottom),
-      Point(ADest.Left, ADest.Bottom), Point(ADest.Left, ADest.Top)]);
+    ACanvas.Graphics.Polyline([Point(TmpDest.Left, TmpDest.Top),
+      Point(TmpDest.Right, TmpDest.Top), Point(TmpDest.Right, TmpDest.Bottom),
+      Point(TmpDest.Left, TmpDest.Bottom), Point(TmpDest.Left, TmpDest.Top)]);
   end;
 
   TmpWindow := AViewport.ModelWindow(ACAD);
-  TmpTransf := GetVisualTransform2D(TmpWindow, ADest, 0);
-  TmpClip := RectToRect2D(ADest);
+  { Through the same routine an application inverts, rather than a
+    second copy of the expression. If the two ever disagree, a click
+    lands somewhere other than where the drawing is. }
+  TmpTransf := CADSheetViewportTransform(ACAD, ASheet, AViewport, ADevice);
+  TmpClip := RectToRect2D(TmpDest);
 
   { Nested inside the sheet's clip, which is what PushClip had to
     learn to do before any of this could work: a viewport is a hole in
     a sheet, and a drawing seen through it runs past the hole in every
     direction. }
-  ACanvas.Graphics.PushClip(ADest);
+  ACanvas.Graphics.PushClip(TmpDest);
   try
     TmpIter := ACAD.ObjectsIterator;
     try
@@ -734,8 +894,7 @@ begin
   ACanvas.Graphics.PushClip(TmpDest);
   try
     for Cont := 0 to ASheet.ViewportCount - 1 do
-      DrawSheetViewport(ACAD, ASheet.Viewports[Cont],
-        CADSheetViewportRectPx(ASheet, ASheet.Viewports[Cont], ADevice),
+      DrawSheetViewport(ACAD, ASheet, ASheet.Viewports[Cont], ADevice,
         ACanvas, ADrawMode);
 
     { The sheet's own objects last, in the sheet's millimetres: a title

@@ -116,6 +116,36 @@ type
     procedure TheCanvasScaleIsPutBack;
   end;
 
+  [TestFixture]
+  TCADSheetHitTestTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FSheet: TCADSheet;
+    FViewport: TCADSheetViewport;
+    function Device: TCADPageDevice;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    [Test]
+    procedure APointOnThePaperIsMillimetres;
+    [Test]
+    procedure MillimetresAndPixelsAreEachOthersInverse;
+    [Test]
+    procedure AViewportIsFoundByItsRectangle;
+    [Test]
+    procedure TheViewportOnTopIsTheOneThatAnswers;
+    [Test]
+    procedure TheCentreOfAViewportIsTheCentreOfWhatItShows;
+    [Test]
+    procedure APointSurvivesTheRoundTripThroughTheModel;
+    [Test]
+    procedure APointOutsideAViewportStillTransforms;
+
+  end;
+
 implementation
 
 { ==================================================================
@@ -649,8 +679,145 @@ begin
   end;
 end;
 
+{ ==================================================================
+  TCADSheetHitTestTests
+  ================================================================== }
+
+function TCADSheetHitTestTests.Device: TCADPageDevice;
+begin
+  { One device pixel to the millimetre, so every number below is a
+    millimetre of A3 landscape paper. }
+  Result := TCADPageDevice.FromDPI(CADMMPerInch, CADMMPerInch);
+end;
+
+procedure TCADSheetHitTestTests.Setup;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(300, 150)));
+  FSheet := FCAD.Sheets.Add('Plan');
+  FViewport := FSheet.AddViewport;
+  { 100 x 50 mm of paper over a 300 x 150 model: three units to the
+    millimetre, so one device pixel here is three model units and the
+    tolerances below are written in those. }
+  FViewport.RectMM := Rect2D(10, 10, 110, 60);
+end;
+
+procedure TCADSheetHitTestTests.TearDown;
+begin
+  FCAD.Free;
+end;
+
+procedure TCADSheetHitTestTests.APointOnThePaperIsMillimetres;
+var
+  TmpPt: TPoint2D;
+begin
+  { Device row 287 on a 297 mm sheet is 10 mm up from the bottom edge,
+    because the paper's Y runs upwards and the device's runs down.
+    This is where a click on a title block has to land. }
+  TmpPt := CADSheetPointToMM(FSheet, Device, Point(10, 287));
+  Assert.AreEqual(10.0, TmpPt.X, 1E-9, 'ten millimetres in');
+  Assert.AreEqual(10.0, TmpPt.Y, 1E-9, 'and ten up, not 287 down');
+
+  TmpPt := CADSheetPointToMM(FSheet, Device, Point(410, 10));
+  Assert.AreEqual(410.0, TmpPt.X, 1E-9, 'the far corner across');
+  Assert.AreEqual(287.0, TmpPt.Y, 1E-9, 'and up');
+end;
+
+procedure TCADSheetHitTestTests.MillimetresAndPixelsAreEachOthersInverse;
+var
+  TmpPt: TPoint;
+begin
+  TmpPt := CADSheetMMToPoint(FSheet, Device, Point2D(15, 40));
+  { The same arithmetic the viewport's own clip rectangle comes from -
+    which is the point of writing it out rather than inverting the
+    drawing transform, because that one is laid out on pixel centres
+    and would disagree with the rectangle by half a pixel. }
+  Assert.AreEqual(15, TmpPt.X, 'across');
+  Assert.AreEqual(257, TmpPt.Y, '297 less 40');
+  Assert.AreEqual(15.0, CADSheetPointToMM(FSheet, Device, TmpPt).X, 1E-9,
+    'and back again');
+  Assert.AreEqual(40.0, CADSheetPointToMM(FSheet, Device, TmpPt).Y, 1E-9,
+    'both ways');
+end;
+
+procedure TCADSheetHitTestTests.AViewportIsFoundByItsRectangle;
+begin
+  { The viewport is 10..110 mm across and 10..60 up, so on the device
+    it is rows 237..287. }
+  Assert.AreEqual(0, CADSheetViewportIndexAt(FSheet, Device, Point(60, 262)),
+    'the middle of it');
+  Assert.AreEqual(-1, CADSheetViewportIndexAt(FSheet, Device, Point(60, 100)),
+    'well above it - and the paper is not a viewport');
+  Assert.AreEqual(-1, CADSheetViewportIndexAt(FSheet, Device, Point(200, 262)),
+    'and to the right of it');
+  Assert.IsNotNull(CADSheetViewportAt(FSheet, Device, Point(60, 262)),
+    'the object form answers too');
+  Assert.IsNull(CADSheetViewportAt(FSheet, Device, Point(400, 20)),
+    'and nil where there is nothing');
+end;
+
+procedure TCADSheetHitTestTests.TheViewportOnTopIsTheOneThatAnswers;
+var
+  TmpSecond: TCADSheetViewport;
+begin
+  TmpSecond := FSheet.AddViewport;
+  TmpSecond.RectMM := Rect2D(50, 30, 150, 80);
+  { CADDrawSheet draws them in order, so the second one is painted over
+    the first. A hit test that answered with the first would hand the
+    user the viewport they cannot see. }
+  Assert.AreEqual(1, CADSheetViewportIndexAt(FSheet, Device, Point(60, 250)),
+    'where they overlap, the one on top');
+  Assert.AreEqual(0, CADSheetViewportIndexAt(FSheet, Device, Point(20, 280)),
+    'and the one underneath where it is alone');
+end;
+
+procedure TCADSheetHitTestTests.TheCentreOfAViewportIsTheCentreOfWhatItShows;
+var
+  TmpPt: TPoint2D;
+begin
+  { The model is 300 x 150 and the viewport frames all of it, so the
+    middle of the rectangle is the middle of the drawing. Within a
+    device pixel, which here is three model units - the transform is
+    laid out on pixel centres and this test is not the place to
+    re-derive that half pixel. }
+  TmpPt := CADSheetPointToModel(FCAD, FSheet, FViewport, Device,
+    Point(60, 262));
+  Assert.AreEqual(150.0, TmpPt.X, 3.0, 'halfway across the drawing');
+  Assert.AreEqual(75.0, TmpPt.Y, 3.0, 'and halfway up it');
+end;
+
+procedure TCADSheetHitTestTests.APointSurvivesTheRoundTripThroughTheModel;
+var
+  TmpBack: TPoint;
+  TmpModel: TPoint2D;
+begin
+  { Device to model and back. A round trip is worth more than either
+    direction checked against arithmetic repeated in the test: it
+    cannot agree with a mistake unless the mistake cancels itself. }
+  TmpModel := CADSheetPointToModel(FCAD, FSheet, FViewport, Device,
+    Point(37, 251));
+  TmpBack := CADSheetModelToPoint(FCAD, FSheet, FViewport, Device, TmpModel);
+  Assert.AreEqual(37, TmpBack.X, 'the same pixel across');
+  Assert.AreEqual(251, TmpBack.Y, 'and the same row');
+end;
+
+procedure TCADSheetHitTestTests.APointOutsideAViewportStillTransforms;
+var
+  TmpPt: TPoint2D;
+begin
+  { Deliberate: a drag that leaves the viewport is still a drag in that
+    viewport's model, and the library has no business deciding that a
+    point which is off the paper means nothing. Asking which viewport a
+    point is in is a separate question with a separate routine. }
+  TmpPt := CADSheetPointToModel(FCAD, FSheet, FViewport, Device,
+    Point(160, 262));
+  Assert.IsTrue(TmpPt.X > 300.0,
+    'fifty millimetres past the right edge, at three units each');
+end;
+
 initialization
 
+TDUnitX.RegisterTestFixture(TCADSheetHitTestTests);
 TDUnitX.RegisterTestFixture(TCADSheetModelTests);
 TDUnitX.RegisterTestFixture(TCADSheetPersistenceTests);
 TDUnitX.RegisterTestFixture(TCADSheetDrawingTests);
