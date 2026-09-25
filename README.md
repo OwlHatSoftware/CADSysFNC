@@ -25,6 +25,12 @@ the controls descend from `TTMSFNCCustomControl`. See
   preview control, the printer and the PDF writer all draw through the same
   routine, so they cannot drift. Line weights can be given in millimetres, which
   is what makes a print look like a drawing rather than a fax.
+* **Sheets** — paper space. A drawing carries sheets of paper with viewports cut
+  into them, each viewport showing part of the model at its own scale. A sheet's
+  own objects are in millimetres of paper, and they are ordinary shapes, so a
+  title block is drawn with the same primitives, fonts and DXF import as
+  everything else. Sheets are saved with the drawing, previewed by the same
+  control, and printed or exported to PDF by the same routines.
 * **Import/export**: JSON (the native format), DXF in and out, the legacy binary
   `.CS2` format for reading old drawings, and — on VCL — printing and clipboard.
 * Everything is source. New shapes and new operations are the intended way to use
@@ -154,8 +160,9 @@ there to survive a hard crash rather than to be pretty.
 Two DUnitX console suites under `Test`, run together by
 `Tools\build-and-test.cmd [BDSVER]`:
 
-* `CADSys4Tests` — geometry, structures, shapes, JSON persistence, DXF, the
-  drawing layer and the VCL backend. 518 tests.
+* `CADSys4Tests` — geometry, structures, shapes, JSON persistence, DXF, saved
+  views, the page model, sheets, and the drawing layer with its VCL backend.
+  576 tests.
 * `CADSysFNCTests` — the FNC backend drawn into a `TTMSFNCGraphics` bitmap. Kept
   separate so the main suite does not need FNC to run.
 
@@ -188,6 +195,13 @@ Documentations\ the original CADSys 4.2 help file and change log
   pages to a **printer** is VCL-only, because that path wants a `TPrinter` and a
   GDI device context; the page model underneath is framework-free, so an FMX
   printer is a unit to write rather than a design to redo.
+* A sheet is drawn, printed and exported, but not yet **edited through**: you
+  build one in code and look at it. Clicking into a viewport to work on the
+  model in paper space is not there. `CADSheetViewportRectPx` is public so an
+  application can work out which viewport was clicked.
+* Printing several sheets at once takes its orientation from the first of them,
+  because `Vcl.Printers` gives the orientation to the document rather than to
+  the page. PDF has no such limit — each page carries its own size.
 * Everything the library measures other than a line weight is still in pixels —
   the pick aperture, control-point handles, ruler ticks. Only pen weight and
   hatch spacing have a physical size.

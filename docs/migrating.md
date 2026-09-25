@@ -26,7 +26,8 @@ Every unit gained an `FNC` stem and a framework prefix:
 
 New units with no 4.2 counterpart: `FNCCS4Graphics` (the drawing layer),
 `FNCCS4GraphicsVCL` and `FNCCS4GraphicsFNC` (its two backends), `FNCCS4JSON`,
-`FNCCS4Legacy`, `FNCCS4Views`, and `FNCCS4ExportVCL`.
+`FNCCS4Legacy`, `FNCCS4Views`, `FNCCS4ExportVCL`, `FNCCS4Paper`,
+`FNCCS4Print`, `FNCCS4Preview` and `FNCCS4PDF`.
 
 `Sources` holds one master copy, named `VCL.*`; `Tools\gen-units.cmd` writes the
 `FMX.*` and `LCL*` copies. The framework is a property of the *tree* you compile
@@ -175,7 +176,48 @@ An FMX program simply does not have these yet.
   advances it itself, because Windows reports the *old* monitor's DPI while a
   window is being dragged between displays.
 
-## 9. Smaller things
+## 9. Printing, paper and sheets — all new
+
+None of this existed in 4.2, so there is nothing to migrate; it is here
+because it is where the paper types live and one of them moved.
+
+* **`FNCCS4Print`** is the page model: `TCADPageSetup` (a record), and
+  `CADDrawPage`, which is the only routine that renders a page. The preview
+  control, the printer and the PDF writer all call it.
+* **`FNCCS4Paper`** holds the paper itself — `TCADPaperKind`,
+  `TCADPageOrientation`, `TCADPageMargins`, `TCADPageDevice`, `CADMMPerInch`.
+  It was part of `FNCCS4Print` until sheets arrived: a sheet belongs to the
+  drawing, and `FNCCADSys4` cannot use the unit that uses it. **`FNCCS4Print`
+  repeats every one of those names as an alias and forwards `CADPaperSizeMM`
+  and `CADPaperKindName`**, so code that only prints needs no change. Code that
+  wants the paper without the page model can use `FNCCS4Paper` alone.
+* **`TFNCPrintPreview`** (`FNCCS4Preview`) is an FNC control, on the palette,
+  VCL and FMX. **`CADPrintPages`** (`FNCCS4ExportVCL`) prints; **`CADSavePagesToPDF`**
+  (`FNCCS4PDF`) writes a PDF on all three frameworks.
+* **Sheets** — paper space — live on the drawing: `TFNCCADCmp.Sheets`, saved as
+  a `sheets` array beside `layers` and `objects`. A drawing with no sheets
+  writes no `sheets` member, so a file written before they existed is
+  unchanged by a load and save.
+
+  A sheet's own objects are ordinary `TObject2D` **in millimetres of paper**,
+  origin at the bottom-left corner, Y upwards as in the model — so a title
+  block is shapes, and the shape library, the fonts and the DXF import work on
+  a sheet unchanged. Each `TCADSheetViewport` is a rectangle in those
+  millimetres showing a window of the model at its own `UnitsPerMM`, or 0 to
+  fit. `CADDrawSheet` draws one; `CADPrintSheets` and `CADSaveSheetsToPDF`
+  print and export them.
+
+* **`TCADGraphics.PushClip` / `PopClip` nest.** They were one level deep when
+  printing introduced them. Each rectangle is intersected with the one already
+  in force before a backend sees it, which matters because the backends
+  disagree: GDI's `IntersectClipRect` narrows the clip and FNC's `ClipRect`
+  replaces it. A backend of your own that can clip should override
+  `DoPushClip` / `DoPopClip` and may assume the rectangle it is handed is
+  already inside whatever it had; one that cannot clip inherits a pair that do
+  nothing, and overflows visibly rather than being silently wrong somewhere
+  else.
+
+## 10. Smaller things
 
 * `TExtendedFont` is a font *description* now: no `Canvas`, no `Handle`, no
   `TLOGFONT`. Its published properties are unchanged and `TFaceName` is a plain

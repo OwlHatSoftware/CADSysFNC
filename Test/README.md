@@ -5,8 +5,8 @@ DUnitX that ships with the IDE (`$(BDS)\source\DUnitX`).
 
 | Project | Covers | Last run |
 |---|---|---|
-| `CADSys4Tests` | the library: geometry, structures, shapes, JSON, DXF, the legacy reader, saved views, the drawing layer and its VCL backend | 518 found, 510 passed, 0 failed, 8 ignored |
-| `CADSysFNCTests` | the FNC backend, drawn into a `TTMSFNCGraphics` bitmap | 20 / 20 |
+| `CADSys4Tests` | the library: geometry, structures, shapes, JSON, DXF, the legacy reader, saved views, the page model, sheets, the drawing layer and its VCL backend | 576 found, 568 passed, 0 failed, 8 ignored |
+| `CADSysFNCTests` | the FNC backend, drawn into a `TTMSFNCGraphics` bitmap | 21 / 21 |
 
 They are separate projects so the main suite does not need TMS FNC to run.
 
@@ -61,6 +61,8 @@ build break.
 | `CADSys4.Tests.DXF` | DXF group-level round trips and one end-to-end import. |
 | `CADSys4.Tests.Legacy` | The old binary `.CS2` reader, against synthesised streams. |
 | `CADSys4.Tests.Views` | `TCADViewSpec`: defaults, the layer set, JSON and file round trips. |
+| `CADSys4.Tests.Print` | The page model: paper and margin arithmetic, tiling, the fitted page window, millimetre line weights, the device clip, and a page setup's JSON round trip. |
+| `CADSys4.Tests.Sheets` | Sheets: paper arithmetic, a viewport's fit-versus-scale window, the `sheets` array in a drawing, and `CADDrawSheet` against the recording backend - including the two clips nesting. |
 | `CADSys4.Tests.Graphics` | The drawing layer: VCL backend pixel tests, and shapes drawn through a recording backend (which proves no `TCanvas` is needed). |
 | `CADSys4.Tests.GraphicsFNC` | The FNC backend. In `CADSysFNCTests`, not the main suite. |
 | `CADSys4.Tests.Regressions` | One test per defect from `docs/port/optimization-review.md`. |
