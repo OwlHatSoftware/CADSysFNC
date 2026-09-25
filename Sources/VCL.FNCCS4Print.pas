@@ -50,86 +50,47 @@ uses
   System.Classes, System.SysUtils, System.Types, System.Math, System.JSON,
 {$ENDIF}
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4JSON, VCL.FNCCADSys4,
-  VCL.FNCCS4Views;
+  VCL.FNCCS4Views, VCL.FNCCS4Paper;
+
+{ The paper itself - sizes, margins, and what a device makes of a
+  millimetre - lives in VCL.FNCCS4Paper, below both this unit and
+  VCL.FNCCADSys4, because a sheet belongs to the drawing and the
+  drawing cannot use this unit. The names are repeated here so that a
+  unit which prints still needs only VCL.FNCCS4Print in its uses
+  clause. They are aliases, not copies: the same types, with one
+  declaration between them. }
 
 const
-  { : Millimetres in an inch. Printers talk in dots per inch; everything
-    here talks in millimetres. }
-  CADMMPerInch = 25.4;
+  CADMMPerInch = VCL.FNCCS4Paper.CADMMPerInch;
 
 type
-  { : Raised when a page setup cannot produce a page - a paper size of
-    zero, a scale of zero, an empty drawing window. }
-  ECADPageError = class(Exception);
+  ECADPageError = VCL.FNCCS4Paper.ECADPageError;
+  TCADPaperKind = VCL.FNCCS4Paper.TCADPaperKind;
+  TCADPageOrientation = VCL.FNCCS4Paper.TCADPageOrientation;
+  TCADPageMargins = VCL.FNCCS4Paper.TCADPageMargins;
+  TCADPageDevice = VCL.FNCCS4Paper.TCADPageDevice;
 
-  { : The standard paper sizes, portrait. pkCustom takes its size from
-    the setup's CustomWidthMM and CustomHeightMM. }
-  TCADPaperKind = (pkA5, pkA4, pkA3, pkA2, pkA1, pkA0, pkLetter, pkLegal,
-    pkTabloid, pkCustom);
+const
+  pkA5 = VCL.FNCCS4Paper.pkA5;
+  pkA4 = VCL.FNCCS4Paper.pkA4;
+  pkA3 = VCL.FNCCS4Paper.pkA3;
+  pkA2 = VCL.FNCCS4Paper.pkA2;
+  pkA1 = VCL.FNCCS4Paper.pkA1;
+  pkA0 = VCL.FNCCS4Paper.pkA0;
+  pkLetter = VCL.FNCCS4Paper.pkLetter;
+  pkLegal = VCL.FNCCS4Paper.pkLegal;
+  pkTabloid = VCL.FNCCS4Paper.pkTabloid;
+  pkCustom = VCL.FNCCS4Paper.pkCustom;
+  pgoPortrait = VCL.FNCCS4Paper.pgoPortrait;
+  pgoLandscape = VCL.FNCCS4Paper.pgoLandscape;
 
-  { : Portrait or landscape.
-
-    Spelled pgo rather than po because Vcl.Printers and FMX.Printer both
-    declare a TPrinterOrientation with poPortrait and poLandscape in it,
-    and any unit that prints has both in scope. Two enumerations with
-    the same member names in one uses clause is an afternoon lost to a
-    message that points at the wrong line. }
-  TCADPageOrientation = (pgoPortrait, pgoLandscape);
-
+type
   { : How the drawing is sized onto the paper.
 
     pfFitToPage works out the scale so the whole view fits one page.
     pfScale takes the scale as given and uses as many pages as that
     needs. }
   TCADPageFit = (pfFitToPage, pfScale);
-
-  { : The unprinted border, in millimetres. }
-  TCADPageMargins = record
-    Left, Top, Right, Bottom: TRealType;
-    { : The same margin on all four sides. }
-    class function Uniform(const AMM: TRealType): TCADPageMargins; static;
-    class function Sides(const ALeft, ATop, ARight, ABottom: TRealType)
-      : TCADPageMargins; static;
-    function Horizontal: TRealType;
-    function Vertical: TRealType;
-  end;
-
-  { : What the surface being drawn on can do, in device pixels.
-
-    X and Y are separate because a printer's are not always equal, and
-    because keeping them separate costs nothing and getting it wrong
-    costs a squashed drawing.
-
-    OffsetXPx and OffsetYPx are where the paper's top-left corner sits
-    in the canvas' coordinates. A printer canvas normally begins at the
-    printable area rather than at the sheet, so for a printer they are
-    negative - the sheet starts above and to the left of pixel zero. A
-    preview that draws the whole sheet leaves them at zero. }
-  TCADPageDevice = record
-    PixelsPerMMX, PixelsPerMMY: TRealType;
-    OffsetXPx, OffsetYPx: Integer;
-
-    { : From a device's resolution in dots per inch. }
-    class function FromDPI(const ADPIX, ADPIY: TRealType)
-      : TCADPageDevice; static;
-    { : From pixels per millimetre, the same both ways. }
-    class function FromPixelsPerMM(const APixelsPerMM: TRealType)
-      : TCADPageDevice; static;
-    { : A device that renders APaperWidthMM x APaperHeightMM into a box
-      AWidthPx x AHeightPx - what a preview control wants. The aspect is
-      preserved and the result is centred, so a preview of a portrait
-      sheet in a wide box has the sheet in the middle. }
-    class function ToBox(const APaperWidthMM, APaperHeightMM: TRealType;
-      const AWidthPx, AHeightPx: Integer): TCADPageDevice; static;
-
-    function MMToPxX(const AMM: TRealType): Integer;
-    function MMToPxY(const AMM: TRealType): Integer;
-    { : The mean of the two axes - for anything with one figure to give,
-      such as a line weight. }
-    function PixelsPerMM: TRealType;
-    { : The whole sheet as a device rectangle. }
-    function PaperRect(const AWidthMM, AHeightMM: TRealType): TRect;
-  end;
 
   { : A page setup: the paper, the scale, and the view it shows.
 
@@ -225,12 +186,13 @@ const
     An ordinal is one insertion away from meaning something else: put
     pkA7 between pkA5 and pkA4 and every saved setup silently changes
     paper. JGetEnum still accepts a number, so a file written by hand
-    is readable either way. }
-  CADPageOrientationNames: array [0 .. 1] of String =
-    ('portrait', 'landscape');
+    is readable either way. The paper and orientation names are in
+    VCL.FNCCS4Paper, where the paper is. }
   CADPageFitNames: array [0 .. 1] of String = ('fitToPage', 'scale');
 
-{ : The sheet in millimetres, portrait, for a standard size. }
+{ : The sheet in millimetres, portrait, for a standard size. Repeated
+  from VCL.FNCCS4Paper, like the type names above, so that a unit which
+  prints needs only this one in its uses clause. }
 procedure CADPaperSizeMM(const AKind: TCADPaperKind;
   out AWidth, AHeight: TRealType);
 { : 'A4', 'Letter', 'Custom' - for a combo box. }
@@ -258,113 +220,6 @@ function CADPrintableRectPx(const ASetup: TCADPageSetup;
   const ADevice: TCADPageDevice): TRect;
 
 implementation
-
-const
-  { : The A series, portrait, in millimetres. }
-  PaperMM: array [pkA5 .. pkTabloid] of array [0 .. 1] of TRealType =
-    ((148, 210), (210, 297), (297, 420), (420, 594), (594, 841), (841, 1189),
-    (215.9, 279.4), (215.9, 355.6), (279.4, 431.8));
-
-  PaperNames: array [TCADPaperKind] of String = ('A5', 'A4', 'A3', 'A2', 'A1',
-    'A0', 'Letter', 'Legal', 'Tabloid', 'Custom');
-
-{ ==================================================================
-  TCADPageMargins
-  ================================================================== }
-
-class function TCADPageMargins.Uniform(const AMM: TRealType): TCADPageMargins;
-begin
-  Result.Left := AMM;
-  Result.Top := AMM;
-  Result.Right := AMM;
-  Result.Bottom := AMM;
-end;
-
-class function TCADPageMargins.Sides(const ALeft, ATop, ARight,
-  ABottom: TRealType): TCADPageMargins;
-begin
-  Result.Left := ALeft;
-  Result.Top := ATop;
-  Result.Right := ARight;
-  Result.Bottom := ABottom;
-end;
-
-function TCADPageMargins.Horizontal: TRealType;
-begin
-  Result := Left + Right;
-end;
-
-function TCADPageMargins.Vertical: TRealType;
-begin
-  Result := Top + Bottom;
-end;
-
-{ ==================================================================
-  TCADPageDevice
-  ================================================================== }
-
-class function TCADPageDevice.FromDPI(const ADPIX, ADPIY: TRealType)
-  : TCADPageDevice;
-begin
-  Result.PixelsPerMMX := ADPIX / CADMMPerInch;
-  Result.PixelsPerMMY := ADPIY / CADMMPerInch;
-  Result.OffsetXPx := 0;
-  Result.OffsetYPx := 0;
-end;
-
-class function TCADPageDevice.FromPixelsPerMM(const APixelsPerMM: TRealType)
-  : TCADPageDevice;
-begin
-  Result.PixelsPerMMX := APixelsPerMM;
-  Result.PixelsPerMMY := APixelsPerMM;
-  Result.OffsetXPx := 0;
-  Result.OffsetYPx := 0;
-end;
-
-class function TCADPageDevice.ToBox(const APaperWidthMM,
-  APaperHeightMM: TRealType; const AWidthPx, AHeightPx: Integer)
-  : TCADPageDevice;
-var
-  TmpScale: TRealType;
-begin
-  { One scale for both axes: a preview of a sheet has to look like the
-    sheet, and a box that is the wrong shape is the box's problem. }
-  Result.PixelsPerMMX := 0;
-  Result.PixelsPerMMY := 0;
-  Result.OffsetXPx := 0;
-  Result.OffsetYPx := 0;
-  if (APaperWidthMM <= 0) or (APaperHeightMM <= 0) or (AWidthPx <= 0) or
-    (AHeightPx <= 0) then
-    Exit;
-  TmpScale := MinValue([AWidthPx / APaperWidthMM, AHeightPx / APaperHeightMM]);
-  Result.PixelsPerMMX := TmpScale;
-  Result.PixelsPerMMY := TmpScale;
-  Result.OffsetXPx := Round((AWidthPx - APaperWidthMM * TmpScale) / 2);
-  Result.OffsetYPx := Round((AHeightPx - APaperHeightMM * TmpScale) / 2);
-end;
-
-function TCADPageDevice.MMToPxX(const AMM: TRealType): Integer;
-begin
-  Result := Round(AMM * PixelsPerMMX);
-end;
-
-function TCADPageDevice.MMToPxY(const AMM: TRealType): Integer;
-begin
-  Result := Round(AMM * PixelsPerMMY);
-end;
-
-function TCADPageDevice.PixelsPerMM: TRealType;
-begin
-  Result := (PixelsPerMMX + PixelsPerMMY) / 2;
-end;
-
-function TCADPageDevice.PaperRect(const AWidthMM, AHeightMM: TRealType): TRect;
-begin
-  Result.Left := OffsetXPx;
-  Result.Top := OffsetYPx;
-  Result.Right := OffsetXPx + MMToPxX(AWidthMM);
-  Result.Bottom := OffsetYPx + MMToPxY(AHeightMM);
-end;
 
 { ==================================================================
   TCADPageSetup
@@ -398,25 +253,11 @@ begin
 end;
 
 procedure TCADPageSetup.PaperSizeMM(out AWidth, AHeight: TRealType);
-var
-  TmpSwap: TRealType;
 begin
-  if Paper = pkCustom then
-  begin
-    AWidth := CustomWidthMM;
-    AHeight := CustomHeightMM;
-  end
-  else
-  begin
-    AWidth := PaperMM[Paper][0];
-    AHeight := PaperMM[Paper][1];
-  end;
-  if Orientation = pgoLandscape then
-  begin
-    TmpSwap := AWidth;
-    AWidth := AHeight;
-    AHeight := TmpSwap;
-  end;
+  { One routine turns a paper kind and an orientation into two numbers,
+    and it is not this one. A sheet asks the same question. }
+  CADSheetSizeMM(Paper, Orientation, CustomWidthMM, CustomHeightMM,
+    AWidth, AHeight);
 end;
 
 procedure TCADPageSetup.PrintableSizeMM(out AWidth, AHeight: TRealType);
@@ -561,7 +402,7 @@ begin
     JSetStr(Result, 'version', CADSysJSONVersion);
     JSetStr(Result, 'kind', CADPageSetupKind);
 
-    JSetEnum(Result, 'paper', Ord(Paper), PaperNames);
+    JSetEnum(Result, 'paper', Ord(Paper), CADPaperKindNames);
     { Only when they mean anything. A custom size written beside
       'A4' invites somebody to change one of them and wonder why
       nothing happened. }
@@ -607,7 +448,8 @@ begin
     that does not mention a field leaves it alone. That is what lets an
     older file load into a newer setup without losing the fields it
     never heard of. }
-  Paper := TCADPaperKind(JGetEnum(AJSON, 'paper', Ord(Paper), PaperNames));
+  Paper := TCADPaperKind(JGetEnum(AJSON, 'paper', Ord(Paper),
+    CADPaperKindNames));
   CustomWidthMM := JGetReal(AJSON, 'widthMM', CustomWidthMM);
   CustomHeightMM := JGetReal(AJSON, 'heightMM', CustomHeightMM);
   Orientation := TCADPageOrientation(JGetEnum(AJSON, 'orientation',
@@ -671,25 +513,19 @@ begin
 end;
 
 { ==================================================================
-  Paper
+  Paper, forwarded
   ================================================================== }
 
 procedure CADPaperSizeMM(const AKind: TCADPaperKind;
   out AWidth, AHeight: TRealType);
 begin
-  if AKind = pkCustom then
-  begin
-    AWidth := 0;
-    AHeight := 0;
-    Exit;
-  end;
-  AWidth := PaperMM[AKind][0];
-  AHeight := PaperMM[AKind][1];
+  { Qualified, or this calls itself. }
+  VCL.FNCCS4Paper.CADPaperSizeMM(AKind, AWidth, AHeight);
 end;
 
 function CADPaperKindName(const AKind: TCADPaperKind): String;
 begin
-  Result := PaperNames[AKind];
+  Result := VCL.FNCCS4Paper.CADPaperKindName(AKind);
 end;
 
 { ==================================================================

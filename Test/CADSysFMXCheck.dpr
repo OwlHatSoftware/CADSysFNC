@@ -29,6 +29,7 @@ uses
   FMX.FNCCS4Tasks,
   FMX.FNCCS4DXFModule,
   FMX.FNCCS4Legacy,
+  FMX.FNCCS4Paper,
   FMX.FNCCS4Views,
   FMX.FNCCS4Print,
   FMX.FNCCS4Preview,

@@ -163,6 +163,7 @@
         <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Legacy.pas"/>
         <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Shapes.pas"/>
         <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Tasks.pas"/>
+        <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Paper.pas"/>
         <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Views.pas"/>
         <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Print.pas"/>
         <DCCReference Include="..\..\Generated\VCL\VCL.FNCCS4Preview.pas"/>

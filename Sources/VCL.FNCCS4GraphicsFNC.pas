@@ -96,10 +96,12 @@ type
     { Non-nil while a clip of ours is in force. FNC's RestoreState frees
       the state object, so this is a one-shot handle, not a cache. }
     fClipState: TTMSFNCGraphicsSaveState;
-    { : The same one-shot handle, for the PushClip/PopClip pair. Kept
-      apart from fClipState because the two nest: the attach clip is the
-      control, and a page clip sits inside it. }
-    fPushState: TTMSFNCGraphicsSaveState;
+    { : The same one-shot handles, one per PushClip, outermost first.
+      Kept apart from fClipState because the two nest: the attach clip
+      is the control, a page clip sits inside it, and a sheet's
+      viewport sits inside that. }
+    fPushStates: array of TTMSFNCGraphicsSaveState;
+    fPushCount: Integer;
     fClip: TRect;
     fCurPt: TPoint;
     fFontColor: TCADColor;
@@ -379,7 +381,7 @@ end;
 
 destructor TCADFNCGraphics.Destroy;
 begin
-  PopClip;
+  PopAllClips;
   ReleaseClip;
   if fOwnsGraphics then
     fGraphics.Free;
@@ -506,10 +508,10 @@ procedure TCADFNCGraphics.Attach(const AGraphics: TTMSFNCGraphics;
   const ABounds: TRect);
 begin
   { Any clip we are still holding belongs to the graphics we are about
-    to let go of, so it has to go back first. Both of them: the attach
-    clip, and a page clip if CADDrawPage was interrupted between its
-    PushClip and its PopClip. }
-  PopClip;
+    to let go of, so it has to go back first. All of them: the attach
+    clip, and any page or viewport clip left behind by a render that
+    was interrupted between its PushClip and its PopClip. }
+  PopAllClips;
   ReleaseClip;
   if fOwnsGraphics and (fGraphics <> nil) and (fGraphics <> AGraphics) then
     FreeAndNil(fGraphics);
@@ -560,21 +562,34 @@ begin
     Exit;
   { Canvas state only, for the same reason ApplyClip gives: the full
     SaveState copies Fill, Stroke and Font as well, and restoring those
-    would discard the pen and brush the caller has just set. }
-  fPushState := fGraphics.SaveState(True);
+    would discard the pen and brush the caller has just set.
+
+    The rectangle arrives already intersected with the clip outside it,
+    which is what makes this safe to nest: FNC's ClipRect hands the
+    context a new clip rather than narrowing the one it has. }
+  if fPushCount = Length(fPushStates) then
+    SetLength(fPushStates, fPushCount + 8);
+  fPushStates[fPushCount] := fGraphics.SaveState(True);
+  Inc(fPushCount);
   fGraphics.ClipRect(RectF(R.Left, R.Top, R.Right, R.Bottom));
 end;
 
 procedure TCADFNCGraphics.DoPopClip;
+var
+  TmpState: TTMSFNCGraphicsSaveState;
 begin
-  if fPushState = nil then
+  if fPushCount = 0 then
+    Exit;
+  Dec(fPushCount);
+  TmpState := fPushStates[fPushCount];
+  fPushStates[fPushCount] := nil;
+  if TmpState = nil then
     Exit;
   if fGraphics <> nil then
     { RestoreState frees the state object itself. }
-    fGraphics.RestoreState(fPushState, True)
+    fGraphics.RestoreState(TmpState, True)
   else
-    fPushState.Free;
-  fPushState := nil;
+    TmpState.Free;
 end;
 
 function TCADFNCGraphics.IsReady: Boolean;

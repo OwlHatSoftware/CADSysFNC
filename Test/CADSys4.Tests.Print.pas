@@ -94,7 +94,11 @@ type
     [Test]
     procedure SaveAndRestoreCarryTheWeight;
     [Test]
-    procedure AClipDoesNotStack;
+    procedure ClipsNestInnermostFirst;
+    [Test]
+    procedure AClipIsTrimmedToTheOneOutsideIt;
+    [Test]
+    procedure PopAllClipsGivesBackWhatIsLeft;
   end;
 
   { : A page setup is a value that has to survive being written down.
@@ -649,23 +653,78 @@ begin
     'and zero means the pixel default, as it always did');
 end;
 
-procedure TPhysicalSizeTests.AClipDoesNotStack;
+procedure TPhysicalSizeTests.ClipsNestInnermostFirst;
 var
   TmpRec: TRecordingGraphics;
 begin
-  { One level deep, and a second push is ignored rather than stacked.
-    Nothing in the library nests clips, and a clip stack that silently
-    loses a level is worse than one that refuses to grow: the drawing
-    that comes out is wrong in a way nobody can see until it is on
-    paper. }
+  { They did not, until sheets. A page clip with a viewport clip inside
+    it is two levels, and the second one used to be dropped on the
+    floor - which on paper is a viewport that paints over the rest of
+    the sheet. }
+  TmpRec := TRecordingGraphics.Create(Rect(0, 0, 100, 100));
+  try
+    TmpRec.PushClip(Rect(10, 10, 90, 90));
+    Assert.AreEqual(1, TmpRec.ClipDepth, 'one down');
+    TmpRec.PushClip(Rect(20, 20, 80, 80));
+    Assert.AreEqual(2, TmpRec.ClipDepth, 'two down');
+    TmpRec.PopClip;
+    TmpRec.PopClip;
+    Assert.AreEqual(0, TmpRec.ClipDepth, 'and both back');
+    Assert.AreEqual(2, TmpRec.CountOf('PushClip'),
+      'both clips reached the device');
+    Assert.AreEqual(2, TmpRec.CountOf('PopClip'), 'and both were given back');
+    Assert.IsTrue(TmpRec.Log.Text.Contains('PushClip 20,20,80,80'),
+      'the inner one went down as itself: ' + TmpRec.Log.Text);
+    { One more pop than push is a caller's mistake, not a device's. }
+    TmpRec.PopClip;
+    Assert.AreEqual(2, TmpRec.CountOf('PopClip'),
+      'popping an empty stack asks the device for nothing');
+  finally
+    TmpRec.Free;
+  end;
+end;
+
+procedure TPhysicalSizeTests.AClipIsTrimmedToTheOneOutsideIt;
+var
+  TmpRec: TRecordingGraphics;
+begin
+  { The intersection is done here rather than left to the backend
+    because the backends disagree. GDI's IntersectClipRect narrows what
+    is there; FNC's ClipRect replaces it, because GDI+'s SetClip
+    combines by replacing. A viewport that asked for more than its page
+    would get it on FMX and not on the VCL - the same drawing, two
+    pictures, and only one of them on paper. }
+  TmpRec := TRecordingGraphics.Create(Rect(0, 0, 100, 100));
+  try
+    TmpRec.PushClip(Rect(10, 10, 90, 90));
+    TmpRec.PushClip(Rect(0, 0, 200, 200));
+    Assert.IsTrue(TmpRec.Log.Text.Contains('PushClip 10,10,90,90'),
+      'the inner clip was cut down to the outer one: ' + TmpRec.Log.Text);
+    Assert.IsFalse(TmpRec.Log.Text.Contains('PushClip 0,0,200,200'),
+      'and the device was never offered the larger rectangle');
+  finally
+    TmpRec.Free;
+  end;
+end;
+
+procedure TPhysicalSizeTests.PopAllClipsGivesBackWhatIsLeft;
+var
+  TmpRec: TRecordingGraphics;
+begin
+  { What a backend calls when it is about to let go of the surface the
+    clips belong to. On FMX an unbalanced canvas state is fatal rather
+    than untidy - three of this port's FMX bugs were exactly that. }
   TmpRec := TRecordingGraphics.Create(Rect(0, 0, 100, 100));
   try
     TmpRec.PushClip(Rect(10, 10, 90, 90));
     TmpRec.PushClip(Rect(20, 20, 80, 80));
-    TmpRec.PopClip;
-    TmpRec.PopClip;
-    Assert.AreEqual(1, TmpRec.CountOf('PushClip'), 'one clip went down');
-    Assert.AreEqual(1, TmpRec.CountOf('PopClip'), 'and one came back up');
+    TmpRec.PushClip(Rect(30, 30, 70, 70));
+    TmpRec.PopAllClips;
+    Assert.AreEqual(0, TmpRec.ClipDepth, 'nothing left in force');
+    Assert.AreEqual(3, TmpRec.CountOf('PopClip'), 'and all three given back');
+    TmpRec.PopAllClips;
+    Assert.AreEqual(3, TmpRec.CountOf('PopClip'),
+      'a second call has nothing to do');
   finally
     TmpRec.Free;
   end;

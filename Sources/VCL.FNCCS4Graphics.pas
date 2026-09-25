@@ -350,7 +350,11 @@ type
     fBrush: TCADBrush;
     fBlendBackground: TCADColor;
     fPixelsPerMM: Double;
-    fClipped: Boolean;
+    { : The clips PushClip has narrowed the surface to, outermost
+      first, each one already intersected with the one outside it.
+      fClipCount is the live depth; the array is only ever grown. }
+    fClips: array of TRect;
+    fClipCount: Integer;
   protected
     function CreatePen: TCADPen; virtual; abstract;
     function CreateBrush: TCADBrush; virtual; abstract;
@@ -445,12 +449,26 @@ type
       across several sheets runs off every one of them - the clip is the
       only thing that makes a sheet a sheet.
 
-      One level deep. Calls must balance, and a second PushClip before
-      the first PopClip is ignored rather than stacked: nothing here
-      needs nesting, and a clip stack that silently loses a level is
-      worse than one that refuses to grow. }
+      They nest, and R is intersected with whatever is already in force
+      before a backend sees it. That is not a convenience. FNC's
+      ClipRect <B=replaces> the clip rather than narrowing it - GDI+'s
+      SetClip combines by replacing unless it is told otherwise - so a
+      viewport pushed inside a page clip would be handed the run of the
+      sheet, margins included. Intersecting here is what makes every
+      backend give the same answer whichever way its own clip combines.
+
+      The outermost push is intersected with
+      <See Property=TCADGraphics@ClipRect>, the surface's own drawable
+      area, when the surface reports one.
+
+      Calls must balance. PopClip with nothing pushed does nothing. }
     procedure PushClip(const R: TRect);
     procedure PopClip;
+    { : Gives back every clip this object has pushed, innermost first.
+
+      For the one case a caller cannot count: a backend about to let go
+      of the surface the clips belong to. }
+    procedure PopAllClips;
 
     property Pen: TCADPen read fPen;
     property Brush: TCADBrush read fBrush;
@@ -463,6 +481,11 @@ type
     {: When True, text is drawn without filling its background. }
     property Transparent: Boolean read GetTransparent write SetTransparent;
     property ClipRect: TRect read GetClipRect;
+    { : How many clips PushClip has in force, 0 when none.
+
+      Worth asserting on at the end of a paint: a clip left behind is
+      invisible on the VCL and fatal on FMX. }
+    property ClipDepth: Integer read fClipCount;
     {: How many device pixels make a millimetre on this surface, or 0
        for "not known".
 
@@ -1310,19 +1333,55 @@ begin
 end;
 
 procedure TCADGraphics.PushClip(const R: TRect);
+var
+  TmpRect, TmpOuter: TRect;
 begin
-  if fClipped then
-    Exit;
-  fClipped := True;
-  DoPushClip(R);
+  TmpRect := R;
+  if fClipCount > 0 then
+    TmpOuter := fClips[fClipCount - 1]
+  else
+    TmpOuter := GetClipRect;
+  { An empty outer rectangle is "the surface does not know", not "there
+    is nothing to draw on": a detached backend answers 0,0,0,0 and
+    intersecting with that would clip everything away for good. }
+  if (TmpOuter.Right > TmpOuter.Left) and (TmpOuter.Bottom > TmpOuter.Top) then
+  begin
+    if TmpRect.Left < TmpOuter.Left then
+      TmpRect.Left := TmpOuter.Left;
+    if TmpRect.Top < TmpOuter.Top then
+      TmpRect.Top := TmpOuter.Top;
+    if TmpRect.Right > TmpOuter.Right then
+      TmpRect.Right := TmpOuter.Right;
+    if TmpRect.Bottom > TmpOuter.Bottom then
+      TmpRect.Bottom := TmpOuter.Bottom;
+  end;
+  { Two rectangles that do not meet leave an inside-out one. Flatten it
+    onto its own edge rather than letting a backend make what it likes
+    of a negative width. }
+  if TmpRect.Right < TmpRect.Left then
+    TmpRect.Right := TmpRect.Left;
+  if TmpRect.Bottom < TmpRect.Top then
+    TmpRect.Bottom := TmpRect.Top;
+
+  if fClipCount = Length(fClips) then
+    SetLength(fClips, fClipCount + 8);
+  fClips[fClipCount] := TmpRect;
+  Inc(fClipCount);
+  DoPushClip(TmpRect);
 end;
 
 procedure TCADGraphics.PopClip;
 begin
-  if not fClipped then
+  if fClipCount = 0 then
     Exit;
-  fClipped := False;
+  Dec(fClipCount);
   DoPopClip;
+end;
+
+procedure TCADGraphics.PopAllClips;
+begin
+  while fClipCount > 0 do
+    PopClip;
 end;
 
 procedure TCADGraphics.SetBlendBackground(const Value: TCADColor);

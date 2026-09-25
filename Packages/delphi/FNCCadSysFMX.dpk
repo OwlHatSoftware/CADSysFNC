@@ -87,6 +87,7 @@ contains
   FMX.FNCCS4Legacy in '..\..\Generated\FMX\FMX.FNCCS4Legacy.pas',
   FMX.FNCCS4Shapes in '..\..\Generated\FMX\FMX.FNCCS4Shapes.pas',
   FMX.FNCCS4Tasks in '..\..\Generated\FMX\FMX.FNCCS4Tasks.pas',
+  FMX.FNCCS4Paper in '..\..\Generated\FMX\FMX.FNCCS4Paper.pas',
   FMX.FNCCS4Views in '..\..\Generated\FMX\FMX.FNCCS4Views.pas',
   FMX.FNCCS4Print in '..\..\Generated\FMX\FMX.FNCCS4Print.pas',
   FMX.FNCCS4Preview in '..\..\Generated\FMX\FMX.FNCCS4Preview.pas',

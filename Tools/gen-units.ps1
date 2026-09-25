@@ -77,6 +77,7 @@ $Units = [ordered]@{
   'VCL.FNCCS4Shapes.pas'       = $All
   'VCL.FNCCS4Tasks.pas'        = $All
   'VCL.FNCCS4Views.pas'        = $All
+  'VCL.FNCCS4Paper.pas'        = $All
   'VCL.FNCCS4Print.pas'        = $All
   'VCL.FNCCS4Preview.pas'      = $All
   'VCL.FNCCS4PDF.pas'          = $All

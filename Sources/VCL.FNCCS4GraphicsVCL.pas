@@ -83,10 +83,15 @@ type
     fFontHandle: HFONT;
     fFontSpec: TCADFontSpec;
     fFontSelected: Boolean;
-    { : The clip region in force before PushClip, or 0 for "there was
-      none". Zero is not a missing value here - SelectClipRgn(DC, 0) is
-      how a device context is told it has no clip again. }
-    fSavedClipRgn: HRGN;
+    { : The clip regions in force before each PushClip, outermost
+      first, and how many of them there are.
+
+      A 0 in there is not a missing value - SelectClipRgn(DC, 0) is how
+      a device context is told it has no clip again, and "none" has to
+      be given back as none rather than as the whole surface, which is
+      not the same thing on a printer. }
+    fSavedClipRgns: array of HRGN;
+    fSavedClipCount: Integer;
     procedure FreeFontHandle;
   protected
     function CreatePen: TCADPen; override;
@@ -410,6 +415,9 @@ end;
 
 destructor TCADVCLGraphics.Destroy;
 begin
+  { Before the canvas goes: a region handle is a GDI object and a clip
+    left in force is a leak whether or not anything still draws. }
+  PopAllClips;
   ResetFont;
   FreeFontHandle;
   inherited Destroy;
@@ -466,28 +474,42 @@ begin
 end;
 
 procedure TCADVCLGraphics.DoPushClip(const R: TRect);
+var
+  TmpRgn: HRGN;
 begin
   { A region rather than SaveDC: SaveDC would also put back the pen,
     brush and font, and the caller has just set those on purpose.
-    GetClipRgn returns 1 when there was a region, 0 when there was none
-    - and the difference matters, because "none" has to be given back as
-    none rather than as the whole surface, which is not the same thing
-    on a printer. }
-  fSavedClipRgn := CreateRectRgn(0, 0, 1, 1);
-  if GetClipRgn(fCanvas.Handle, fSavedClipRgn) <> 1 then
+    GetClipRgn returns 1 when there was a region and 0 when there was
+    none. }
+  TmpRgn := CreateRectRgn(0, 0, 1, 1);
+  if GetClipRgn(fCanvas.Handle, TmpRgn) <> 1 then
   begin
-    DeleteObject(fSavedClipRgn);
-    fSavedClipRgn := 0;
+    DeleteObject(TmpRgn);
+    TmpRgn := 0;
   end;
+  if fSavedClipCount = Length(fSavedClipRgns) then
+    SetLength(fSavedClipRgns, fSavedClipCount + 8);
+  fSavedClipRgns[fSavedClipCount] := TmpRgn;
+  Inc(fSavedClipCount);
+  { IntersectClipRect narrows rather than replaces, so a nested push
+    would come out right even without the intersection TCADGraphics
+    does. The FNC backend is the one that would not - hence doing it
+    once, above both of them. }
   IntersectClipRect(fCanvas.Handle, R.Left, R.Top, R.Right, R.Bottom);
 end;
 
 procedure TCADVCLGraphics.DoPopClip;
+var
+  TmpRgn: HRGN;
 begin
-  SelectClipRgn(fCanvas.Handle, fSavedClipRgn);
-  if fSavedClipRgn <> 0 then
-    DeleteObject(fSavedClipRgn);
-  fSavedClipRgn := 0;
+  if fSavedClipCount = 0 then
+    Exit;
+  Dec(fSavedClipCount);
+  TmpRgn := fSavedClipRgns[fSavedClipCount];
+  fSavedClipRgns[fSavedClipCount] := 0;
+  SelectClipRgn(fCanvas.Handle, TmpRgn);
+  if TmpRgn <> 0 then
+    DeleteObject(TmpRgn);
 end;
 
 procedure TCADVCLGraphics.MoveTo(const X, Y: Integer);

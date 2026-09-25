@@ -51,6 +51,7 @@ contains
   VCL.FNCCS4Legacy in '..\..\Generated\VCL\VCL.FNCCS4Legacy.pas',
   VCL.FNCCS4Shapes in '..\..\Generated\VCL\VCL.FNCCS4Shapes.pas',
   VCL.FNCCS4Tasks in '..\..\Generated\VCL\VCL.FNCCS4Tasks.pas',
+  VCL.FNCCS4Paper in '..\..\Generated\VCL\VCL.FNCCS4Paper.pas',
   VCL.FNCCS4Views in '..\..\Generated\VCL\VCL.FNCCS4Views.pas',
   VCL.FNCCS4Print in '..\..\Generated\VCL\VCL.FNCCS4Print.pas',
   VCL.FNCCS4Preview in '..\..\Generated\VCL\VCL.FNCCS4Preview.pas',
