@@ -40,6 +40,12 @@ type
     fCtrls: array of TControl;
     fCAD: TFNCCADCmp2D;
     fSetup: TCADPageSetup;
+    { : False until the first layout has chosen the dialog's size.
+      After that the size belongs to whoever is holding the window. }
+    fSized: Boolean;
+    { : LayoutBar sets fBar.Height, which resizes the client area, which
+      is what OnResize is listening to. }
+    fInLayout: Boolean;
     procedure BuildControls;
     procedure Track(const ACtrl: TControl);
     function AddLabel(const ACaption: string): TLabel;
@@ -67,6 +73,7 @@ type
     procedure PageChanged(Sender: TObject; const APageIndex,
       APageCount: Integer);
     procedure FormShow(Sender: TObject);
+    procedure FormResize(Sender: TObject);
     procedure FormAfterMonitorDpiChanged(Sender: TObject;
       OldDPI, NewDPI: Integer);
   public
@@ -152,7 +159,33 @@ procedure TPrintPreviewForm.BuildControls;
 begin
   Caption := 'Print preview';
   Position := poOwnerFormCenter;
+  { NOT Scaled, and the log is why.
+
+    The VCL rescales a form's font relative to the PixelsPerInch the
+    form has recorded, which for a designed form comes from its .dfm.
+    A form built with CreateNew has no .dfm, so it records 96 while
+    its font is inherited from whatever display it was created on. On
+    a 240 DPI screen that leaves the two disagreeing by a factor of
+    2.5, and the arithmetic comes out as:
+
+      240 -> 96   scale 96/96  = 1.0   nothing happens
+      96 -> 240   scale 240/96 = 2.5   the font is now far too big
+
+    which is exactly what the demo log showed: line height 41, then 41
+    again on the other monitor, then 100 on the way back.
+
+    So the VCL is told not to try, and LayoutBar sets the font itself.
+
+    The catch on this side is that a form which is not Scaled is also a
+    form whose CurrentPPI the VCL stops updating: it read 96 for a
+    whole session, including while the window was plainly on the 240
+    DPI screen with a 2223 pixel client area. The number that does
+    track is Monitor.PixelsPerInch - which the main form's own log line
+    has been printing all along, beside a CurrentPPI that agreed with
+    it only because that form is Scaled. }
+  Scaled := False;
   OnShow := FormShow;
+  OnResize := FormResize;
   OnAfterMonitorDpiChanged := FormAfterMonitorDpiChanged;
 
   fBar := TPanel.Create(Self);
@@ -229,8 +262,13 @@ end;
 procedure TPrintPreviewForm.LayoutBar;
 var
   TmpLine, TmpPad, TmpCtrlH, TmpRowH, TmpX, TmpY, TmpRows, TmpW, Cont: Integer;
+  TmpPPI: Integer;
   TmpCtrl: TControl;
 begin
+  if fInLayout then
+    Exit;
+  fInLayout := True;
+  try
   { The same trap as the main form's LayoutToolbar, and it caught this
     dialog too: the VCL scales a form's font for the display, but it
     does so AFTER OnCreate, and it never scales controls created at run
@@ -244,6 +282,23 @@ begin
     everything else, so padding and control heights grow with it.
 
     FMX needs none of this - see the note in its LayoutBar. }
+
+  { The font first, because everything below is measured from it.
+
+    Twelve pixels at 96 dpi is what the main demo form's .dfm gives it,
+    so the two windows come out the same size on the same display - it
+    logs font 12 at 96 and font 30 at 240, and so does this.
+
+    From the monitor, not from the form: see BuildControls for why
+    CurrentPPI is not usable here. Monitor can be nil before the window
+    has been placed, and the screen is the right answer then, because
+    that is the display it is about to appear on. }
+  TmpPPI := Screen.PixelsPerInch;
+  if Monitor <> nil then
+    TmpPPI := Monitor.PixelsPerInch;
+  if TmpPPI < 48 then
+    TmpPPI := 96;
+  Font.Height := -((12 * TmpPPI) div 96);
   Canvas.Font := Font;
   TmpLine := Canvas.TextHeight('Wg');
   if TmpLine < 8 then
@@ -252,10 +307,17 @@ begin
   TmpCtrlH := TmpLine * 2;
   TmpRowH := TmpCtrlH + TmpPad;
 
-  { A CreateNew form has no .dfm, so nothing scales its size either.
-    Measured in line heights for the same reason as everything else. }
-  ClientWidth := TmpLine * 58;
-  ClientHeight := TmpLine * 44;
+  { The opening size only. After that the window belongs to whoever is
+    holding it: a DPI change has already been given a new size by the
+    VCL, and a user who has resized the dialog did so on purpose.
+    Measured in line heights because a CreateNew form has no .dfm for
+    the VCL to scale. }
+  if not fSized then
+  begin
+    fSized := True;
+    ClientWidth := TmpLine * 58;
+    ClientHeight := TmpLine * 44;
+  end;
 
   TmpX := TmpPad;
   TmpY := TmpPad;
@@ -281,12 +343,28 @@ begin
   end;
   fBar.Height := TmpRows * TmpRowH + TmpPad;
 
-  Log(Format('PrintPreview: layout line %d, bar %d high in %d row(s), ' +
-    'form PPI %d', [TmpLine, fBar.Height, TmpRows, CurrentPPI]));
+  { Both PPIs, because the difference between them is the whole of this
+    problem and the next person to read this log should see it. }
+  Log(Format('PrintPreview: layout line %d, font %d, bar %d high in ' +
+    '%d row(s), client %d x %d, monitor PPI %d, form PPI %d',
+    [TmpLine, Abs(Font.Height), fBar.Height, TmpRows, ClientWidth,
+    ClientHeight, TmpPPI, CurrentPPI]));
+  finally
+    fInLayout := False;
+  end;
 end;
 
 procedure TPrintPreviewForm.FormShow(Sender: TObject);
 begin
+  LayoutBar;
+end;
+
+procedure TPrintPreviewForm.FormResize(Sender: TObject);
+begin
+  { The bar wraps to the width it has, so the width changing is a
+    layout change. It is also how a DPI change reaches here on a build
+    where the monitor event does not: the VCL resizes the window either
+    way. }
   LayoutBar;
 end;
 

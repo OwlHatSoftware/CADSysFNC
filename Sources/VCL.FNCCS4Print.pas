@@ -43,11 +43,14 @@ interface
 
 uses
 {$IFDEF CADSYS_LCL}
-  Classes, SysUtils, Types, Math,
+  { fpjson for TJSONObject itself: VCL.FNCCS4JSON hides the difference
+    between the two JSON APIs, but not the name of the class. }
+  Classes, SysUtils, Types, Math, fpjson,
 {$ELSE}
-  System.Classes, System.SysUtils, System.Types, System.Math,
+  System.Classes, System.SysUtils, System.Types, System.Math, System.JSON,
 {$ENDIF}
-  VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCADSys4, VCL.FNCCS4Views;
+  VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4JSON, VCL.FNCCADSys4,
+  VCL.FNCCS4Views;
 
 const
   { : Millimetres in an inch. Printers talk in dots per inch; everything
@@ -188,7 +191,44 @@ type
       up in the middle of the sheet rather than in a corner. }
     function PageWindow(const ACAD: TFNCCADCmp2D;
       const AIndex: Integer): TRect2D;
+
+    { : The setup as a JSON document, kind "pagesetup". The caller owns
+      what comes back.
+
+      The view goes in whole, as the document TCADViewSpec.SaveToJSON
+      produces, rather than as a handful of borrowed fields. A setup
+      that carried its own copy of the window and the layer set would
+      be a second place for those to be wrong. }
+    function SaveToJSON: TJSONObject;
+    { : Reads a document written by SaveToJSON. Anything the document
+      does not mention keeps the value it already had, so a partial or
+      older file loses nothing that was already set. }
+    procedure LoadFromJSON(const AJSON: TJSONObject);
+    { : Writes the setup, making the view's DrawingFile relative to
+      **this** file rather than to the view's own. A setup saved beside
+      a drawing and moved with it still finds it. }
+    procedure SaveToFile(const AFileName: String);
+    { : Reads it back, making the drawing path absolute again. }
+    procedure LoadFromFile(const AFileName: String);
   end;
+
+const
+  { : The <I=kind> a page setup document carries, beside "drawing",
+    "library", "font" and "view". }
+  CADPageSetupKind = 'pagesetup';
+  { : The conventional extension. Nothing enforces it. }
+  CADPageSetupExtension = '.cadpage';
+
+  { : Written as names rather than as ordinals, like every other
+    enumeration in this library's files.
+
+    An ordinal is one insertion away from meaning something else: put
+    pkA7 between pkA5 and pkA4 and every saved setup silently changes
+    paper. JGetEnum still accepts a number, so a file written by hand
+    is readable either way. }
+  CADPageOrientationNames: array [0 .. 1] of String =
+    ('portrait', 'landscape');
+  CADPageFitNames: array [0 .. 1] of String = ('fitToPage', 'scale');
 
 { : The sheet in millimetres, portrait, for a standard size. }
 procedure CADPaperSizeMM(const AKind: TCADPaperKind;
@@ -507,6 +547,127 @@ begin
   Result := Rect2D(TmpWin.Left + TmpCol * TmpPageW,
     TmpWin.Top - (TmpRow + 1) * TmpPageH, TmpWin.Left + (TmpCol + 1) * TmpPageW,
     TmpWin.Top - TmpRow * TmpPageH);
+end;
+
+{ ==================================================================
+  TCADPageSetup: persistence
+  ================================================================== }
+
+function TCADPageSetup.SaveToJSON: TJSONObject;
+begin
+  Result := TJSONObject.Create;
+  try
+    JSetStr(Result, 'format', CADSysJSONFormat);
+    JSetStr(Result, 'version', CADSysJSONVersion);
+    JSetStr(Result, 'kind', CADPageSetupKind);
+
+    JSetEnum(Result, 'paper', Ord(Paper), PaperNames);
+    { Only when they mean anything. A custom size written beside
+      'A4' invites somebody to change one of them and wonder why
+      nothing happened. }
+    if Paper = pkCustom then
+    begin
+      JSetReal(Result, 'widthMM', CustomWidthMM);
+      JSetReal(Result, 'heightMM', CustomHeightMM);
+    end;
+    JSetEnum(Result, 'orientation', Ord(Orientation),
+      CADPageOrientationNames);
+
+    JSetReal(Result, 'marginLeftMM', Margins.Left);
+    JSetReal(Result, 'marginTopMM', Margins.Top);
+    JSetReal(Result, 'marginRightMM', Margins.Right);
+    JSetReal(Result, 'marginBottomMM', Margins.Bottom);
+
+    JSetEnum(Result, 'fit', Ord(Fit), CADPageFitNames);
+    JSetReal(Result, 'unitsPerMM', UnitsPerMM);
+    JSetBool(Result, 'keepAspect', KeepAspect);
+    JSetBool(Result, 'tiled', Tiled);
+
+    JSetValue(Result, 'view', View.SaveToJSON);
+  except
+    Result.Free;
+    Raise;
+  end;
+end;
+
+procedure TCADPageSetup.LoadFromJSON(const AJSON: TJSONObject);
+var
+  TmpView: TJSONObject;
+begin
+  if AJSON = nil then
+    Raise ECADPageError.Create('TCADPageSetup: no document');
+  if not SameText(JGetStr(AJSON, 'format'), CADSysJSONFormat) then
+    Raise ECADPageError.Create
+      ('TCADPageSetup: the document is not a CADSys document');
+  if not SameText(JGetStr(AJSON, 'kind'), CADPageSetupKind) then
+    Raise ECADPageError.Create
+      ('TCADPageSetup: the document is not a page setup');
+
+  { Every read takes the current value as its default, so a document
+    that does not mention a field leaves it alone. That is what lets an
+    older file load into a newer setup without losing the fields it
+    never heard of. }
+  Paper := TCADPaperKind(JGetEnum(AJSON, 'paper', Ord(Paper), PaperNames));
+  CustomWidthMM := JGetReal(AJSON, 'widthMM', CustomWidthMM);
+  CustomHeightMM := JGetReal(AJSON, 'heightMM', CustomHeightMM);
+  Orientation := TCADPageOrientation(JGetEnum(AJSON, 'orientation',
+    Ord(Orientation), CADPageOrientationNames));
+
+  Margins.Left := JGetReal(AJSON, 'marginLeftMM', Margins.Left);
+  Margins.Top := JGetReal(AJSON, 'marginTopMM', Margins.Top);
+  Margins.Right := JGetReal(AJSON, 'marginRightMM', Margins.Right);
+  Margins.Bottom := JGetReal(AJSON, 'marginBottomMM', Margins.Bottom);
+
+  Fit := TCADPageFit(JGetEnum(AJSON, 'fit', Ord(Fit), CADPageFitNames));
+  UnitsPerMM := JGetReal(AJSON, 'unitsPerMM', UnitsPerMM);
+  KeepAspect := JGetBool(AJSON, 'keepAspect', KeepAspect);
+  Tiled := JGetBool(AJSON, 'tiled', Tiled);
+
+  TmpView := JGetObject(AJSON, 'view');
+  if TmpView <> nil then
+    View.LoadFromJSON(TmpView);
+end;
+
+procedure TCADPageSetup.SaveToFile(const AFileName: String);
+var
+  TmpDoc: TJSONObject;
+  TmpKeep: String;
+begin
+  { The same relative-on-the-way-out rule TCADViewSpec.SaveToFile
+    follows, but measured from **this** file. A setup holds a view, and
+    a view holds a path; if the path were left relative to the view's
+    own file it would be relative to a file that may not exist. }
+  TmpKeep := View.DrawingFile;
+  try
+    if View.DrawingFile <> '' then
+      View.DrawingFile := ExtractRelativePath
+        (ExtractFilePath(ExpandFileName(AFileName)), View.DrawingFile);
+    TmpDoc := SaveToJSON;
+    try
+      JSONToFile(TmpDoc, AFileName, True);
+    finally
+      TmpDoc.Free;
+    end;
+  finally
+    View.DrawingFile := TmpKeep;
+  end;
+end;
+
+procedure TCADPageSetup.LoadFromFile(const AFileName: String);
+var
+  TmpDoc: TJSONObject;
+begin
+  TmpDoc := JSONFromFile(AFileName);
+  try
+    LoadFromJSON(TmpDoc);
+  finally
+    TmpDoc.Free;
+  end;
+  { Absolute in memory: a caller holding a setup has no reason to also
+    have to remember where the setup came from. }
+  if View.DrawingFile <> '' then
+    View.DrawingFile := ExpandFileName(ExtractFilePath(ExpandFileName
+      (AFileName)) + View.DrawingFile);
 end;
 
 { ==================================================================

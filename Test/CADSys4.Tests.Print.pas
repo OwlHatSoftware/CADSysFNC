@@ -17,10 +17,11 @@ unit CADSys4.Tests.Print;
 interface
 
 uses
-  System.SysUtils, System.Classes, System.Types, System.Math,
+  System.SysUtils, System.Classes, System.Types, System.Math, System.IOUtils,
+  System.JSON,
   DUnitX.TestFramework,
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCADSys4, VCL.FNCCS4Shapes,
-  VCL.FNCCS4Views, VCL.FNCCS4Print, VCL.FNCCadSysRegister,
+  VCL.FNCCS4JSON, VCL.FNCCS4Views, VCL.FNCCS4Print, VCL.FNCCadSysRegister,
   CADSys4.Tests.Graphics;
 
 type
@@ -94,6 +95,42 @@ type
     procedure SaveAndRestoreCarryTheWeight;
     [Test]
     procedure AClipDoesNotStack;
+  end;
+
+  { : A page setup is a value that has to survive being written down.
+
+    The same shape as TCADViewSpecTests, because it is the same problem
+    and the answers should not differ: a document with a kind, names
+    rather than ordinals for the enumerations, and a drawing path that
+    is relative in the file and absolute in memory. }
+  [TestFixture]
+  TCADPageSetupPersistenceTests = class(TObject)
+  private
+    fDir: String;
+    function TempFile(const AName: String): String;
+    { : A setup with nothing left at its default, so a field that fails
+      to round-trip cannot hide behind one that happens to match. }
+    function Populated: TCADPageSetup;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    [Test]
+    procedure EveryFieldSurvivesTheRoundTrip;
+    [Test]
+    procedure TheViewGoesInWholeAndComesBackWhole;
+    [Test]
+    procedure EnumerationsAreWrittenAsNamesNotOrdinals;
+    [Test]
+    procedure ADrawingDocumentIsNotAPageSetup;
+    [Test]
+    procedure AnUnknownPaperNameKeepsWhatWasThere;
+    [Test]
+    procedure TheDrawingPathIsRelativeInTheFileAndAbsoluteInMemory;
+    [Test]
+    procedure AFieldTheDocumentDoesNotMentionIsLeftAlone;
   end;
 
 implementation
@@ -655,9 +692,230 @@ begin
   end;
 end;
 
+{ ==================================================================
+  TCADPageSetupPersistenceTests
+  ================================================================== }
+
+procedure TCADPageSetupPersistenceTests.Setup;
+begin
+  fDir := TPath.Combine(TPath.GetTempPath, 'cadsysfnc-pagesetup-'
+    + TGUID.NewGuid.ToString);
+  TDirectory.CreateDirectory(fDir);
+end;
+
+procedure TCADPageSetupPersistenceTests.TearDown;
+begin
+  if (fDir <> '') and TDirectory.Exists(fDir) then
+    TDirectory.Delete(fDir, True);
+  fDir := '';
+end;
+
+function TCADPageSetupPersistenceTests.TempFile(const AName: String): String;
+begin
+  Result := TPath.Combine(fDir, AName);
+end;
+
+function TCADPageSetupPersistenceTests.Populated: TCADPageSetup;
+begin
+  Result := TCADPageSetup.Default;
+  Result.Paper := pkA1;
+  Result.Orientation := pgoLandscape;
+  Result.Margins := TCADPageMargins.Sides(5, 6, 7, 8);
+  Result.Fit := pfScale;
+  Result.UnitsPerMM := 12.5;
+  Result.KeepAspect := False;
+  Result.Tiled := True;
+  Result.View.Name := 'Ground floor';
+  Result.View.DrawingFile := 'house.json';
+  Result.View.Window := Rect2D(10, 20, 310, 220);
+  Result.View.UseLayerOverride := True;
+  Result.View.HiddenLayers := [3, 7, 255];
+end;
+
+procedure TCADPageSetupPersistenceTests.EveryFieldSurvivesTheRoundTrip;
+var
+  TmpSetup, TmpBack: TCADPageSetup;
+  TmpDoc: TJSONObject;
+begin
+  TmpSetup := Populated;
+  TmpBack := TCADPageSetup.Default;
+  TmpDoc := TmpSetup.SaveToJSON;
+  try
+    TmpBack.LoadFromJSON(TmpDoc);
+  finally
+    TmpDoc.Free;
+  end;
+
+  Assert.IsTrue(TmpBack.Paper = pkA1, 'paper');
+  Assert.IsTrue(TmpBack.Orientation = pgoLandscape, 'orientation');
+  Assert.AreEqual(5.0, TmpBack.Margins.Left, 0.0001, 'left margin');
+  Assert.AreEqual(6.0, TmpBack.Margins.Top, 0.0001, 'top margin');
+  Assert.AreEqual(7.0, TmpBack.Margins.Right, 0.0001, 'right margin');
+  Assert.AreEqual(8.0, TmpBack.Margins.Bottom, 0.0001, 'bottom margin');
+  Assert.IsTrue(TmpBack.Fit = pfScale, 'fit');
+  Assert.AreEqual(12.5, TmpBack.UnitsPerMM, 0.0001, 'the scale');
+  Assert.IsFalse(TmpBack.KeepAspect, 'keep aspect');
+  Assert.IsTrue(TmpBack.Tiled, 'tiled');
+end;
+
+procedure TCADPageSetupPersistenceTests.TheViewGoesInWholeAndComesBackWhole;
+var
+  TmpSetup, TmpBack: TCADPageSetup;
+  TmpDoc: TJSONObject;
+begin
+  { The setup holds a TCADViewSpec rather than a copy of its fields, so
+    what has to survive here is the view's own document nested inside
+    this one - not a second, half-complete spelling of it. }
+  TmpSetup := Populated;
+  TmpBack := TCADPageSetup.Default;
+  TmpDoc := TmpSetup.SaveToJSON;
+  try
+    TmpBack.LoadFromJSON(TmpDoc);
+  finally
+    TmpDoc.Free;
+  end;
+
+  Assert.AreEqual('Ground floor', TmpBack.View.Name, 'the view''s name');
+  Assert.AreEqual(10.0, TmpBack.View.Window.Left, 0.0001, 'the window');
+  Assert.AreEqual(220.0, TmpBack.View.Window.Top, 0.0001, 'and its top');
+  Assert.IsTrue(TmpBack.View.UseLayerOverride, 'the layer override');
+  Assert.IsTrue(3 in TmpBack.View.HiddenLayers, 'layer 3 is still hidden');
+  Assert.IsTrue(255 in TmpBack.View.HiddenLayers, 'and so is 255');
+  Assert.IsFalse(4 in TmpBack.View.HiddenLayers, 'and 4 was never hidden');
+end;
+
+procedure TCADPageSetupPersistenceTests.EnumerationsAreWrittenAsNamesNotOrdinals;
+var
+  TmpSetup: TCADPageSetup;
+  TmpDoc: TJSONObject;
+  TmpText: String;
+begin
+  { An ordinal is one insertion away from meaning something else. This
+    is the test that notices if somebody writes Ord() into the file. }
+  TmpSetup := Populated;
+  TmpDoc := TmpSetup.SaveToJSON;
+  try
+    TmpText := JSONToText(TmpDoc);
+  finally
+    TmpDoc.Free;
+  end;
+  Assert.IsTrue(TmpText.Contains('"A1"'), 'the paper size by name: ' + TmpText);
+  Assert.IsTrue(TmpText.Contains('landscape'), 'the orientation by name');
+  Assert.IsTrue(TmpText.Contains('scale'), 'the fit by name');
+  Assert.IsTrue(TmpText.Contains(CADPageSetupKind),
+    'and the document says what kind of document it is');
+end;
+
+procedure TCADPageSetupPersistenceTests.ADrawingDocumentIsNotAPageSetup;
+var
+  TmpSetup: TCADPageSetup;
+  TmpDoc: TJSONObject;
+begin
+  { Opening a drawing as a page setup should say so rather than produce
+    a setup made of defaults. }
+  TmpSetup := TCADPageSetup.Default;
+  TmpDoc := TJSONObject.Create;
+  try
+    JSetStr(TmpDoc, 'format', CADSysJSONFormat);
+    JSetStr(TmpDoc, 'version', CADSysJSONVersion);
+    JSetStr(TmpDoc, 'kind', 'drawing');
+    Assert.WillRaise(
+      procedure
+      var
+        TmpLocal: TCADPageSetup;
+      begin
+        TmpLocal := TmpSetup;
+        TmpLocal.LoadFromJSON(TmpDoc);
+      end, ECADPageError, 'a drawing is refused as a page setup');
+  finally
+    TmpDoc.Free;
+  end;
+end;
+
+procedure TCADPageSetupPersistenceTests.AnUnknownPaperNameKeepsWhatWasThere;
+var
+  TmpSetup: TCADPageSetup;
+  TmpDoc: TJSONObject;
+begin
+  { A paper size this build has never heard of - written by a later
+    version, or by hand - should not stop the file opening. Everything
+    else in it is still worth having. }
+  TmpSetup := TCADPageSetup.Default;
+  TmpSetup.Paper := pkA3;
+  TmpDoc := TJSONObject.Create;
+  try
+    JSetStr(TmpDoc, 'format', CADSysJSONFormat);
+    JSetStr(TmpDoc, 'version', CADSysJSONVersion);
+    JSetStr(TmpDoc, 'kind', CADPageSetupKind);
+    JSetStr(TmpDoc, 'paper', 'A2andAHalf');
+    JSetReal(TmpDoc, 'unitsPerMM', 4);
+    TmpSetup.LoadFromJSON(TmpDoc);
+  finally
+    TmpDoc.Free;
+  end;
+  Assert.IsTrue(TmpSetup.Paper = pkA3,
+    'the paper it already had, rather than whichever one is ordinal zero');
+  Assert.AreEqual(4.0, TmpSetup.UnitsPerMM, 0.0001,
+    'and the rest of the document was still read');
+end;
+
+procedure TCADPageSetupPersistenceTests.
+  TheDrawingPathIsRelativeInTheFileAndAbsoluteInMemory;
+var
+  TmpSetup, TmpBack: TCADPageSetup;
+  TmpSetupFile, TmpDrawing, TmpText: String;
+begin
+  { Relative to THIS file, not to the view's own. A setup saved beside
+    its drawing and moved with it still finds it. }
+  TmpSetupFile := TempFile('plan' + CADPageSetupExtension);
+  TmpDrawing := TempFile('house.json');
+  TmpSetup := TCADPageSetup.Default;
+  TmpSetup.View.DrawingFile := TmpDrawing;
+  TmpSetup.SaveToFile(TmpSetupFile);
+
+  Assert.AreEqual(TmpDrawing, TmpSetup.View.DrawingFile,
+    'saving left the setup in hand alone');
+
+  TmpText := TFile.ReadAllText(TmpSetupFile);
+  Assert.IsTrue(TmpText.Contains('house.json'), 'the drawing is named');
+  Assert.IsFalse(TmpText.Contains(ExcludeTrailingPathDelimiter(fDir)),
+    'but not by a path that only means something on this machine: '
+    + TmpText);
+
+  TmpBack := TCADPageSetup.Default;
+  TmpBack.LoadFromFile(TmpSetupFile);
+  Assert.AreEqual(TmpDrawing, TmpBack.View.DrawingFile,
+    'and it comes back absolute');
+end;
+
+procedure TCADPageSetupPersistenceTests.AFieldTheDocumentDoesNotMentionIsLeftAlone;
+var
+  TmpSetup: TCADPageSetup;
+  TmpDoc: TJSONObject;
+begin
+  { An older file loading into a newer setup keeps the fields it never
+    heard of, rather than silently zeroing them. }
+  TmpSetup := Populated;
+  TmpDoc := TJSONObject.Create;
+  try
+    JSetStr(TmpDoc, 'format', CADSysJSONFormat);
+    JSetStr(TmpDoc, 'version', CADSysJSONVersion);
+    JSetStr(TmpDoc, 'kind', CADPageSetupKind);
+    JSetStr(TmpDoc, 'paper', 'A4');
+    TmpSetup.LoadFromJSON(TmpDoc);
+  finally
+    TmpDoc.Free;
+  end;
+  Assert.IsTrue(TmpSetup.Paper = pkA4, 'what the document did say');
+  Assert.AreEqual(12.5, TmpSetup.UnitsPerMM, 0.0001,
+    'and what it did not is untouched');
+  Assert.IsTrue(TmpSetup.Tiled, 'including the flags');
+end;
+
 initialization
 
 TDUnitX.RegisterTestFixture(TCADPageModelTests);
 TDUnitX.RegisterTestFixture(TPhysicalSizeTests);
+TDUnitX.RegisterTestFixture(TCADPageSetupPersistenceTests);
 
 end.

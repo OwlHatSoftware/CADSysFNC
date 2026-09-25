@@ -43,6 +43,10 @@ type
     fCtrls: array of TControl;
     fCAD: TFNCCADCmp2D;
     fSetup: TCADPageSetup;
+    { : False until the first layout has chosen the dialog's size. }
+    fSized: Boolean;
+    { : LayoutBar sets fBar.Height, which OnResize is listening to. }
+    fInLayout: Boolean;
     procedure BuildControls;
     procedure Track(const ACtrl: TControl);
     function AddLabel(const ACaption: string): TLabel;
@@ -69,6 +73,7 @@ type
     procedure PageChanged(Sender: TObject; const APageIndex,
       APageCount: Integer);
     procedure FormShow(Sender: TObject);
+    procedure FormResize(Sender: TObject);
   public
     { : Shows the dialog. ASetup seeds the controls; what the user ends
       up with is not read back, because the demo has nowhere to keep
@@ -151,7 +156,11 @@ procedure TPrintPreviewForm.BuildControls;
 begin
   Caption := 'Print preview';
   Position := TFormPosition.OwnerFormCenter;
+  { No Scaled here, and no monitor-DPI hook: FMX coordinates are
+    logical and the platform scales the scene. The VCL twin needs both
+    - see the note in its BuildControls. }
   OnShow := FormShow;
+  OnResize := FormResize;
 
   fBar := TLayout.Create(Self);
   fBar.Parent := Self;
@@ -218,6 +227,10 @@ var
   TmpLine, TmpPad, TmpCtrlH, TmpRowH, TmpX, TmpY, TmpRows, TmpW, Cont: Integer;
   TmpCtrl: TControl;
 begin
+  if fInLayout then
+    Exit;
+  fInLayout := True;
+  try
   { Plain numbers, and they can be: FMX coordinates are logical and the
     platform scales the whole scene, so these look the same at any DPI.
     The VCL twin has to measure its font instead, from OnShow, because
@@ -231,8 +244,14 @@ begin
   TmpCtrlH := TmpLine * 2;
   TmpRowH := TmpCtrlH + TmpPad;
 
-  Width := TmpLine * 58;
-  Height := TmpLine * 44;
+  { The opening size only - after that the window belongs to whoever is
+    holding it. }
+  if not fSized then
+  begin
+    fSized := True;
+    Width := TmpLine * 58;
+    Height := TmpLine * 44;
+  end;
 
   TmpX := TmpPad;
   TmpY := TmpPad;
@@ -257,10 +276,20 @@ begin
 
   Log(Format('PrintPreview: layout line %d, bar %d high in %d row(s)',
     [TmpLine, Round(fBar.Height), TmpRows]));
+  finally
+    fInLayout := False;
+  end;
 end;
 
 procedure TPrintPreviewForm.FormShow(Sender: TObject);
 begin
+  LayoutBar;
+end;
+
+procedure TPrintPreviewForm.FormResize(Sender: TObject);
+begin
+  { The bar wraps to the width it has, so the width changing is a
+    layout change - the same on both sides. }
   LayoutBar;
 end;
 
