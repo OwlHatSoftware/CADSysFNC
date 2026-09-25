@@ -219,6 +219,40 @@ procedure CADDrawPage(const ACAD: TFNCCADCmp2D; const ASetup: TCADPageSetup;
 function CADPrintableRectPx(const ASetup: TCADPageSetup;
   const ADevice: TCADPageDevice): TRect;
 
+{ : Draws ASheet - paper space - onto ACanvas.
+
+  The companion of CADDrawPage, and the only routine that renders a
+  sheet, for the same reason: the preview, the printer and the PDF
+  writer must not each have their own idea of what a sheet looks like.
+
+  A sheet is drawn at 1:1. Its own objects are in millimetres of
+  paper, so the sheet's millimetres onto ADevice's pixels is the whole
+  of the transform, and there is no scale left to decide - the
+  scaling decisions live in the viewports, each of which frames the
+  model at its own scale.
+
+  The order is viewports first, each clipped to its own rectangle, and
+  then the sheet's own objects over the top. A title block is in front
+  of the drawing, not behind it.
+
+  The device's pixels-per-millimetre goes to the drawing layer for the
+  duration and is put back afterwards, exactly as CADDrawPage does
+  it. }
+procedure CADDrawSheet(const ACAD: TFNCCADCmp2D; const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice; const ACanvas: TDecorativeCanvas;
+  const ADrawMode: Cardinal = 0);
+
+{ : The whole sheet as a device rectangle. A preview outlines it; a
+  printer clips to it. }
+function CADSheetRectPx(const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice): TRect;
+
+{ : One viewport's rectangle, in the same device pixels. Public
+  because an application that lets somebody click a viewport needs the
+  same arithmetic and must not invent its own. }
+function CADSheetViewportRectPx(const ASheet: TCADSheet;
+  const AViewport: TCADSheetViewport; const ADevice: TCADPageDevice): TRect;
+
 implementation
 
 { ==================================================================
@@ -531,6 +565,181 @@ end;
 { ==================================================================
   Drawing
   ================================================================== }
+
+{ : The sheet's millimetres onto the device's pixels. Needed by three
+  routines below and worth having in one. }
+function SheetTransform(const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice; out ADest: TRect): TTransf2D;
+var
+  TmpPaperW, TmpPaperH: TRealType;
+  TmpWin: TRect2D;
+begin
+  ASheet.SizeMM(TmpPaperW, TmpPaperH);
+  ADest := ADevice.PaperRect(TmpPaperW, TmpPaperH);
+  TmpWin := ASheet.PaperRect2D;
+  { Aspect 0 - a plain stretch. The sheet's rectangle and the device's
+    are the same shape already, because both came from the same two
+    millimetre figures, and a device with unequal pixels wants the
+    stretch rather than a correction on top of it. }
+  Result := GetVisualTransform2D(TmpWin, ADest, 0);
+end;
+
+function CADSheetRectPx(const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice): TRect;
+var
+  TmpPaperW, TmpPaperH: TRealType;
+begin
+  Result := Rect(0, 0, 0, 0);
+  if ASheet = nil then
+    Exit;
+  ASheet.SizeMM(TmpPaperW, TmpPaperH);
+  Result := ADevice.PaperRect(TmpPaperW, TmpPaperH);
+end;
+
+function CADSheetViewportRectPx(const ASheet: TCADSheet;
+  const AViewport: TCADSheetViewport; const ADevice: TCADPageDevice): TRect;
+var
+  TmpPaperW, TmpPaperH: TRealType;
+  TmpRect: TRect2D;
+begin
+  Result := Rect(0, 0, 0, 0);
+  if (ASheet = nil) or (AViewport = nil) then
+    Exit;
+  ASheet.SizeMM(TmpPaperW, TmpPaperH);
+  TmpRect := AViewport.RectMM;
+  { Millimetres straight onto the device, exactly as
+    CADPrintableRectPx turns margins into pixels - and deliberately
+    NOT through the sheet's visual transform.
+
+    The transform carries a half-pixel offset, the pixel-centre
+    convention every drawing in this library is laid out with. It is
+    right for drawing and wrong for a rectangle that has to line up
+    with another rectangle computed a different way: the sheet's own
+    clip comes from TCADPageDevice.PaperRect, and a viewport arrived
+    at through the transform came out a pixel short of it. Two
+    conventions for two rectangles that must meet is a seam waiting to
+    appear at some resolution nobody tested.
+
+    The Y flip is the other half: the sheet's Y runs upwards and the
+    device's runs down, so the viewport's TOP edge - its larger Y - is
+    the smaller device row. Taking Left/Bottom for the top-left corner
+    gives an inside-out rectangle, which clips away to nothing and
+    draws a blank sheet without a word. }
+  Result.Left := ADevice.OffsetXPx + ADevice.MMToPxX(TmpRect.Left);
+  Result.Right := ADevice.OffsetXPx + ADevice.MMToPxX(TmpRect.Right);
+  Result.Top := ADevice.OffsetYPx + ADevice.MMToPxY(TmpPaperH - TmpRect.Top);
+  Result.Bottom := ADevice.OffsetYPx +
+    ADevice.MMToPxY(TmpPaperH - TmpRect.Bottom);
+end;
+
+{ : One viewport: its border, and the model seen through it. }
+procedure DrawSheetViewport(const ACAD: TFNCCADCmp2D;
+  const AViewport: TCADSheetViewport; const ADest: TRect;
+  const ACanvas: TDecorativeCanvas; const ADrawMode: Cardinal);
+var
+  TmpWindow, TmpClip: TRect2D;
+  TmpTransf: TTransf2D;
+  TmpIter: TGraphicObjIterator;
+  TmpObj: TObject2D;
+begin
+  if (ADest.Right <= ADest.Left) or (ADest.Bottom <= ADest.Top) then
+    Exit;
+  { The border is drawn in layer zero's pen, and as a polyline rather
+    than a rectangle: a rectangle is filled with the brush, and a
+    viewport painted over with layer zero's brush would hide the
+    drawing it exists to show. }
+  if AViewport.ShowBorder then
+  begin
+    ACAD.Layers.SetCanvas(ACanvas, 0);
+    ACanvas.Graphics.Polyline([Point(ADest.Left, ADest.Top),
+      Point(ADest.Right, ADest.Top), Point(ADest.Right, ADest.Bottom),
+      Point(ADest.Left, ADest.Bottom), Point(ADest.Left, ADest.Top)]);
+  end;
+
+  TmpWindow := AViewport.ModelWindow(ACAD);
+  TmpTransf := GetVisualTransform2D(TmpWindow, ADest, 0);
+  TmpClip := RectToRect2D(ADest);
+
+  { Nested inside the sheet's clip, which is what PushClip had to
+    learn to do before any of this could work: a viewport is a hole in
+    a sheet, and a drawing seen through it runs past the hole in every
+    direction. }
+  ACanvas.Graphics.PushClip(ADest);
+  try
+    TmpIter := ACAD.ObjectsIterator;
+    try
+      TmpObj := TObject2D(TmpIter.First);
+      while TmpObj <> nil do
+      begin
+        if TmpObj.IsVisible(TmpWindow, ADrawMode) and
+          (not AViewport.View.UseLayerOverride or
+          not(TmpObj.Layer in AViewport.View.HiddenLayers)) then
+        begin
+          ACAD.Layers.SetCanvas(ACanvas, TmpObj.Layer);
+          TmpObj.Draw(TmpTransf, ACanvas, TmpClip, ADrawMode);
+        end;
+        TmpObj := TObject2D(TmpIter.Next);
+      end;
+    finally
+      TmpIter.Free;
+    end;
+  finally
+    ACanvas.Graphics.PopClip;
+  end;
+end;
+
+procedure CADDrawSheet(const ACAD: TFNCCADCmp2D; const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice; const ACanvas: TDecorativeCanvas;
+  const ADrawMode: Cardinal);
+var
+  TmpTransf: TTransf2D;
+  TmpDest: TRect;
+  TmpClip: TRect2D;
+  TmpIter: TGraphicObjIterator;
+  TmpObj: TObject2D;
+  TmpSavedPPMM: TRealType;
+  Cont: Integer;
+begin
+  if (ACAD = nil) or (ASheet = nil) or (ACanvas = nil) or
+    (ACanvas.Graphics = nil) then
+    Exit;
+  TmpTransf := SheetTransform(ASheet, ADevice, TmpDest);
+  if (TmpDest.Right <= TmpDest.Left) or (TmpDest.Bottom <= TmpDest.Top) then
+    Exit;
+  TmpClip := RectToRect2D(TmpDest);
+
+  TmpSavedPPMM := ACanvas.Graphics.PixelsPerMM;
+  ACanvas.Graphics.PixelsPerMM := ADevice.PixelsPerMM;
+  ACanvas.Graphics.PushClip(TmpDest);
+  try
+    for Cont := 0 to ASheet.ViewportCount - 1 do
+      DrawSheetViewport(ACAD, ASheet.Viewports[Cont],
+        CADSheetViewportRectPx(ASheet, ASheet.Viewports[Cont], ADevice),
+        ACanvas, ADrawMode);
+
+    { The sheet's own objects last, in the sheet's millimetres: a title
+      block, a border, a revision table. Ordinary shapes, drawn the
+      ordinary way, which is the point of holding them as TObject2D. }
+    TmpIter := ASheet.ObjectsIterator;
+    try
+      TmpObj := TObject2D(TmpIter.First);
+      while TmpObj <> nil do
+      begin
+        if TmpObj.IsVisible(ASheet.PaperRect2D, ADrawMode) then
+        begin
+          ACAD.Layers.SetCanvas(ACanvas, TmpObj.Layer);
+          TmpObj.Draw(TmpTransf, ACanvas, TmpClip, ADrawMode);
+        end;
+        TmpObj := TObject2D(TmpIter.Next);
+      end;
+    finally
+      TmpIter.Free;
+    end;
+  finally
+    ACanvas.Graphics.PopClip;
+    ACanvas.Graphics.PixelsPerMM := TmpSavedPPMM;
+  end;
+end;
 
 function CADPrintableRectPx(const ASetup: TCADPageSetup;
   const ADevice: TCADPageDevice): TRect;

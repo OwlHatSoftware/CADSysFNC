@@ -188,6 +188,7 @@
         <DCCReference Include="CADSys4.Tests.Legacy.pas"/>
         <DCCReference Include="CADSys4.Tests.Views.pas"/>
         <DCCReference Include="CADSys4.Tests.Print.pas"/>
+        <DCCReference Include="CADSys4.Tests.Sheets.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

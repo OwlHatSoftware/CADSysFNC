@@ -556,7 +556,7 @@ uses
   VCL.FNCCS4GraphicsVCL,
 {$ENDIF}
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsFNC,
-  VCL.FNCCS4JSON, VCL.FNCCS4Views;
+  VCL.FNCCS4JSON, VCL.FNCCS4Views, VCL.FNCCS4Paper;
 
 type
   { : This type is used by the library for versioning control.
@@ -757,6 +757,9 @@ type
   TObject3D = class;
   TGraphicObjList = class;
   TGraphicObject = class;
+  TCADSheetViewport = class;
+  TCADSheet = class;
+  TCADSheets = class;
 
   { : This type defines a message handler function that is called
     when a <See Class=TPointsSet2D> object is changed.
@@ -2622,6 +2625,8 @@ type
     fNextID, fNextBlockID: LongInt; { Contain the next ID to assign. }
     fListOfViewport: TList; { Contains all the Viewports linked. }
     fLayers: TLayers; { Layers of the component. }
+    fSheets: TCADSheets; { Paper space. Empty in every drawing until
+      somebody asks for a sheet. }
     fCurrentLayer: Word;
     fDrawOnAdd: Boolean;
     { If true the object will be drawn on all viewports and the viewports will be refreshed if an object is added. }
@@ -3179,6 +3184,14 @@ type
       See also <See Class=TLayers>.
     }
     property Layers: TLayers read fLayers;
+    { : The sheets of this drawing - paper space.
+
+      Empty unless something puts a sheet in it, and saved with the
+      drawing when it is not. A drawing written before sheets existed
+      loads with none, which is the same thing.
+
+      See <See Class=TCADSheet>. }
+    property Sheets: TCADSheets read fSheets;
     { : This property is the current layer on which any object added to the
       CAD resides.
 
@@ -5291,6 +5304,199 @@ type
       block is loaded back.
     }
     property SourceName: TSourceBlockName read fSourceName;
+  end;
+
+  { : One viewport on a sheet: a rectangle of paper that shows part of
+    the model.
+
+    The rectangle is in the sheet's millimetres. What it shows is a
+    <See Class=TCADViewSpec> - the same value a saved view and a print
+    setup carry, which is the whole reason that type is a record that
+    nothing owns.
+
+    Scale is <See Property=TCADSheetViewport@UnitsPerMM>, drawing units
+    to one millimetre of paper, as a draughtsman states it: a plan
+    drawn in millimetres at 1:100 is 100, the same plan drawn in metres
+    at 1:100 is 0.1. Zero means "fit what the view frames into this
+    rectangle", which is what a new viewport does.
+
+    Panning moves the view window's centre and zooming changes
+    UnitsPerMM, but neither happens here. The library carries the
+    numbers and the application decides when they change - the same
+    bargain saved views struck, where panning a viewport deliberately
+    does not rewrite the view file. }
+  TCADSheetViewport = class(TObject)
+  private
+    fName: String;
+    fRectMM: TRect2D;
+    fView: TCADViewSpec;
+    fUnitsPerMM: TRealType;
+    fShowBorder: Boolean;
+    { : The view's window, or the drawing's whole extension when the
+      view frames nothing yet. }
+    function EffectiveWindow(const ACAD: TFNCCADCmp2D): TRect2D;
+  public
+    constructor Create;
+    procedure Assign(const ASource: TCADSheetViewport);
+
+    { : The rectangle's size on the paper, in millimetres. }
+    function WidthMM: TRealType;
+    function HeightMM: TRealType;
+
+    { : Drawing units to a millimetre of paper, resolved: UnitsPerMM
+      when it is set, otherwise what it takes to fit the view into the
+      rectangle. }
+    function EffectiveUnitsPerMM(const ACAD: TFNCCADCmp2D): TRealType;
+    { : The part of the model this viewport shows, in world
+      coordinates, in the rectangle's own proportions.
+
+      Grown about the view's centre, so what the view frames sits in
+      the middle of the viewport rather than in a corner - which is
+      what <See Method=TCADPageSetup@PageWindow> does for a fitted
+      page, and for the same reason: the window and the destination
+      then have the same shape, and the transform between them is a
+      plain stretch with no aspect of its own. }
+    function ModelWindow(const ACAD: TFNCCADCmp2D): TRect2D;
+
+    { : The viewport as a JSON object. The caller owns it. }
+    function SaveToJSON: TJSONObject;
+    procedure LoadFromJSON(const AJSON: TJSONObject);
+
+    { : What to call it in a list. Not used to find anything. }
+    property Name: String read fName write fName;
+    { : Where it sits on the paper, in millimetres, origin at the
+      bottom-left corner of the sheet and Y upwards. }
+    property RectMM: TRect2D read fRectMM write fRectMM;
+    { : What it looks at. A copy comes back - assign the whole record
+      to change it. }
+    property View: TCADViewSpec read fView write fView;
+    { : Drawing units to one millimetre of paper. 0 fits the view to
+      the rectangle. }
+    property UnitsPerMM: TRealType read fUnitsPerMM write fUnitsPerMM;
+    { : Whether the viewport draws its own outline, in the pen of layer
+      zero. Default True: an empty viewport with no border is
+      indistinguishable from no viewport at all. }
+    property ShowBorder: Boolean read fShowBorder write fShowBorder;
+  end;
+
+  { : A sheet of paper with viewports and annotation on it - paper
+    space, as small as it can usefully be.
+
+    Two coordinate systems meet here, and which is which is the whole
+    of it:
+
+    - the sheet's own objects are in MILLIMETRES of paper, origin at
+      the bottom-left corner of the sheet, Y upwards - the same way up
+      as the model. A title block is therefore ordinary TObject2D
+      shapes, which means every shape, the text, the fonts and the DXF
+      import work on a sheet without one line written for them.
+    - each viewport is a rectangle in those same millimetres showing a
+      window of the MODEL at its own scale.
+
+    The paper comes from VCL.FNCCS4Paper, which is where a print setup
+    gets it too: one table of paper sizes in the library, not two.
+
+    A sheet belongs to a drawing and is saved with it. It is not a
+    component and not a control - drawing one is
+    VCL.FNCCS4Print.CADDrawSheet, in the unit that already knows how to
+    put a drawing on paper. }
+  TCADSheet = class(TObject)
+  private
+    fOwnerCAD: TFNCCADCmp;
+    fName: String;
+    fPaper: TCADPaperKind;
+    fCustomWidthMM, fCustomHeightMM: TRealType;
+    fOrientation: TCADPageOrientation;
+    fMargins: TCADPageMargins;
+    fObjects: TGraphicObjList;
+    fViewports: TList;
+    fNextID: LongInt;
+    function GetViewport(const AIndex: Integer): TCADSheetViewport;
+    function GetViewportCount: Integer;
+    function GetObjectsCount: Integer;
+  public
+    { : AOwnerCAD may be nil. It is the drawing the sheet's own objects
+      answer to - what a shape is given as its OwnerCAD - and nothing
+      more: a sheet does not add itself to the drawing's list of
+      sheets, <See Class=TCADSheets> does that. }
+    constructor Create(const AOwnerCAD: TFNCCADCmp);
+    destructor Destroy; override;
+    procedure Assign(const ASource: TCADSheet);
+
+    { : The sheet in millimetres, with Orientation applied. }
+    procedure SizeMM(out AWidth, AHeight: TRealType);
+    { : The whole sheet as a rectangle in its own millimetres. }
+    function PaperRect2D: TRect2D;
+    { : The sheet less its margins. }
+    function PrintableRect2D: TRect2D;
+
+    { : Adds an annotation object, in millimetres. The sheet owns it
+      and frees it. }
+    function AddObject(const AObj: TObject2D): TObject2D;
+    { : Every annotation object on the sheet. The caller frees the
+      iterator. }
+    function ObjectsIterator: TGraphicObjIterator;
+    procedure DeleteAllObjects;
+
+    { : A new viewport, owned by the sheet, framing nothing yet. }
+    function AddViewport: TCADSheetViewport;
+    procedure DeleteViewport(const AIndex: Integer);
+    procedure ClearViewports;
+
+    { : The sheet as a JSON object - paper, viewports and annotation.
+      The caller owns it. }
+    function SaveToJSON: TJSONObject;
+    procedure LoadFromJSON(const AJSON: TJSONObject);
+
+    property Name: String read fName write fName;
+    property Paper: TCADPaperKind read fPaper write fPaper;
+    { : Used only when Paper is pkCustom. Portrait, as the standard
+      sizes are - Orientation is applied afterwards. }
+    property CustomWidthMM: TRealType read fCustomWidthMM
+      write fCustomWidthMM;
+    property CustomHeightMM: TRealType read fCustomHeightMM
+      write fCustomHeightMM;
+    property Orientation: TCADPageOrientation read fOrientation
+      write fOrientation;
+    property Margins: TCADPageMargins read fMargins write fMargins;
+
+    property ViewportCount: Integer read GetViewportCount;
+    property Viewports[const AIndex: Integer]: TCADSheetViewport
+      read GetViewport;
+    property ObjectsCount: Integer read GetObjectsCount;
+    { : The annotation list itself, for the operations the two
+      convenience methods above do not cover. }
+    property ObjectList: TGraphicObjList read fObjects;
+  end;
+
+  { : The sheets of one drawing, in order. Owned by
+    <See Property=TFNCCADCmp@Sheets> and by nothing else. }
+  TCADSheets = class(TObject)
+  private
+    fOwnerCAD: TFNCCADCmp;
+    fItems: TList;
+    function GetItem(const AIndex: Integer): TCADSheet;
+    function GetCount: Integer;
+  public
+    constructor Create(const AOwnerCAD: TFNCCADCmp);
+    destructor Destroy; override;
+    { : A new A4 landscape sheet at the end of the list. }
+    function Add(const AName: String = ''): TCADSheet;
+    procedure Delete(const AIndex: Integer);
+    procedure Clear;
+    { : The index of the sheet with that name, or -1. Case does not
+      matter; names are not required to be unique and the first match
+      wins. }
+    function IndexOfName(const AName: String): Integer;
+
+    { : The sheets as a JSON array. The caller owns it. }
+    function SaveToJSON: TJSONArray;
+    { : Appends the sheets in AJSON. A nil array is nothing to do,
+      which is what an older drawing with no sheets member is. }
+    procedure LoadFromJSON(const AJSON: TJSONArray);
+
+    property Count: Integer read GetCount;
+    property Items[const AIndex: Integer]: TCADSheet read GetItem; default;
   end;
 
   { : This class defines a specialization of a <See Class=TFNCCADCmp>
@@ -15297,6 +15503,473 @@ begin
   Result := fListOfViewport.Count;
 end;
 
+{ ==================================================================
+  TCADSheetViewport
+  ================================================================== }
+
+constructor TCADSheetViewport.Create;
+begin
+  inherited Create;
+  fName := '';
+  { A rectangle of nothing, at the origin. A viewport is placed by
+    whoever adds it; there is no sensible default position on a sheet
+    whose size is not known here. }
+  fRectMM := Rect2D(0, 0, 0, 0);
+  fView := TCADViewSpec.Default;
+  { Empty, not -100..100. TCADViewSpec.Default frames a viewport's
+    opening view, which is the wrong thing to put on paper - the same
+    decision TCADPageSetup.Default makes, and for the same reason. }
+  fView.Window := Rect2D(0, 0, 0, 0);
+  fUnitsPerMM := 0;
+  fShowBorder := True;
+end;
+
+procedure TCADSheetViewport.Assign(const ASource: TCADSheetViewport);
+begin
+  if ASource = nil then
+    Exit;
+  fName := ASource.fName;
+  fRectMM := ASource.fRectMM;
+  fView := ASource.fView;
+  fUnitsPerMM := ASource.fUnitsPerMM;
+  fShowBorder := ASource.fShowBorder;
+end;
+
+function TCADSheetViewport.WidthMM: TRealType;
+begin
+  Result := fRectMM.Right - fRectMM.Left;
+end;
+
+function TCADSheetViewport.HeightMM: TRealType;
+begin
+  Result := fRectMM.Top - fRectMM.Bottom;
+end;
+
+function TCADSheetViewport.EffectiveWindow(const ACAD: TFNCCADCmp2D): TRect2D;
+begin
+  Result := fView.Window;
+  if (Result.Right - Result.Left <= 0) or (Result.Top - Result.Bottom <= 0) then
+  begin
+    if ACAD = nil then
+      Raise ECADPageError.Create
+        ('The viewport frames nothing and there is no drawing to take a window from');
+    Result := ACAD.DrawingExtension;
+  end;
+  if (Result.Right - Result.Left <= 0) or (Result.Top - Result.Bottom <= 0) then
+    Raise ECADPageError.Create
+      ('The drawing is empty - there is nothing for the viewport to show');
+end;
+
+function TCADSheetViewport.EffectiveUnitsPerMM(const ACAD: TFNCCADCmp2D)
+  : TRealType;
+var
+  TmpWin: TRect2D;
+begin
+  if fUnitsPerMM > 0 then
+  begin
+    Result := fUnitsPerMM;
+    Exit;
+  end;
+  if (WidthMM <= 0) or (HeightMM <= 0) then
+    Raise ECADPageError.Create('The viewport has no area on the sheet');
+  TmpWin := EffectiveWindow(ACAD);
+  { The larger of the two ratios: whichever way round the window is,
+    all of it has to fit. }
+  Result := MaxValue([(TmpWin.Right - TmpWin.Left) / WidthMM,
+    (TmpWin.Top - TmpWin.Bottom) / HeightMM]);
+end;
+
+function TCADSheetViewport.ModelWindow(const ACAD: TFNCCADCmp2D): TRect2D;
+var
+  TmpWin: TRect2D;
+  TmpUPM, TmpW, TmpH, TmpCX, TmpCY: TRealType;
+begin
+  TmpWin := EffectiveWindow(ACAD);
+  TmpUPM := EffectiveUnitsPerMM(ACAD);
+  TmpW := WidthMM * TmpUPM;
+  TmpH := HeightMM * TmpUPM;
+  TmpCX := (TmpWin.Left + TmpWin.Right) / 2;
+  TmpCY := (TmpWin.Bottom + TmpWin.Top) / 2;
+  Result := Rect2D(TmpCX - TmpW / 2, TmpCY - TmpH / 2, TmpCX + TmpW / 2,
+    TmpCY + TmpH / 2);
+end;
+
+function TCADSheetViewport.SaveToJSON: TJSONObject;
+begin
+  Result := TJSONObject.Create;
+  try
+    JSetStr(Result, 'name', fName);
+    JSetPoint2D(Result, 'min', fRectMM.FirstEdge);
+    JSetPoint2D(Result, 'max', fRectMM.SecondEdge);
+    JSetReal(Result, 'unitsPerMM', fUnitsPerMM);
+    JSetBool(Result, 'border', fShowBorder);
+    { The view goes in whole, as a page setup carries one: a viewport
+      that copied out the window and the layer set would be a second
+      place for them to be wrong. }
+    JSetValue(Result, 'view', fView.SaveToJSON);
+  except
+    Result.Free;
+    Raise;
+  end;
+end;
+
+procedure TCADSheetViewport.LoadFromJSON(const AJSON: TJSONObject);
+var
+  TmpView: TJSONObject;
+begin
+  if AJSON = nil then
+    Exit;
+  { Every read defaults to what is already there, so a file written by
+    an older version loses nothing it never mentioned. }
+  fName := JGetStr(AJSON, 'name');
+  fRectMM.FirstEdge := JGetPoint2D(AJSON, 'min');
+  fRectMM.SecondEdge := JGetPoint2D(AJSON, 'max');
+  { Whatever the file said, a rectangle's homogeneous components are
+    1: the transform code multiplies by them. }
+  fRectMM.W1 := 1.0;
+  fRectMM.W2 := 1.0;
+  fUnitsPerMM := JGetReal(AJSON, 'unitsPerMM', fUnitsPerMM);
+  fShowBorder := JGetBool(AJSON, 'border', fShowBorder);
+  TmpView := JGetObject(AJSON, 'view');
+  if TmpView <> nil then
+    fView.LoadFromJSON(TmpView);
+end;
+
+{ ==================================================================
+  TCADSheet
+  ================================================================== }
+
+constructor TCADSheet.Create(const AOwnerCAD: TFNCCADCmp);
+begin
+  inherited Create;
+  fOwnerCAD := AOwnerCAD;
+  fName := '';
+  { A3 landscape: what a sheet with a drawing on it usually is, and
+    landscape because a viewport is wider than it is tall more often
+    than not. }
+  fPaper := pkA3;
+  fCustomWidthMM := 0;
+  fCustomHeightMM := 0;
+  fOrientation := pgoLandscape;
+  fMargins := TCADPageMargins.Uniform(10);
+  fObjects := TGraphicObjList.Create;
+  fObjects.FreeOnClear := True;
+  fViewports := TList.Create;
+  fNextID := 0;
+end;
+
+destructor TCADSheet.Destroy;
+begin
+  ClearViewports;
+  fViewports.Free;
+  fObjects.Clear;
+  fObjects.Free;
+  inherited Destroy;
+end;
+
+procedure TCADSheet.Assign(const ASource: TCADSheet);
+var
+  TmpDoc: TJSONObject;
+begin
+  if (ASource = nil) or (ASource = Self) then
+    Exit;
+  { Through the file format, which is the one place that already knows
+    every field of a sheet and every class of object that can be on
+    one. A hand-written copy is a list to keep in step with two other
+    lists. }
+  TmpDoc := ASource.SaveToJSON;
+  try
+    DeleteAllObjects;
+    ClearViewports;
+    LoadFromJSON(TmpDoc);
+  finally
+    TmpDoc.Free;
+  end;
+end;
+
+procedure TCADSheet.SizeMM(out AWidth, AHeight: TRealType);
+begin
+  CADSheetSizeMM(fPaper, fOrientation, fCustomWidthMM, fCustomHeightMM,
+    AWidth, AHeight);
+end;
+
+function TCADSheet.PaperRect2D: TRect2D;
+var
+  TmpW, TmpH: TRealType;
+begin
+  SizeMM(TmpW, TmpH);
+  Result := Rect2D(0, 0, TmpW, TmpH);
+end;
+
+function TCADSheet.PrintableRect2D: TRect2D;
+var
+  TmpW, TmpH: TRealType;
+begin
+  SizeMM(TmpW, TmpH);
+  Result := Rect2D(fMargins.Left, fMargins.Bottom, TmpW - fMargins.Right,
+    TmpH - fMargins.Top);
+end;
+
+function TCADSheet.AddObject(const AObj: TObject2D): TObject2D;
+begin
+  Result := AObj;
+  if AObj = nil then
+    Exit;
+  { The same three things TFNCCADCmp.AddObject does, less the ID
+    bookkeeping it shares with blocks and less the redraw: a sheet has
+    no viewports of its own to tell. }
+  AObj.fOwnerCAD := fOwnerCAD;
+  AObj.ID := fNextID;
+  Inc(fNextID);
+  AObj.UpdateExtension(fOwnerCAD);
+  fObjects.Add(AObj);
+end;
+
+function TCADSheet.ObjectsIterator: TGraphicObjIterator;
+begin
+  Result := fObjects.GetIterator;
+end;
+
+function TCADSheet.GetObjectsCount: Integer;
+begin
+  Result := fObjects.Count;
+end;
+
+procedure TCADSheet.DeleteAllObjects;
+begin
+  fObjects.Clear;
+  fNextID := 0;
+end;
+
+function TCADSheet.AddViewport: TCADSheetViewport;
+begin
+  Result := TCADSheetViewport.Create;
+  fViewports.Add(Result);
+end;
+
+procedure TCADSheet.DeleteViewport(const AIndex: Integer);
+begin
+  if (AIndex < 0) or (AIndex >= fViewports.Count) then
+    Exit;
+  TCADSheetViewport(fViewports[AIndex]).Free;
+  fViewports.Delete(AIndex);
+end;
+
+procedure TCADSheet.ClearViewports;
+var
+  Cont: Integer;
+begin
+  for Cont := 0 to fViewports.Count - 1 do
+    TCADSheetViewport(fViewports[Cont]).Free;
+  fViewports.Clear;
+end;
+
+function TCADSheet.GetViewport(const AIndex: Integer): TCADSheetViewport;
+begin
+  if (AIndex < 0) or (AIndex >= fViewports.Count) then
+    Raise ECADOutOfBound.CreateFmt('TCADSheet: viewport %d', [AIndex]);
+  Result := TCADSheetViewport(fViewports[AIndex]);
+end;
+
+function TCADSheet.GetViewportCount: Integer;
+begin
+  Result := fViewports.Count;
+end;
+
+function TCADSheet.SaveToJSON: TJSONObject;
+var
+  TmpViewports, TmpObjects: TJSONArray;
+  TmpIter: TGraphicObjIterator;
+  TmpObj: TGraphicObject;
+  Cont: Integer;
+begin
+  Result := TJSONObject.Create;
+  try
+    JSetStr(Result, 'name', fName);
+    JSetEnum(Result, 'paper', Ord(fPaper), CADPaperKindNames);
+    { Only when they mean anything, as a page setup does it. }
+    if fPaper = pkCustom then
+    begin
+      JSetReal(Result, 'widthMM', fCustomWidthMM);
+      JSetReal(Result, 'heightMM', fCustomHeightMM);
+    end;
+    JSetEnum(Result, 'orientation', Ord(fOrientation),
+      CADPageOrientationNames);
+    JSetReal(Result, 'marginLeftMM', fMargins.Left);
+    JSetReal(Result, 'marginTopMM', fMargins.Top);
+    JSetReal(Result, 'marginRightMM', fMargins.Right);
+    JSetReal(Result, 'marginBottomMM', fMargins.Bottom);
+
+    TmpViewports := TJSONArray.Create;
+    JSetValue(Result, 'viewports', TmpViewports);
+    for Cont := 0 to fViewports.Count - 1 do
+      JAddItem(TmpViewports, TCADSheetViewport(fViewports[Cont]).SaveToJSON);
+
+    { The annotation, written exactly as the drawing's own objects are.
+      All of it: a sheet's objects are not on the drawing's layers in
+      the sense that decides what is streamable, and a title block that
+      failed to save because of a layer setting made somewhere else
+      would be a long afternoon. }
+    TmpObjects := TJSONArray.Create;
+    JSetValue(Result, 'objects', TmpObjects);
+    TmpIter := fObjects.GetPrivilegedIterator;
+    try
+      TmpObj := TmpIter.First;
+      while TmpObj <> nil do
+      begin
+        JAddItem(TmpObjects, CADSysObjectToJSON(TmpObj));
+        TmpObj := TmpIter.Next;
+      end;
+    finally
+      TmpIter.Free;
+    end;
+  except
+    Result.Free;
+    Raise;
+  end;
+end;
+
+procedure TCADSheet.LoadFromJSON(const AJSON: TJSONObject);
+var
+  TmpArray: TJSONArray;
+  TmpObj: TGraphicObject;
+  Cont: Integer;
+begin
+  if AJSON = nil then
+    Exit;
+  fName := JGetStr(AJSON, 'name');
+  fPaper := TCADPaperKind(JGetEnum(AJSON, 'paper', Ord(fPaper),
+    CADPaperKindNames));
+  fCustomWidthMM := JGetReal(AJSON, 'widthMM', fCustomWidthMM);
+  fCustomHeightMM := JGetReal(AJSON, 'heightMM', fCustomHeightMM);
+  fOrientation := TCADPageOrientation(JGetEnum(AJSON, 'orientation',
+    Ord(fOrientation), CADPageOrientationNames));
+  fMargins.Left := JGetReal(AJSON, 'marginLeftMM', fMargins.Left);
+  fMargins.Top := JGetReal(AJSON, 'marginTopMM', fMargins.Top);
+  fMargins.Right := JGetReal(AJSON, 'marginRightMM', fMargins.Right);
+  fMargins.Bottom := JGetReal(AJSON, 'marginBottomMM', fMargins.Bottom);
+
+  TmpArray := JGetArray(AJSON, 'viewports');
+  if TmpArray <> nil then
+    for Cont := 0 to TmpArray.Count - 1 do
+      AddViewport.LoadFromJSON(JItemObject(TmpArray, Cont));
+
+  TmpArray := JGetArray(AJSON, 'objects');
+  if TmpArray <> nil then
+    for Cont := 0 to TmpArray.Count - 1 do
+    begin
+      TmpObj := nil;
+      try
+        TmpObj := CADSysObjectFromJSON(JItemObject(TmpArray, Cont));
+      except
+        on ECADObjClassNotFound do
+        begin
+          CADSysWarn('Object class not found. Object not load');
+          Continue;
+        end;
+      end;
+      if not(TmpObj is TObject2D) then
+      begin
+        { Paper is flat. }
+        CADSysWarn('Not 2D Object. Object discarded.');
+        TmpObj.Free;
+        Continue;
+      end;
+      AddObject(TObject2D(TmpObj));
+    end;
+end;
+
+{ ==================================================================
+  TCADSheets
+  ================================================================== }
+
+constructor TCADSheets.Create(const AOwnerCAD: TFNCCADCmp);
+begin
+  inherited Create;
+  fOwnerCAD := AOwnerCAD;
+  fItems := TList.Create;
+end;
+
+destructor TCADSheets.Destroy;
+begin
+  Clear;
+  fItems.Free;
+  inherited Destroy;
+end;
+
+function TCADSheets.Add(const AName: String): TCADSheet;
+begin
+  Result := TCADSheet.Create(fOwnerCAD);
+  Result.Name := AName;
+  fItems.Add(Result);
+end;
+
+procedure TCADSheets.Delete(const AIndex: Integer);
+begin
+  if (AIndex < 0) or (AIndex >= fItems.Count) then
+    Exit;
+  TCADSheet(fItems[AIndex]).Free;
+  fItems.Delete(AIndex);
+end;
+
+procedure TCADSheets.Clear;
+var
+  Cont: Integer;
+begin
+  for Cont := 0 to fItems.Count - 1 do
+    TCADSheet(fItems[Cont]).Free;
+  fItems.Clear;
+end;
+
+function TCADSheets.IndexOfName(const AName: String): Integer;
+var
+  Cont: Integer;
+begin
+  Result := -1;
+  for Cont := 0 to fItems.Count - 1 do
+    if SameText(TCADSheet(fItems[Cont]).Name, AName) then
+    begin
+      Result := Cont;
+      Exit;
+    end;
+end;
+
+function TCADSheets.GetItem(const AIndex: Integer): TCADSheet;
+begin
+  if (AIndex < 0) or (AIndex >= fItems.Count) then
+    Raise ECADOutOfBound.CreateFmt('TCADSheets: sheet %d', [AIndex]);
+  Result := TCADSheet(fItems[AIndex]);
+end;
+
+function TCADSheets.GetCount: Integer;
+begin
+  Result := fItems.Count;
+end;
+
+function TCADSheets.SaveToJSON: TJSONArray;
+var
+  Cont: Integer;
+begin
+  Result := TJSONArray.Create;
+  try
+    for Cont := 0 to fItems.Count - 1 do
+      JAddItem(Result, TCADSheet(fItems[Cont]).SaveToJSON);
+  except
+    Result.Free;
+    Raise;
+  end;
+end;
+
+procedure TCADSheets.LoadFromJSON(const AJSON: TJSONArray);
+var
+  Cont: Integer;
+begin
+  if AJSON = nil then
+    Exit;
+  for Cont := 0 to AJSON.Count - 1 do
+    Add.LoadFromJSON(JItemObject(AJSON, Cont));
+end;
+
 constructor TFNCCADCmp.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
@@ -15308,6 +15981,7 @@ begin
 
   fListOfViewport := TList.Create;
   fLayers := TLayers.Create;
+  fSheets := TCADSheets.Create(Self);
   fCurrentLayer := 0;
   fRepaintAfterTransform := True;
   fDrawOnAdd := False;
@@ -15371,6 +16045,7 @@ begin
     TFNCCADViewport(fListOfViewport[Cont]).fCADCmp := nil;
   fListOfViewport.Free;
   fLayers.Free;
+  fSheets.Free;
   inherited Destroy;
 end;
 
@@ -15390,6 +16065,11 @@ begin
     TmpObjects := TJSONArray.Create;
     JSetValue(Result, 'objects', TmpObjects);
     SaveObjectsToJSON(TmpObjects);
+    { Only when there are some. A drawing with no paper space writes
+      exactly the file it wrote before sheets existed, which is worth
+      more than the symmetry of an empty array. }
+    if fSheets.Count > 0 then
+      JSetValue(Result, 'sheets', fSheets.SaveToJSON);
   except
     Result.Free;
     Raise;
@@ -15478,6 +16158,10 @@ begin
   fLayers.LoadFromJSON(JGetArray(AJSON, 'layers'));
   LoadBlocksFromJSON(JGetArray(AJSON, 'blocks'));
   LoadObjectsFromJSON(JGetArray(AJSON, 'objects'));
+  { Appended, like the objects: merging two drawings gives a drawing
+    with both their sheets. A document with no sheets member hands in
+    nil and nothing happens. }
+  fSheets.LoadFromJSON(JGetArray(AJSON, 'sheets'));
 end;
 
 procedure TFNCCADCmp.MergeFromStream(const Stream: TStream);
@@ -15497,6 +16181,10 @@ begin
   { Delete all objects. }
   DeleteAllObjects;
   DeleteSavedSourceBlocks;
+  { And the paper space, which DeleteAllObjects does not touch: a
+    sheet is not one of the drawing's objects, it is a thing with
+    objects of its own. Loading a drawing replaces both. }
+  fSheets.Clear;
   MergeFromJSON(AJSON);
 end;
 
