@@ -53,6 +53,7 @@ type
     fPopup: TPopupMenu;
     fCoordLbl: TLabel;
     fStateLbl: TLabel;
+    fLoggedWindow: TRect2D;
     fLoggedScale: Single;
 
     { The button whose operation is running, and its unmodified text.
@@ -187,8 +188,10 @@ type
     procedure SaveViewClick(Sender: TObject);
     procedure OpenViewClick(Sender: TObject);
     procedure NewSheetClick(Sender: TObject);
+    procedure ShowSheetClick(Sender: TObject);
     procedure LoadProgress(Sender: TObject; ReadPercent: Byte);
     procedure ViewPaint(Sender: TObject);
+    function IsSameRect2D(const A, B: TRect2D): Boolean;
     procedure ExportDXFClick(Sender: TObject);
     procedure PrintPreviewClick(Sender: TObject);
     procedure PrintActualClick(Sender: TObject);
@@ -433,6 +436,7 @@ begin
   AddItem(TmpFile, 'Save view...', SaveViewClick);
   AddItem(TmpFile, 'Open view...', OpenViewClick);
   AddItem(TmpFile, 'New sheet', NewSheetClick);
+  AddItem(TmpFile, 'Show sheet / model', ShowSheetClick);
   AddSeparator(TmpFile);
   TmpPrint := AddMenu(TmpFile, 'Print');
   AddItem(TmpPrint, 'Preview...', PrintPreviewClick);
@@ -1191,6 +1195,8 @@ begin
 end;
 
 procedure TMainForm.ViewPaint(Sender: TObject);
+var
+  TmpSpace: String;
 begin
   { Logged once, the first time a paint establishes it. ViewScale is
     zero until then - the canvas is the only thing that knows the
@@ -1198,11 +1204,37 @@ begin
     logging it from OnShow would only ever record the zero. On VCL it
     is one by construction; on FMX it is what decides whether the back
     buffer holds the display's real pixels. }
+  { And the framing, every time it changes. Zoom and pan are the
+    operations with nothing else to show for themselves: when one
+    misbehaves, the only question worth asking is what window it
+    produced, and an impression of it is no use at all. }
+  if not IsSameRect2D(fLoggedWindow, fView.VisualRect) then
+  begin
+    fLoggedWindow := fView.VisualRect;
+    if fView.Sheet <> nil then
+      TmpSpace := ' mm, paper space'
+    else
+      TmpSpace := ' model';
+    Log(Format('viewport: window %.2f,%.2f .. %.2f,%.2f (%.2f x %.2f)%s',
+      [fView.VisualRect.Left, fView.VisualRect.Bottom, fView.VisualRect.Right,
+      fView.VisualRect.Top, fView.VisualRect.Right - fView.VisualRect.Left,
+      fView.VisualRect.Top - fView.VisualRect.Bottom, TmpSpace]));
+  end;
+
   if fLoggedScale = fView.ViewScale then
     Exit;
   fLoggedScale := fView.ViewScale;
   Log(Format('viewport: ViewScale %.3f, buffer %d x %d',
     [fView.ViewScale, fView.ControlRect.Right, fView.ControlRect.Bottom]));
+end;
+
+{ : Two rectangles the same to within a whisker. The window is rebuilt
+  by floating-point arithmetic on every repaint, so comparing it
+  exactly would log a line for every paint. }
+function TMainForm.IsSameRect2D(const A, B: TRect2D): Boolean;
+begin
+  Result := (Abs(A.Left - B.Left) < 1E-6) and (Abs(A.Right - B.Right) < 1E-6)
+    and (Abs(A.Bottom - B.Bottom) < 1E-6) and (Abs(A.Top - B.Top) < 1E-6);
 end;
 
 procedure TMainForm.LoadProgress(Sender: TObject; ReadPercent: Byte);
@@ -1434,6 +1466,47 @@ begin
     [TmpSheet.Name, TmpW, TmpH, TmpVP.WidthMM, TmpVP.HeightMM]));
   Say(Format('%s added. File - Print - Preview, then pick it in the Show '
     + 'box.', [TmpSheet.Name]));
+end;
+
+procedure TMainForm.ShowSheetClick(Sender: TObject);
+var
+  TmpIndex, Cont: Integer;
+begin
+  if fCAD.Sheets.Count = 0 then
+  begin
+    Say('There are no sheets yet. File - New sheet makes one.');
+    Exit;
+  end;
+  { Cycles: the model, then each sheet in turn, then back to the model.
+    One menu item and no dialog - this is a demo, and what is being
+    demonstrated is that a viewport can show a sheet, not how to choose
+    one. }
+  TmpIndex := -1;
+  if fView.Sheet <> nil then
+    for Cont := 0 to fCAD.Sheets.Count - 1 do
+      if fCAD.Sheets[Cont] = fView.Sheet then
+      begin
+        TmpIndex := Cont;
+        Break;
+      end;
+  Inc(TmpIndex);
+  if TmpIndex >= fCAD.Sheets.Count then
+  begin
+    { Putting the sheet down restores the window the model had. }
+    fView.Sheet := nil;
+    Log('viewport: showing the model');
+    Say('Showing the model.');
+  end
+  else
+  begin
+    fView.Sheet := fCAD.Sheets[TmpIndex];
+    Log(Format('viewport: showing sheet %s, %d viewport(s), %d object(s)',
+      [fView.Sheet.Name, fView.Sheet.ViewportCount,
+      fView.Sheet.ObjectsCount]));
+    Say(Format('Showing %s. The rulers are in millimetres of paper now, '
+      + 'and so is everything you draw.', [fView.Sheet.Name]));
+  end;
+  fView.Repaint;
 end;
 
 procedure TMainForm.OpenViewClick(Sender: TObject);

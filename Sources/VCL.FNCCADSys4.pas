@@ -3468,6 +3468,15 @@ type
       itself is nothing but the scene bracket around it, which is easier
       to see is balanced than a try..finally wrapped round eighty lines. }
     procedure DoUpdateViewport(const ARect: TRect2D);
+    { : Drawn into the back buffer after the background and the grid,
+      and before the display list.
+
+      Nothing in this class. <See Class=TFNCCADViewport2D> draws a
+      sheet's viewports here - the holes with the model in them - so
+      that the sheet's own objects can go on top through the ordinary
+      display-list loop and be selected, highlighted and rubber-banded
+      like anything else. }
+    procedure DrawUnderlay(const ARect: TRect2D); virtual;
     { repaint all the objects contained in ARect. }
     function GetInRepaint: Boolean;
     procedure DoResize;
@@ -5685,12 +5694,27 @@ type
     fPickFilter: TObject2DClass;
     { consider only the objects with this type during the picking. }
     fCADCmp2D: TFNCCADCmp2D;
+    { The sheet being shown, or nil for the model. Not owned - it
+      belongs to the drawing's Sheets. }
+    fSheet: TCADSheet;
+    { The model window to come back to when the sheet is put down.
+      Paper space replaces the viewport's world, so leaving it has to
+      put the old one back or the user returns to a drawing framed in
+      millimetres. }
+    fSavedWindow: TRect2D;
+    fSheetPaperColor: TColor;
     { Event handlers }
     fOnMouseDown2D, fOnMouseUp2D: TMouseEvent2D;
     fOnMouseMove2D: TMouseMoveEvent2D;
 
     procedure SetCADCmp2D(CAD2D: TFNCCADCmp2D);
+    procedure SetSheet(const Value: TCADSheet);
+    procedure SetSheetPaperColor(const Value: TColor);
   protected
+    { : The sheet's viewports, under the display list. }
+    procedure DrawUnderlay(const ARect: TRect2D); override;
+    { : The paper itself, before them. }
+    procedure DrawPaper(const ADevice: TCADPageDevice); virtual;
     procedure SetCADCmp(Cad: TFNCCADCmp); override;
     procedure DrawObject(const Obj: TGraphicObject;
       const Cnv: TDecorativeCanvas; const ClipRect2D: TRect2D); override;
@@ -5706,6 +5730,39 @@ type
       X, Y: Integer); override;
   public
     constructor Create(AOwner: TComponent); override;
+
+    { : What the sheet's millimetres are worth on this control right
+      now, as a <See Class=TCADPageDevice>.
+
+      Read from the viewport's own transform rather than built beside
+      it: two points through ViewportToScreen are enough, because the
+      mapping is a scale and a translation. Asking the transform is
+      what keeps the holes registered with the annotation while the
+      user zooms and pans - they are drawn by different code and must
+      agree to the pixel. }
+    function SheetDevice: TCADPageDevice;
+    { : Frames the whole sheet, with a small margin round the paper.
+      What the viewport does when a sheet is put on it. }
+    procedure ZoomToSheet;
+
+    { : The sheet this viewport is showing, or nil for the model.
+
+      Setting one turns the viewport into paper space: its world
+      becomes the sheet's MILLIMETRES, so zooming, panning and the
+      rulers all work on paper and read in millimetres, and its
+      display list becomes the sheet's own objects - which means the
+      title block is picked, selected and edited by the machinery that
+      already exists rather than by a second copy of it.
+
+      Setting it back to nil restores the model and the window the
+      viewport had before.
+
+      Not owned: a sheet belongs to the drawing. The viewport drops it
+      when the drawing goes, but it cannot know when the drawing
+      deletes one sheet - put it down before deleting the sheet being
+      looked at. }
+    property Sheet: TCADSheet read fSheet write SetSheet;
+
     { : This method draws a 2D object on the viewport.
 
       <I=Obj> is that object to be drawed. If <I=CtrlPts> is <B=True>
@@ -5845,6 +5902,12 @@ type
       You must assign it before using the viewport.
     }
     property CADCmp2D: TFNCCADCmp2D read fCADCmp2D write SetCADCmp2D;
+    { : The colour the paper is drawn in while a sheet is showing.
+
+      White, because that is what paper is. A viewport that flattered
+      the drawing would be as misleading as a preview that did. }
+    property SheetPaperColor: TColor read fSheetPaperColor
+      write SetSheetPaperColor;
     { : EVENTS }
     { : This property may contain an event-handler that will be
       called when the mouse in moved on the control.
@@ -17584,6 +17647,10 @@ begin
   end;
 end;
 
+procedure TFNCCADViewport.DrawUnderlay(const ARect: TRect2D);
+begin
+end;
+
 procedure TFNCCADViewport.DrawOverlay;
 begin
   if Assigned(fOnPaintOverlay) then
@@ -17680,6 +17747,7 @@ begin
         DrawGrid(ARect, fOffScreenCanvas);
       if fDrawMode = DRAWMODE_NODRAW then
         Exit;
+      DrawUnderlay(ARect);
       if (fViewportObjects <> nil) then
         TmpIter := fViewportObjects.GetIterator
       else if not Assigned(fCADCmp) or fCADCmp.IsBlocked then
@@ -19791,6 +19859,154 @@ begin
   inherited Create(AOwner);
 
   fPickFilter := TObject2D;
+  fSheet := nil;
+  fSheetPaperColor := cadtcWhite;
+end;
+
+procedure TFNCCADViewport2D.SetSheetPaperColor(const Value: TColor);
+begin
+  if fSheetPaperColor = Value then
+    Exit;
+  fSheetPaperColor := Value;
+  if fSheet <> nil then
+    Repaint;
+end;
+
+procedure TFNCCADViewport2D.SetSheet(const Value: TCADSheet);
+begin
+  if fSheet = Value then
+    Exit;
+  { Going in: remember the model's framing. Coming out: put it back.
+    Paper space replaces the viewport's world, and a user who looked at
+    a sheet and came back to a drawing framed in millimetres would
+    rightly call that a bug. }
+  if (fSheet = nil) and (Value <> nil) then
+    fSavedWindow := fVisualWindow;
+  fSheet := Value;
+  if fSheet <> nil then
+  begin
+    { The sheet's own objects ARE the display list now. That is what
+      makes a title block selectable, editable and rubber-bandable
+      without one line written for it - DoUpdateViewport and
+      PickObject both already prefer ViewportObjects when it is set. }
+    ViewportObjects := fSheet.ObjectList;
+    ZoomToSheet;
+  end
+  else
+  begin
+    ViewportObjects := nil;
+    ChangeViewportTransform(fSavedWindow);
+  end;
+  Repaint;
+end;
+
+procedure TFNCCADViewport2D.ZoomToSheet;
+var
+  TmpW, TmpH, TmpMargin, TmpAsp, TmpWinW, TmpWinH: TRealType;
+  TmpRect: TRect;
+begin
+  if fSheet = nil then
+    Exit;
+  fSheet.SizeMM(TmpW, TmpH);
+  if (TmpW <= 0) or (TmpH <= 0) then
+    Exit;
+  { A little air round the paper, so the sheet's own edge is visible
+    as an edge rather than as the side of the window. }
+  TmpMargin := MaxValue([TmpW, TmpH]) * 0.03;
+  TmpWinW := TmpW + 2 * TmpMargin;
+  TmpWinH := TmpH + 2 * TmpMargin;
+
+  { And then grown to the shape of the control, about the paper's own
+    centre.
+
+    GetVisualTransform2D does that growing itself when the window is
+    the wrong shape - but it grows from the bottom-left corner, so a
+    sheet asked for in a control wider than itself came out pinned to
+    the left with all the slack on the right. Doing it here leaves
+    that adjustment nothing to do, and a sheet of paper ends up in the
+    middle of the window, where a sheet of paper belongs.
+
+    TCADPageSetup.PageWindow grows a fitted page about its centre for
+    the same reason. }
+  TmpRect := ControlRect;
+  if (fAspectRatio > 0) and (TmpRect.Right > TmpRect.Left) and
+    (TmpRect.Bottom > TmpRect.Top) then
+  begin
+    TmpAsp := (TmpRect.Right - TmpRect.Left) / (TmpRect.Bottom - TmpRect.Top)
+      * fAspectRatio;
+    if TmpWinH > TmpWinW / TmpAsp then
+      TmpWinW := TmpWinH * TmpAsp
+    else
+      TmpWinH := TmpWinW / TmpAsp;
+  end;
+
+  { ZoomWindow rather than ChangeViewportTransform directly: it is what
+    every other zoom in this class goes through, and a descendant that
+    overrides it must see this one too. }
+  ZoomWindow(Rect2D(TmpW / 2 - TmpWinW / 2, TmpH / 2 - TmpWinH / 2,
+    TmpW / 2 + TmpWinW / 2, TmpH / 2 + TmpWinH / 2));
+end;
+
+function TFNCCADViewport2D.SheetDevice: TCADPageDevice;
+var
+  TmpW, TmpH: TRealType;
+  TmpOrigin, TmpUnit: TPoint2D;
+begin
+  Result := TCADPageDevice.FromPixelsPerMM(0);
+  if fSheet = nil then
+    Exit;
+  fSheet.SizeMM(TmpW, TmpH);
+  { The paper's top-left corner is (0, H) in the sheet's millimetres,
+    because the sheet's Y runs upwards and the device's runs down. One
+    millimetre along each axis from there gives the scale.
+
+    Two points through the viewport's own transform, rather than a
+    device built alongside it: the holes and the annotation are drawn
+    by different code and have to agree to the pixel while the user
+    zooms and pans. Asking the transform is the only way that cannot
+    drift. }
+  TmpOrigin := ViewportToScreen(Point2D(0, TmpH));
+  TmpUnit := ViewportToScreen(Point2D(1, TmpH - 1));
+  Result.PixelsPerMMX := TmpUnit.X - TmpOrigin.X;
+  Result.PixelsPerMMY := TmpUnit.Y - TmpOrigin.Y;
+  Result.OffsetXPx := Round(TmpOrigin.X);
+  Result.OffsetYPx := Round(TmpOrigin.Y);
+end;
+
+procedure TFNCCADViewport2D.DrawPaper(const ADevice: TCADPageDevice);
+var
+  TmpRect: TRect;
+begin
+  TmpRect := CADSheetRectPx(fSheet, ADevice);
+  if (TmpRect.Right <= TmpRect.Left) or (TmpRect.Bottom <= TmpRect.Top) then
+    Exit;
+  fOffScreenCanvas.Graphics.Transparent := False;
+  fOffScreenCanvas.Pen.Color := TColorToCADColor(cadtcGray);
+  fOffScreenCanvas.Pen.Width := 1;
+  fOffScreenCanvas.Pen.Style := cpsSolid;
+  fOffScreenCanvas.Pen.Mode := cpmCopy;
+  fOffScreenCanvas.Brush.Color := TColorToCADColor(fSheetPaperColor);
+  fOffScreenCanvas.Brush.Style := cbsSolid;
+  fOffScreenCanvas.Graphics.Rectangle(TmpRect.Left, TmpRect.Top,
+    TmpRect.Right, TmpRect.Bottom);
+end;
+
+procedure TFNCCADViewport2D.DrawUnderlay(const ARect: TRect2D);
+var
+  TmpDevice: TCADPageDevice;
+begin
+  inherited DrawUnderlay(ARect);
+  if (fSheet = nil) or (fCADCmp2D = nil) then
+    Exit;
+  TmpDevice := SheetDevice;
+  if (TmpDevice.PixelsPerMMX <= 0) or (TmpDevice.PixelsPerMMY <= 0) then
+    Exit;
+  DrawPaper(TmpDevice);
+  { The holes, each clipped to itself. The sheet's own objects follow
+    through the display list, so a title block is drawn over the model
+    it annotates - the same order CADDrawSheet uses on paper. }
+  CADDrawSheetViewports(fCADCmp2D, fSheet, TmpDevice, fOffScreenCanvas,
+    DrawMode);
 end;
 
 procedure TFNCCADViewport2D.DrawObject(const Obj: TGraphicObject;
@@ -19949,6 +20165,16 @@ var
 begin
   if not Assigned(fCADCmp2D) then
     Exit;
+  { In paper space, everything is the SHEET. The model may be a
+    hundred metres wide and is being looked at through a hole in a
+    piece of paper, so its extension is the wrong answer - and with an
+    empty model the old code did not even get that far, it returned
+    having done nothing at all. }
+  if fSheet <> nil then
+  begin
+    ZoomToSheet;
+    Exit;
+  end;
   StopRepaint;
   if CADCmp2D.ObjectsCount = 0 then
   begin
