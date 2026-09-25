@@ -188,6 +188,7 @@ type
     procedure ImportLegacyClick(Sender: TObject);
     procedure SaveViewClick(Sender: TObject);
     procedure OpenViewClick(Sender: TObject);
+    procedure NewSheetClick(Sender: TObject);
     procedure LoadProgress(Sender: TObject; ReadPercent: Byte);
     procedure ViewPaint(Sender: TObject);
     procedure ExportDXFClick(Sender: TObject);
@@ -395,6 +396,7 @@ begin
   AddSeparator(TmpFile);
   AddItem(TmpFile, 'Save view...', SaveViewClick);
   AddItem(TmpFile, 'Open view...', OpenViewClick);
+  AddItem(TmpFile, 'New sheet', NewSheetClick);
   AddSeparator(TmpFile);
   TmpPrint := AddMenu(TmpFile, 'Print');
   AddItem(TmpPrint, 'Preview...', PrintPreviewClick);
@@ -1331,6 +1333,55 @@ begin
   finally
     TmpDlg.Free;
   end;
+end;
+
+procedure TMainForm.NewSheetClick(Sender: TObject);
+var
+  TmpSheet: TCADSheet;
+  TmpVP: TCADSheetViewport;
+  TmpView: TCADViewSpec;
+  TmpW, TmpH: TRealType;
+begin
+  { Paper space. Everything below is either a rectangle in millimetres
+    of paper or a view captured off the screen - there is no
+    sheet-specific drawing code anywhere in this handler, because a
+    sheet's own objects are ordinary shapes. That is the whole design.
+
+    A new sheet is A3 landscape, so 420 x 297. }
+  TmpSheet := fCAD.Sheets.Add(Format('Sheet %d', [fCAD.Sheets.Count + 1]));
+  TmpSheet.SizeMM(TmpW, TmpH);
+
+  { A frame inside the margins and a title block in the bottom-right
+    corner - millimetres, origin at the bottom-left of the paper, Y
+    upwards as in the model. }
+  TmpSheet.AddObject(TFrame2D.Create(-1, Point2D(10, 10),
+    Point2D(TmpW - 10, TmpH - 10)));
+  TmpSheet.AddObject(TFrame2D.Create(-1, Point2D(TmpW - 110, 10),
+    Point2D(TmpW - 10, 35)));
+  try
+    TmpSheet.AddObject(TJustifiedVectText2D.Create(-1,
+      CADSysFindFontByIndex(0), Rect2D(TmpW - 105, 18, TmpW - 15, 30), 6,
+      TmpSheet.Name));
+  except
+    { RomanC.json is not beside the exe. A title block without its text
+      is still a title block, and a demo that refuses to make a sheet
+      over a missing font is not. }
+    Log('sheet: no vector font registered, title block left blank');
+  end;
+
+  { One viewport over what is left of the paper, showing what the
+    screen is showing. UnitsPerMM stays 0, which means fit - a scale is
+    something to choose once there is something to look at. }
+  TmpVP := TmpSheet.AddViewport;
+  TmpVP.Name := 'Main';
+  TmpVP.RectMM := Rect2D(15, 40, TmpW - 15, TmpH - 15);
+  fView.CaptureView(TmpView);
+  TmpVP.View := TmpView;
+
+  Log(Format('sheet added: %s, %.0f x %.0f mm, viewport %.0f x %.0f mm',
+    [TmpSheet.Name, TmpW, TmpH, TmpVP.WidthMM, TmpVP.HeightMM]));
+  Say(Format('%s added. File - Print - Preview, then pick it in the Show '
+    + 'box.', [TmpSheet.Name]));
 end;
 
 procedure TMainForm.OpenViewClick(Sender: TObject);

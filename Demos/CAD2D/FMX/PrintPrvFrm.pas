@@ -30,6 +30,10 @@ type
   private
     fPreview: TFNCPrintPreview;
     fBar: TLayout;
+    { : Model, or one of the drawing's sheets. A sheet carries its own
+      paper and its own scales, so choosing one puts the rest of the
+      bar to sleep. }
+    fSheetBox: TComboBox;
     fPaper: TComboBox;
     fOrientation: TComboBox;
     fFit: TComboBox;
@@ -63,6 +67,8 @@ type
     { : Reads the bar into fSetup and hands it to the preview. One
       direction only - the controls are the truth and the setup is
       rebuilt from them, so there is no state to get out of step. }
+    { : The sheet the Show box names, or nil for the model. }
+    function SelectedSheet: TCADSheet;
     procedure ApplySetup;
     procedure SettingChanged(Sender: TObject);
     procedure PrevClick(Sender: TObject);
@@ -153,6 +159,8 @@ begin
 end;
 
 procedure TPrintPreviewForm.BuildControls;
+var
+  Cont: Integer;
 begin
   Caption := 'Print preview';
   Position := TFormPosition.OwnerFormCenter;
@@ -168,6 +176,12 @@ begin
 
   { Created here, placed in LayoutBar - the same split as the VCL side,
     where it is forced by the framework rather than chosen. }
+  AddLabel('Show');
+  fSheetBox := AddCombo(['Model'], 0);
+  if fCAD <> nil then
+    for Cont := 0 to fCAD.Sheets.Count - 1 do
+      fSheetBox.Items.Add(fCAD.Sheets[Cont].Name);
+
   AddLabel('Paper');
   fPaper := AddCombo(['A5', 'A4', 'A3', 'A2', 'A1', 'A0', 'Letter', 'Legal',
     'Tabloid'], 1);
@@ -293,9 +307,24 @@ begin
   LayoutBar;
 end;
 
+function TPrintPreviewForm.SelectedSheet: TCADSheet;
+begin
+  { Item 0 is the model, so a sheet's index is one less than the box's.
+    The list is built once, in BuildControls, and the dialog has no way
+    to add a sheet - so there is nothing here to keep in step. }
+  Result := nil;
+  if (fCAD = nil) or (fSheetBox = nil) then
+    Exit;
+  if (fSheetBox.ItemIndex <= 0) or
+    (fSheetBox.ItemIndex > fCAD.Sheets.Count) then
+    Exit;
+  Result := fCAD.Sheets[fSheetBox.ItemIndex - 1];
+end;
+
 procedure TPrintPreviewForm.ApplySetup;
 var
   TmpMargin, TmpScale: Double;
+  TmpSheet: TCADSheet;
 begin
   fSetup.Paper := TCADPaperKind(fPaper.ItemIndex);
   if fOrientation.ItemIndex = 1 then
@@ -318,15 +347,31 @@ begin
   fSetup.Tiled := fTiled.IsChecked;
   fSetup.KeepAspect := True;
 
-  fScale.Enabled := fSetup.Fit = pfScale;
-  fTiled.Enabled := fSetup.Fit = pfScale;
-
+  TmpSheet := SelectedSheet;
   fPreview.Setup := fSetup;
-  Log(Format('PrintPreview: %s %s, %.1f mm margins, %s, %d page(s)',
-    [CADPaperKindName(fSetup.Paper),
-    BoolToStr(fSetup.Orientation = pgoLandscape, True),
-    fSetup.Margins.Left, BoolToStr(fSetup.Fit = pfScale, True),
-    fPreview.PageCount]));
+  fPreview.Sheet := TmpSheet;
+
+  { A sheet has its own paper, its own margins and a scale per
+    viewport, so the page controls have nothing to say about one.
+    Disabled rather than hidden: the bar keeps its shape, and it is
+    plain what they belong to. }
+  fPaper.Enabled := TmpSheet = nil;
+  fOrientation.Enabled := TmpSheet = nil;
+  fMargin.Enabled := TmpSheet = nil;
+  fFit.Enabled := TmpSheet = nil;
+  fScale.Enabled := (TmpSheet = nil) and (fSetup.Fit = pfScale);
+  fTiled.Enabled := (TmpSheet = nil) and (fSetup.Fit = pfScale);
+
+  if TmpSheet <> nil then
+    Log(Format('PrintPreview: sheet %s, %s, %d viewport(s), %d object(s)',
+      [TmpSheet.Name, CADPaperKindName(TmpSheet.Paper),
+      TmpSheet.ViewportCount, TmpSheet.ObjectsCount]))
+  else
+    Log(Format('PrintPreview: %s %s, %.1f mm margins, %s, %d page(s)',
+      [CADPaperKindName(fSetup.Paper),
+      BoolToStr(fSetup.Orientation = pgoLandscape, True),
+      fSetup.Margins.Left, BoolToStr(fSetup.Fit = pfScale, True),
+      fPreview.PageCount]));
 end;
 
 procedure TPrintPreviewForm.SettingChanged(Sender: TObject);
@@ -372,7 +417,13 @@ begin
     own PDF engine is a TTMSFNCGraphics like any other. This handler is
     identical in the VCL twin - diff them. }
   Log('PrintPreview: writing ' + TmpName);
-  CADSavePagesToPDF(fCAD, fSetup, TmpName);
+  { One sheet or the setup's pages, and the same two lines on both
+    frameworks either way. }
+  if SelectedSheet <> nil then
+    CADSaveSheetsToPDF(fCAD, fCAD.Sheets, TmpName, fSheetBox.ItemIndex - 1,
+      fSheetBox.ItemIndex - 1)
+  else
+    CADSavePagesToPDF(fCAD, fSetup, TmpName);
   Log('PrintPreview: written');
 end;
 
