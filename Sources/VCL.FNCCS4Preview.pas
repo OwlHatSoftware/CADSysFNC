@@ -14,7 +14,14 @@
 
   It needs no printer, which is what makes it work on FMX and what
   makes it possible to look at a page setup without a print driver
-  installed. }
+  installed.
+
+  It shows a SHEET the same way. Set
+  <See Property=TFNCPrintPreview@Sheet> and the control draws paper
+  space through CADDrawSheet instead - same control, same paper, same
+  margin guides, and the setup is left alone rather than being
+  half-used. A sheet is one page, so the page buttons do nothing while
+  one is showing. }
 unit VCL.FNCCS4Preview;
 
 {$I VCL.FNCCADSys.inc}
@@ -59,6 +66,9 @@ type
   private
     fCAD: TFNCCADCmp2D;
     fSetup: TCADPageSetup;
+    { : The sheet being shown, or nil for "show the page setup". Not
+      owned - it belongs to the drawing's Sheets. }
+    fSheet: TCADSheet;
     fPageIndex: Integer;
     fCanvas: TDecorativeCanvas;
     fGraphics: TCADFNCGraphics;
@@ -70,6 +80,7 @@ type
     fOnPageChanged: TCADPreviewPageEvent;
     procedure SetCADCmp(const Value: TFNCCADCmp2D);
     procedure SetSetup(const Value: TCADPageSetup);
+    procedure SetSheet(const Value: TCADSheet);
     procedure SetPageIndex(const Value: Integer);
     procedure SetShowMargins(const Value: Boolean);
     procedure SetPaperColor(const Value: TColor);
@@ -118,6 +129,16 @@ type
     { : What to show. Assigning a whole setup repaints and clamps the
       page index. }
     property Setup: TCADPageSetup read fSetup write SetSetup;
+
+    { : The sheet to show, or nil to go back to showing the page
+      setup.
+
+      Not published and not owned: a sheet belongs to the drawing, and
+      this is a reference into TFNCCADCmp.Sheets. The control drops it
+      when the drawing goes, but it cannot know when the drawing
+      deletes one sheet - assign nil before deleting the sheet being
+      looked at. }
+    property Sheet: TCADSheet read fSheet write SetSheet;
   published
     { : The drawing. The control does not own it and survives it being
       freed. }
@@ -168,7 +189,11 @@ procedure TFNCPrintPreview.Notification(AComponent: TComponent;
 begin
   inherited Notification(AComponent, Operation);
   if (Operation = opRemove) and (AComponent = fCAD) then
+  begin
     fCAD := nil;
+    { The sheet belonged to that drawing. }
+    fSheet := nil;
+  end;
 end;
 
 procedure TFNCPrintPreview.SetCADCmp(const Value: TFNCCADCmp2D);
@@ -180,6 +205,19 @@ begin
   fCAD := Value;
   if fCAD <> nil then
     fCAD.FreeNotification(Self);
+  { Whatever sheet was showing belonged to the drawing being replaced. }
+  fSheet := nil;
+  SetupChanged;
+end;
+
+procedure TFNCPrintPreview.SetSheet(const Value: TCADSheet);
+begin
+  if fSheet = Value then
+    Exit;
+  fSheet := Value;
+  { A sheet is one page. Going either way resets the page index rather
+    than leaving 'page 3 of 1' on a form's label. }
+  fPageIndex := 0;
   SetupChanged;
 end;
 
@@ -270,7 +308,9 @@ end;
 function TFNCPrintPreview.PageCount: Integer;
 begin
   Result := 1;
-  if fCAD = nil then
+  { A sheet is one sheet. Tiling is a page-setup idea - a drawing too
+    big for the paper is what a viewport's scale is for. }
+  if (fCAD = nil) or (fSheet <> nil) then
     Exit;
   try
     Result := fSetup.PageCount(fCAD);
@@ -287,7 +327,10 @@ end;
 
 procedure TFNCPrintPreview.PaperMM(out AWidth, AHeight: TRealType);
 begin
-  fSetup.PaperSizeMM(AWidth, AHeight);
+  if fSheet <> nil then
+    fSheet.SizeMM(AWidth, AHeight)
+  else
+    fSetup.PaperSizeMM(AWidth, AHeight);
 end;
 
 function TFNCPrintPreview.PageDevice: TCADPageDevice;
@@ -346,7 +389,10 @@ var
 begin
   if not fShowMargins then
     Exit;
-  TmpRect := CADPrintableRectPx(fSetup, ADevice);
+  if fSheet <> nil then
+    TmpRect := CADSheetPrintableRectPx(fSheet, ADevice)
+  else
+    TmpRect := CADPrintableRectPx(fSetup, ADevice);
   if (TmpRect.Right <= TmpRect.Left) or (TmpRect.Bottom <= TmpRect.Top) then
     Exit;
   fCanvas.Pen.Style := cpsDash;
@@ -387,7 +433,10 @@ begin
     if fCAD = nil then
       Exit;
     try
-      CADDrawPage(fCAD, fSetup, TmpDevice, fPageIndex, fCanvas);
+      if fSheet <> nil then
+        CADDrawSheet(fCAD, fSheet, TmpDevice, fCanvas)
+      else
+        CADDrawPage(fCAD, fSetup, TmpDevice, fPageIndex, fCanvas);
     except
       { A setup that cannot produce a page shows an empty sheet. The
         alternative is an exception once per repaint, which on FMX is a

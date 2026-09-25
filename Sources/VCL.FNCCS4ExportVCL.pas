@@ -85,6 +85,23 @@ procedure CADPrintPages(const ACAD: TFNCCADCmp2D; const ASetup: TCADPageSetup;
   const APrinter: TPrinter; const AFirstPage: Integer = 0;
   const ALastPage: Integer = -1);
 
+{: Prints sheets - paper space - one sheet to a page.
+
+   The same shape as CADPrintPages, with CADDrawSheet in place of
+   CADDrawPage, because a sheet needs no scaling decisions: it is
+   drawn at 1:1 and the scales live in its viewports.
+
+   ALastSheet of -1 means "to the end".
+
+   ONE LIMITATION, and it is Vcl.Printers': the orientation belongs to
+   the document, not to the page, so it is taken from the first sheet
+   printed. A run of sheets that disagree about orientation has to be
+   printed as separate documents - or exported to PDF, where each page
+   carries its own size. }
+procedure CADPrintSheets(const ACAD: TFNCCADCmp2D; const ASheets: TCADSheets;
+  const APrinter: TPrinter; const AFirstSheet: Integer = 0;
+  const ALastSheet: Integer = -1);
+
 implementation
 
 { : The millimetres-per-pixel of a device context. The one place that
@@ -244,6 +261,52 @@ begin
         if Cont > TmpFirst then
           APrinter.NewPage;
         CADDrawPage(ACAD, TmpSetup, TmpDevice, Cont, TmpCanvas);
+      end;
+    finally
+      TmpCanvas.Free;
+    end;
+  except
+    { A half-printed document left in the spooler is worse than none. }
+    APrinter.Abort;
+    Raise;
+  end;
+  APrinter.EndDoc;
+end;
+
+procedure CADPrintSheets(const ACAD: TFNCCADCmp2D; const ASheets: TCADSheets;
+  const APrinter: TPrinter; const AFirstSheet, ALastSheet: Integer);
+var
+  TmpDevice: TCADPageDevice;
+  TmpCanvas: TDecorativeCanvas;
+  TmpFirst, TmpLast, Cont: Integer;
+begin
+  if (ACAD = nil) or (ASheets = nil) or (APrinter = nil) then
+    Exit;
+  TmpFirst := AFirstSheet;
+  if TmpFirst < 0 then
+    TmpFirst := 0;
+  TmpLast := ALastSheet;
+  if (TmpLast < 0) or (TmpLast > ASheets.Count - 1) then
+    TmpLast := ASheets.Count - 1;
+  if TmpLast < TmpFirst then
+    Exit;
+
+  { From the first sheet, and see the note on the declaration. }
+  if ASheets[TmpFirst].Orientation = pgoLandscape then
+    APrinter.Orientation := Vcl.Printers.poLandscape
+  else
+    APrinter.Orientation := Vcl.Printers.poPortrait;
+
+  APrinter.BeginDoc;
+  try
+    TmpDevice := CADPrinterPageDevice(APrinter);
+    TmpCanvas := TDecorativeCanvas.Create(APrinter.Canvas);
+    try
+      for Cont := TmpFirst to TmpLast do
+      begin
+        if Cont > TmpFirst then
+          APrinter.NewPage;
+        CADDrawSheet(ACAD, ASheets[Cont], TmpDevice, TmpCanvas);
       end;
     finally
       TmpCanvas.Free;

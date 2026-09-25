@@ -157,6 +157,19 @@ procedure CADSavePagesToPDF(const ACAD: TFNCCADCmp2D;
   const ASetup: TCADPageSetup; const AFileName: String;
   const AFirstPage: Integer = 0; const ALastPage: Integer = -1);
 
+{ : Writes sheets - paper space - to AFileName, one sheet to a page.
+
+  ALastSheet of -1 means "to the end".
+
+  Unlike the printer, this handles sheets that disagree about paper
+  size or orientation: the page size is set per page, so an A3
+  landscape sheet and an A4 portrait one can sit in the same document.
+  That is the same custom-size-in-points arrangement CADSavePagesToPDF
+  uses, applied once per sheet rather than once per document. }
+procedure CADSaveSheetsToPDF(const ACAD: TFNCCADCmp2D;
+  const ASheets: TCADSheets; const AFileName: String;
+  const AFirstSheet: Integer = 0; const ALastSheet: Integer = -1);
+
 implementation
 
 constructor TCADPDFGraphics.CreateForPDF
@@ -320,6 +333,101 @@ begin
             { A half-written PDF is still a file on disk with a
               plausible name, so the document is closed on the way out
               of a failure as well as a success. }
+            TmpPDF.EndDocument;
+          end;
+        finally
+          TmpCanvas.Free;
+        end;
+      finally
+        TmpGraphics.Free;
+      end;
+    finally
+      TmpEngine.Free;
+    end;
+  finally
+    TmpPDF.Free;
+  end;
+end;
+
+procedure CADSaveSheetsToPDF(const ACAD: TFNCCADCmp2D;
+  const ASheets: TCADSheets; const AFileName: String;
+  const AFirstSheet, ALastSheet: Integer);
+var
+  TmpDevice: TCADPageDevice;
+  TmpPDF: TTMSFNCPDFLib;
+  TmpEngine: TTMSFNCGraphicsPDFEngine;
+  TmpGraphics: TCADPDFGraphics;
+  TmpCanvas: TDecorativeCanvas;
+  TmpInit: ITMSFNCCustomPDFInitializationLib;
+  TmpSheet: TCADSheet;
+  TmpPaperW, TmpPaperH: TRealType;
+  TmpBounds: TRect;
+  TmpResolution: Integer;
+  TmpFirst, TmpLast, Cont: Integer;
+begin
+  if (ACAD = nil) or (ASheets = nil) or (AFileName = '') then
+    Exit;
+  TmpFirst := AFirstSheet;
+  if TmpFirst < 0 then
+    TmpFirst := 0;
+  TmpLast := ALastSheet;
+  if (TmpLast < 0) or (TmpLast > ASheets.Count - 1) then
+    TmpLast := ASheets.Count - 1;
+  if TmpLast < TmpFirst then
+    Exit;
+
+  TmpPDF := TTMSFNCPDFLib.Create(nil);
+  try
+    TmpPDF.PageSize := psCustom;
+    { Always portrait, as the page version is: a landscape sheet has
+      already had its two numbers swapped by the time it gets here, and
+      saying landscape as well would swap them back. }
+    TmpPDF.PageOrientation := poPortrait;
+    TmpPDF.Header := '';
+    TmpPDF.Footer := '';
+    TmpPDF.PageNumber := pnNone;
+
+    TmpResolution := CADPDFResolution;
+    if not Supports(TmpPDF.Graphics, ITMSFNCCustomPDFInitializationLib,
+      TmpInit) then
+      TmpResolution := 72;
+    TmpDevice := TCADPageDevice.FromDPI(TmpResolution, TmpResolution);
+
+    TmpEngine := TTMSFNCGraphicsPDFEngine.Create(TmpPDF);
+    try
+      TmpGraphics := TCADPDFGraphics.CreateForPDF(TmpPDF.Graphics);
+      try
+        TmpCanvas := TDecorativeCanvas.Create(TmpGraphics, False);
+        try
+          TmpPDF.BeginDocument(AFileName);
+          try
+            for Cont := TmpFirst to TmpLast do
+            begin
+              TmpSheet := ASheets[Cont];
+              TmpSheet.SizeMM(TmpPaperW, TmpPaperH);
+              if (TmpPaperW <= 0) or (TmpPaperH <= 0) then
+                Continue;
+              { Before NewPage: the page takes its size when it is
+                opened. This is the part the printer cannot do - there
+                the orientation belongs to the document. }
+              TmpPDF.PageWidth := TmpPaperW * CADPDFPointsPerMM;
+              TmpPDF.PageHeight := TmpPaperH * CADPDFPointsPerMM;
+              TmpBounds := Rect(0, 0, TmpDevice.MMToPxX(TmpPaperW),
+                TmpDevice.MMToPxY(TmpPaperH));
+              { Every page, the first one included - BeginDocument does
+                not open one. }
+              TmpPDF.NewPage;
+              TmpGraphics.Attach(TmpEngine, TmpBounds);
+              if TmpResolution <> 72 then
+              begin
+                TmpInit.SetPageWidth(TmpBounds.Right);
+                TmpInit.SetPageHeight(TmpBounds.Bottom);
+                TmpEngine.SetMatrix(PDFScaleMatrix(72 / TmpResolution));
+              end;
+              CADDrawSheet(ACAD, TmpSheet, TmpDevice, TmpCanvas);
+              TmpGraphics.Attach(nil, Rect(0, 0, 0, 0));
+            end;
+          finally
             TmpPDF.EndDocument;
           end;
         finally

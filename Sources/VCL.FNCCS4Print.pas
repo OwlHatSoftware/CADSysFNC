@@ -253,6 +253,12 @@ function CADSheetRectPx(const ASheet: TCADSheet;
 function CADSheetViewportRectPx(const ASheet: TCADSheet;
   const AViewport: TCADSheetViewport; const ADevice: TCADPageDevice): TRect;
 
+{ : The sheet less its margins, in device pixels - what
+  CADPrintableRectPx is for a page. A preview draws its guides with
+  it. }
+function CADSheetPrintableRectPx(const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice): TRect;
+
 implementation
 
 { ==================================================================
@@ -596,40 +602,55 @@ begin
   Result := ADevice.PaperRect(TmpPaperW, TmpPaperH);
 end;
 
-function CADSheetViewportRectPx(const ASheet: TCADSheet;
-  const AViewport: TCADSheetViewport; const ADevice: TCADPageDevice): TRect;
+{ : A rectangle of a sheet's millimetres as device pixels.
+
+  Millimetres straight onto the device, exactly as
+  CADPrintableRectPx turns margins into pixels - and deliberately NOT
+  through the sheet's visual transform.
+
+  That transform carries a half-pixel offset, the pixel-centre
+  convention every drawing in this library is laid out with. It is
+  right for drawing and wrong for a rectangle that has to line up with
+  another rectangle computed a different way: the sheet's own clip
+  comes from TCADPageDevice.PaperRect, and a viewport arrived at
+  through the transform came out a pixel short of it. Two conventions
+  for two rectangles that must meet is a seam waiting to appear at
+  some resolution nobody tested.
+
+  The Y flip is the other half: the sheet's Y runs upwards and the
+  device's runs down, so the TOP edge - the larger Y - is the smaller
+  device row. Taking Left/Bottom for the top-left corner gives an
+  inside-out rectangle, which clips away to nothing and draws a blank
+  sheet without a word. }
+function SheetRectPx(const ASheet: TCADSheet; const ADevice: TCADPageDevice;
+  const ARectMM: TRect2D): TRect;
 var
   TmpPaperW, TmpPaperH: TRealType;
-  TmpRect: TRect2D;
+begin
+  ASheet.SizeMM(TmpPaperW, TmpPaperH);
+  Result.Left := ADevice.OffsetXPx + ADevice.MMToPxX(ARectMM.Left);
+  Result.Right := ADevice.OffsetXPx + ADevice.MMToPxX(ARectMM.Right);
+  Result.Top := ADevice.OffsetYPx + ADevice.MMToPxY(TmpPaperH - ARectMM.Top);
+  Result.Bottom := ADevice.OffsetYPx +
+    ADevice.MMToPxY(TmpPaperH - ARectMM.Bottom);
+end;
+
+function CADSheetViewportRectPx(const ASheet: TCADSheet;
+  const AViewport: TCADSheetViewport; const ADevice: TCADPageDevice): TRect;
 begin
   Result := Rect(0, 0, 0, 0);
   if (ASheet = nil) or (AViewport = nil) then
     Exit;
-  ASheet.SizeMM(TmpPaperW, TmpPaperH);
-  TmpRect := AViewport.RectMM;
-  { Millimetres straight onto the device, exactly as
-    CADPrintableRectPx turns margins into pixels - and deliberately
-    NOT through the sheet's visual transform.
+  Result := SheetRectPx(ASheet, ADevice, AViewport.RectMM);
+end;
 
-    The transform carries a half-pixel offset, the pixel-centre
-    convention every drawing in this library is laid out with. It is
-    right for drawing and wrong for a rectangle that has to line up
-    with another rectangle computed a different way: the sheet's own
-    clip comes from TCADPageDevice.PaperRect, and a viewport arrived
-    at through the transform came out a pixel short of it. Two
-    conventions for two rectangles that must meet is a seam waiting to
-    appear at some resolution nobody tested.
-
-    The Y flip is the other half: the sheet's Y runs upwards and the
-    device's runs down, so the viewport's TOP edge - its larger Y - is
-    the smaller device row. Taking Left/Bottom for the top-left corner
-    gives an inside-out rectangle, which clips away to nothing and
-    draws a blank sheet without a word. }
-  Result.Left := ADevice.OffsetXPx + ADevice.MMToPxX(TmpRect.Left);
-  Result.Right := ADevice.OffsetXPx + ADevice.MMToPxX(TmpRect.Right);
-  Result.Top := ADevice.OffsetYPx + ADevice.MMToPxY(TmpPaperH - TmpRect.Top);
-  Result.Bottom := ADevice.OffsetYPx +
-    ADevice.MMToPxY(TmpPaperH - TmpRect.Bottom);
+function CADSheetPrintableRectPx(const ASheet: TCADSheet;
+  const ADevice: TCADPageDevice): TRect;
+begin
+  Result := Rect(0, 0, 0, 0);
+  if ASheet = nil then
+    Exit;
+  Result := SheetRectPx(ASheet, ADevice, ASheet.PrintableRect2D);
 end;
 
 { : One viewport: its border, and the model seen through it. }
