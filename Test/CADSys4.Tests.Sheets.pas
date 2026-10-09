@@ -236,6 +236,75 @@ type
     procedure AnUnknownClassIsSkippedWithAWarning;
   end;
 
+  { : The viewport stand-in: one TObject2D on the sheet representing a
+    rectangle that is not an object, so that the ordinary picking,
+    moving and edit-point machinery can work on it. }
+  [TestFixture]
+  TCADSheetViewportProxyTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FSheet: TCADSheet;
+    FViewport: TCADSheetViewport;
+    FLog: TStringList;
+    procedure SheetObjectChanged(Sender: TObject; const ASheet: TCADSheet;
+      const AObj: TGraphicObject; const AChange: TCADSheetChange);
+    function Device: TCADPageDevice;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    [Test]
+    procedure ShowingTheHandlesAddsOnePerViewport;
+    [Test]
+    procedure TheHandleIsTheViewportsRectangle;
+    [Test]
+    procedure DraggingTheHandleMovesTheViewport;
+    [Test]
+    procedure MovingACornerResizesTheViewport;
+    [Test]
+    procedure RefreshPullsTheRectangleBackFromTheViewport;
+    [Test]
+    procedure AHandleIsNotSavedWithTheSheet;
+    [Test]
+    procedure PuttingTheHandlesOnIsNotAChangeToTheDrawing;
+    [Test]
+    procedure DeletingAViewportTakesItsHandleWithIt;
+    [Test]
+    procedure AHandleIsNotDrawnOnPaper;
+    [Test]
+    procedure TheViewportUnderAPointInMillimetres;
+  end;
+
+  { : The viewport's own numbers: where it looks, how far in, and what a
+    point on the paper means in the model. }
+  [TestFixture]
+  TCADSheetViewportViewTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FSheet: TCADSheet;
+    FViewport: TCADSheetViewport;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    [Test]
+    procedure ZoomingInHalvesTheUnitsPerMillimetre;
+    [Test]
+    procedure ZoomingAFittedViewportStartsFromTheScaleItWasFittedTo;
+    [Test]
+    procedure ZoomingKeepsWhatWasInTheMiddleInTheMiddle;
+    [Test]
+    procedure PanningMovesTheCentreAndNothingElse;
+    [Test]
+    procedure APointOnThePaperIsAPointInTheModel;
+    [Test]
+    procedure ADegenerateViewportAnswersWithThePointItWasGiven;
+  end;
+
   [TestFixture]
   TCADSheetDrawingTests = class(TObject)
   private
@@ -763,6 +832,326 @@ begin
   TmpObj := FSheet.AddObject(TLine2D.Create(-1, Point2D(0, 0), Point2D(1, 0)));
   Assert.AreSame(FCAD, TmpObj.OwnerCAD,
     'the sheet holds it, the drawing owns it');
+end;
+
+{ ==================================================================
+  TCADSheetViewportProxyTests
+  ================================================================== }
+
+function TCADSheetViewportProxyTests.Device: TCADPageDevice;
+begin
+  { One device pixel to the millimetre, as the drawing tests use. }
+  Result := TCADPageDevice.FromDPI(CADMMPerInch, CADMMPerInch);
+end;
+
+procedure TCADSheetViewportProxyTests.SheetObjectChanged(Sender: TObject;
+  const ASheet: TCADSheet; const AObj: TGraphicObject;
+  const AChange: TCADSheetChange);
+begin
+  if AObj <> nil then
+    FLog.Add(AObj.ClassName)
+  else
+    FLog.Add('(none)');
+end;
+
+procedure TCADSheetViewportProxyTests.Setup;
+begin
+  FLog := TStringList.Create;
+  FCAD := TFNCCADCmp2D.Create(nil);
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(300, 150)));
+  FSheet := FCAD.Sheets.Add('Plan');
+  FViewport := FSheet.AddViewport;
+  FViewport.RectMM := Rect2D(10, 10, 110, 60);
+end;
+
+procedure TCADSheetViewportProxyTests.TearDown;
+begin
+  FCAD.Free;
+  FLog.Free;
+end;
+
+procedure TCADSheetViewportProxyTests.ShowingTheHandlesAddsOnePerViewport;
+begin
+  FSheet.AddViewport.RectMM := Rect2D(150, 10, 250, 60);
+  Assert.AreEqual(2, CADSheetShowViewportProxies(FSheet), 'one each');
+  Assert.AreEqual(2, FSheet.ObjectsCount, 'on the sheet');
+  { Asking twice is what an application does on every click of a
+    toolbar button, and it must not pile them up. }
+  Assert.AreEqual(0, CADSheetShowViewportProxies(FSheet), 'and no more');
+  Assert.AreEqual(2, FSheet.ObjectsCount, 'still two');
+  Assert.AreEqual(2, CADSheetHideViewportProxies(FSheet), 'both went');
+  Assert.AreEqual(0, FSheet.ObjectsCount, 'and the sheet is empty again');
+end;
+
+procedure TCADSheetViewportProxyTests.TheHandleIsTheViewportsRectangle;
+var
+  TmpProxy: TCADSheetViewportProxy2D;
+begin
+  CADSheetShowViewportProxies(FSheet);
+  TmpProxy := CADSheetViewportProxy(FSheet, FViewport);
+  Assert.IsNotNull(TmpProxy, 'there is one');
+  Assert.AreSame(TObject(FViewport), TmpProxy.StandsFor,
+    'and it says what it stands for');
+  Assert.AreEqual(10.0, TmpProxy.Box.Left, 1E-9, 'left');
+  Assert.AreEqual(10.0, TmpProxy.Box.Bottom, 1E-9, 'bottom');
+  Assert.AreEqual(110.0, TmpProxy.Box.Right, 1E-9, 'right');
+  Assert.AreEqual(60.0, TmpProxy.Box.Top, 1E-9, 'top');
+end;
+
+procedure TCADSheetViewportProxyTests.DraggingTheHandleMovesTheViewport;
+var
+  TmpProxy: TCADSheetViewportProxy2D;
+begin
+  CADSheetShowViewportProxies(FSheet);
+  TmpProxy := CADSheetViewportProxy(FSheet, FViewport);
+  { What TCAD2DMoveObjects does to a selected object, and nothing more:
+    the point of the stand-in is that the move task needs no knowledge
+    of viewports at all. }
+  TmpProxy.Transform(Translate2D(10, 5));
+  Assert.AreEqual(20.0, FViewport.RectMM.Left, 1E-9, 'the viewport moved');
+  Assert.AreEqual(15.0, FViewport.RectMM.Bottom, 1E-9, 'in both axes');
+  Assert.AreEqual(120.0, FViewport.RectMM.Right, 1E-9, 'and kept its width');
+  Assert.AreEqual(65.0, FViewport.RectMM.Top, 1E-9, 'and its height');
+end;
+
+procedure TCADSheetViewportProxyTests.MovingACornerResizesTheViewport;
+var
+  TmpProxy: TCADSheetViewportProxy2D;
+begin
+  CADSheetShowViewportProxies(FSheet);
+  TmpProxy := CADSheetViewportProxy(FSheet, FViewport);
+  { What TCAD2DEditPrimitive does: it moves a control point. A frame's
+    two control points are its corners, which is the whole reason the
+    stand-in is a frame. }
+  TmpProxy.Points[1] := Point2D(210, 110);
+  Assert.AreEqual(210.0, FViewport.RectMM.Right, 1E-9, 'wider');
+  Assert.AreEqual(110.0, FViewport.RectMM.Top, 1E-9, 'and taller');
+  Assert.AreEqual(10.0, FViewport.RectMM.Left, 1E-9,
+    'with the other corner where it was');
+end;
+
+procedure TCADSheetViewportProxyTests.RefreshPullsTheRectangleBackFromTheViewport;
+var
+  TmpProxy: TCADSheetViewportProxy2D;
+begin
+  CADSheetShowViewportProxies(FSheet);
+  TmpProxy := CADSheetViewportProxy(FSheet, FViewport);
+  { The other direction: an application that moved the viewport in code
+    while the handles were showing. }
+  FViewport.RectMM := Rect2D(5, 5, 55, 30);
+  CADSheetRefreshViewportProxies(FSheet);
+  Assert.AreEqual(5.0, TmpProxy.Box.Left, 1E-9, 'the handle followed');
+  Assert.AreEqual(55.0, TmpProxy.Box.Right, 1E-9, 'all of it');
+  Assert.AreEqual(30.0, TmpProxy.Box.Top, 1E-9, 'both corners');
+end;
+
+procedure TCADSheetViewportProxyTests.AHandleIsNotSavedWithTheSheet;
+var
+  TmpText: String;
+  TmpBack: TFNCCADCmp2D;
+begin
+  FSheet.AddObject(TLine2D.Create(-1, Point2D(1, 1), Point2D(2, 2)));
+  CADSheetShowViewportProxies(FSheet);
+  TmpText := FCAD.SaveToJSONString;
+  TmpBack := TFNCCADCmp2D.Create(nil);
+  try
+    TmpBack.LoadFromJSONString(TmpText);
+    { The title block, and not the handle: the viewport is already in
+      the file, and a saved handle would come back as an ordinary
+      rectangle drawn over it that nobody asked for. }
+    Assert.AreEqual(1, TmpBack.Sheets[0].ObjectsCount, 'the real object only');
+    Assert.AreEqual(1, TmpBack.Sheets[0].ViewportCount, 'the viewport is there');
+    Assert.IsFalse(TmpText.Contains('TCADSheetViewportProxy2D'),
+      'and the class name is nowhere in the file');
+  finally
+    TmpBack.Free;
+  end;
+end;
+
+procedure TCADSheetViewportProxyTests.PuttingTheHandlesOnIsNotAChangeToTheDrawing;
+begin
+  FCAD.OnSheetObjectChange := SheetObjectChanged;
+  CADSheetShowViewportProxies(FSheet);
+  CADSheetHideViewportProxies(FSheet);
+  { An application that marks a file modified when it hears this event
+    would mark it on a toolbar click that changed nothing in the
+    document. }
+  Assert.AreEqual(0, FLog.Count, 'nothing was reported: ' + FLog.Text);
+  { And a real object still reports, so the silence above is about
+    stand-ins and not about the event being broken. }
+  FSheet.AddObject(TLine2D.Create(-1, Point2D(1, 1), Point2D(2, 2)));
+  Assert.AreEqual(1, FLog.Count, 'a real object still reports');
+end;
+
+procedure TCADSheetViewportProxyTests.DeletingAViewportTakesItsHandleWithIt;
+begin
+  CADSheetShowViewportProxies(FSheet);
+  Assert.AreEqual(1, FSheet.ObjectsCount, 'the handle is there');
+  FSheet.DeleteViewport(0);
+  { Otherwise the handle outlives the viewport holding a dangling
+    reference, and the next drag writes through a freed pointer. }
+  Assert.AreEqual(0, FSheet.ObjectsCount, 'and went with it');
+end;
+
+procedure TCADSheetViewportProxyTests.AHandleIsNotDrawnOnPaper;
+var
+  TmpRec: TRecordingGraphics;
+  TmpCanvas: TDecorativeCanvas;
+begin
+  CADSheetShowViewportProxies(FSheet);
+  TmpRec := TRecordingGraphics.Create(Rect(0, 0, 420, 297));
+  try
+    TmpCanvas := TDecorativeCanvas.Create(TmpRec, False);
+    try
+      CADDrawSheet(FCAD, FSheet, Device, TmpCanvas);
+    finally
+      TmpCanvas.Free;
+    end;
+    { One polyline, the viewport's own border. The handle is a frame
+      and would draw as a second polyline over it - on the screen that
+      is the point, on a printer and in a PDF it is a line that is not
+      part of the drawing. }
+    Assert.AreEqual(1, TmpRec.CountOf('Polyline'),
+      'the border and not the handle: ' + TmpRec.Log.Text);
+  finally
+    TmpRec.Free;
+  end;
+end;
+
+procedure TCADSheetViewportProxyTests.TheViewportUnderAPointInMillimetres;
+var
+  TmpSecond: TCADSheetViewport;
+begin
+  Assert.AreSame(TObject(FViewport), TObject(FSheet.ViewportAt(Point2D(50, 30))),
+    'inside');
+  Assert.IsNull(FSheet.ViewportAt(Point2D(5, 5)), 'outside is nil');
+  { Two overlapping, and the later one is drawn on top, so a click
+    belongs to the one the user can see. }
+  TmpSecond := FSheet.AddViewport;
+  TmpSecond.RectMM := Rect2D(50, 20, 150, 70);
+  Assert.AreSame(TObject(TmpSecond), TObject(FSheet.ViewportAt(Point2D(60, 30))),
+    'the one on top');
+  Assert.AreEqual(0, FSheet.ViewportIndexAt(Point2D(20, 15)),
+    'and where they do not overlap, the first');
+end;
+
+{ ==================================================================
+  TCADSheetViewportViewTests
+  ================================================================== }
+
+procedure TCADSheetViewportViewTests.Setup;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+  FSheet := FCAD.Sheets.Add('Plan');
+  FViewport := FSheet.AddViewport;
+  { 100 mm by 50 mm of paper. }
+  FViewport.RectMM := Rect2D(10, 10, 110, 60);
+end;
+
+procedure TCADSheetViewportViewTests.TearDown;
+begin
+  FCAD.Free;
+end;
+
+procedure TCADSheetViewportViewTests.ZoomingInHalvesTheUnitsPerMillimetre;
+begin
+  FViewport.UnitsPerMM := 4;
+  FViewport.View := TCADViewSpec.Default;
+  FViewport.ZoomBy(FCAD, 2);
+  { Zooming in shows less of the drawing on the same paper: fewer
+    drawing units to a millimetre. }
+  Assert.AreEqual(2.0, FViewport.UnitsPerMM, 1E-9, 'in');
+  FViewport.ZoomBy(FCAD, 0.5);
+  Assert.AreEqual(4.0, FViewport.UnitsPerMM, 1E-9, 'and out again');
+  FViewport.ZoomBy(FCAD, 0);
+  Assert.AreEqual(4.0, FViewport.UnitsPerMM, 1E-9,
+    'and a factor of nothing does nothing');
+end;
+
+procedure TCADSheetViewportViewTests.ZoomingAFittedViewportStartsFromTheScaleItWasFittedTo;
+var
+  TmpSpec: TCADViewSpec;
+  TmpFitted: TRealType;
+begin
+  { A 300-unit-wide window in a 100 mm viewport is three units to the
+    millimetre, fitted. }
+  TmpSpec := TCADViewSpec.Default;
+  TmpSpec.Window := Rect2D(0, 0, 300, 150);
+  FViewport.View := TmpSpec;
+  FViewport.UnitsPerMM := 0;
+  TmpFitted := FViewport.EffectiveUnitsPerMM(FCAD);
+  Assert.AreEqual(3.0, TmpFitted, 1E-9, 'fitted at three');
+  FViewport.ZoomBy(FCAD, 2);
+  { Not to some other scale entirely: the first zoom of a fitted
+    viewport has to move by the factor asked for. }
+  Assert.AreEqual(1.5, FViewport.UnitsPerMM, 1E-9, 'and in by two from there');
+end;
+
+procedure TCADSheetViewportViewTests.ZoomingKeepsWhatWasInTheMiddleInTheMiddle;
+var
+  TmpSpec: TCADViewSpec;
+  TmpBefore, TmpAfter: TPoint2D;
+begin
+  TmpSpec := TCADViewSpec.Default;
+  TmpSpec.Window := Rect2D(100, 100, 400, 250);
+  FViewport.View := TmpSpec;
+  FViewport.UnitsPerMM := 0;
+  TmpBefore := FViewport.ModelCentre(FCAD);
+  FViewport.ZoomBy(FCAD, 4);
+  TmpAfter := FViewport.ModelCentre(FCAD);
+  Assert.AreEqual(TmpBefore.X, TmpAfter.X, 1E-9, 'the centre held in X');
+  Assert.AreEqual(TmpBefore.Y, TmpAfter.Y, 1E-9, 'and in Y');
+end;
+
+procedure TCADSheetViewportViewTests.PanningMovesTheCentreAndNothingElse;
+var
+  TmpSpec: TCADViewSpec;
+  TmpCentre: TPoint2D;
+begin
+  TmpSpec := TCADViewSpec.Default;
+  TmpSpec.Window := Rect2D(0, 0, 300, 150);
+  FViewport.View := TmpSpec;
+  FViewport.UnitsPerMM := 3;
+  FViewport.PanModelBy(FCAD, 30, -15);
+  TmpCentre := FViewport.ModelCentre(FCAD);
+  Assert.AreEqual(180.0, TmpCentre.X, 1E-9, 'the centre moved');
+  Assert.AreEqual(60.0, TmpCentre.Y, 1E-9, 'both ways');
+  Assert.AreEqual(3.0, FViewport.UnitsPerMM, 1E-9, 'and the scale did not');
+end;
+
+procedure TCADSheetViewportViewTests.APointOnThePaperIsAPointInTheModel;
+var
+  TmpSpec: TCADViewSpec;
+  TmpModel, TmpBack: TPoint2D;
+begin
+  TmpSpec := TCADViewSpec.Default;
+  TmpSpec.Window := Rect2D(0, 0, 300, 150);
+  FViewport.View := TmpSpec;
+  FViewport.UnitsPerMM := 3;
+  { The bottom-left corner of the paper rectangle is the bottom-left of
+    the window, and the middle is the middle. }
+  TmpModel := FViewport.PointMMToModel(FCAD, Point2D(10, 10));
+  Assert.AreEqual(0.0, TmpModel.X, 1E-6, 'the corner is the corner');
+  Assert.AreEqual(0.0, TmpModel.Y, 1E-6, 'in both axes');
+  TmpModel := FViewport.PointMMToModel(FCAD, Point2D(60, 35));
+  Assert.AreEqual(150.0, TmpModel.X, 1E-6, 'and the middle the middle');
+  Assert.AreEqual(75.0, TmpModel.Y, 1E-6, 'there too');
+  { And back again, which is the property that matters to a drag: a
+    point picked and put down must not drift. }
+  TmpBack := FViewport.ModelToPointMM(FCAD, TmpModel);
+  Assert.AreEqual(60.0, TmpBack.X, 1E-6, 'the round trip holds');
+  Assert.AreEqual(35.0, TmpBack.Y, 1E-6, 'in both axes');
+end;
+
+procedure TCADSheetViewportViewTests.ADegenerateViewportAnswersWithThePointItWasGiven;
+begin
+  FViewport.RectMM := Rect2D(10, 10, 10, 10);
+  { The same answer CADSheetViewportTransform gives by handing back the
+    identity: an honest failure rather than a plausible wrong number. }
+  Assert.AreEqual(42.0, FViewport.PointMMToModel(FCAD, Point2D(42, 7)).X, 1E-9,
+    'no area, no conversion');
+  Assert.AreEqual(7.0, FViewport.PointMMToModel(FCAD, Point2D(42, 7)).Y, 1E-9,
+    'in both axes');
 end;
 
 { ==================================================================
@@ -1591,6 +1980,8 @@ TDUnitX.RegisterTestFixture(TCADSheetEditingTests);
 TDUnitX.RegisterTestFixture(TCADSpaceTests);
 TDUnitX.RegisterTestFixture(TCADExplodeTests);
 TDUnitX.RegisterTestFixture(TCADSheetCustomClassTests);
+TDUnitX.RegisterTestFixture(TCADSheetViewportProxyTests);
+TDUnitX.RegisterTestFixture(TCADSheetViewportViewTests);
 TDUnitX.RegisterTestFixture(TCADSheetDrawingTests);
 
 end.

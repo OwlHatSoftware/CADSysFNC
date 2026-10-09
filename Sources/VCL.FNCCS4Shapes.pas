@@ -558,6 +558,56 @@ type
       : Integer; override;
   end;
 
+  { : A sheet viewport as something on the paper that can be picked,
+    moved and resized.
+
+    A <See Class=TCADSheetViewport> is a rectangle of paper showing part
+    of the model, and not a shape: none of the picking, selection,
+    rubber band, move or edit-point machinery can touch it, because all
+    of that is written against objects in a display list. Rather than
+    teach every one of those about a second kind of selectable thing,
+    one object stands in for the rectangle and writes back what happens
+    to it.
+
+    It is a <See Class=TFrame2D>, so its two control points are the
+    rectangle's corners and TCAD2DEditPrimitive resizes a viewport with
+    not one line written for it.
+
+    Two rules keep the stand-in from becoming a second truth:
+
+    - the viewport is the truth. Every change to this object's shape is
+      pushed onto <See Property=TCADSheetViewport@RectMM> as it
+      happens, and <See Method=TCADSheetViewportProxy2D@Refresh> pulls
+      the other way for a viewport changed in code.
+    - it belongs to the editing session, not to the drawing.
+      <See Method=TGraphicObject@StandsFor> says so, which is what
+      keeps it out of the file, off the printer, out of the PDF and out
+      of the drawing's change notifications.
+
+    The application decides when the handles are there:
+    <See Function=CADSheetShowViewportProxies> puts them on a sheet and
+    <See Function=CADSheetHideViewportProxies> takes them off. A sheet
+    being printed or previewed never needs them, and a sheet being
+    edited wants them only while the user is working on the viewports
+    rather than on the title block. }
+  TCADSheetViewportProxy2D = class(TFrame2D)
+  private
+    fViewport: TCADSheetViewport;
+  protected
+    procedure _UpdateExtension; override;
+  public
+    { : The stand-in for AViewport, as big as the viewport is now.
+      AViewport is referenced and not owned - the sheet owns it. }
+    constructor CreateForViewport(const AID: LongInt;
+      const AViewport: TCADSheetViewport);
+    { : The viewport this stands in for. }
+    function StandsFor: TObject; override;
+    { : Takes the rectangle from the viewport again, for a viewport that
+      was changed in code rather than by dragging this. }
+    procedure Refresh;
+    property Viewport: TCADSheetViewport read fViewport;
+  end;
+
   { : This class defines an arc segment of a 2D ellipse.
 
     The arc is defined by the two corner of the box that
@@ -3080,6 +3130,27 @@ procedure CADSysRegisterFont(Index: Word; const Font: TVectFont);
 }
 procedure CADSysUnregisterFont(Index: Word);
 
+{ : Puts a <See Class=TCADSheetViewportProxy2D> on ASheet for every
+  viewport that has not got one, and returns how many it added.
+
+  After this the sheet's viewports can be picked, moved and resized
+  with the ordinary tasks, because as far as those are concerned they
+  are objects on the sheet like any other. The stand-ins are not part
+  of the drawing: they are not saved, not printed and not reported as
+  changes. }
+function CADSheetShowViewportProxies(const ASheet: TCADSheet): Integer;
+{ : Takes every viewport stand-in off ASheet and frees it, returning how
+  many went. Nothing else on the sheet is touched. }
+function CADSheetHideViewportProxies(const ASheet: TCADSheet): Integer;
+{ : The stand-in for AViewport on ASheet, or nil if it has not got one. }
+function CADSheetViewportProxy(const ASheet: TCADSheet;
+  const AViewport: TCADSheetViewport): TCADSheetViewportProxy2D;
+{ : Pulls every stand-in's rectangle from its viewport. For an
+  application that moved a viewport in code - through
+  <See Method=TCADSheetViewport@ZoomBy> or by assigning RectMM - while
+  the handles were showing. }
+procedure CADSheetRefreshViewportProxies(const ASheet: TCADSheet);
+
 const
   { : This constats rapresent the maximum number of vectorial fonts
     that may be used in the library.
@@ -4117,6 +4188,148 @@ begin
     finally
       EndUseProfilePoints;
     end;
+  end;
+end;
+
+// =====================================================================
+// TCADSheetViewportProxy2D
+// =====================================================================
+
+constructor TCADSheetViewportProxy2D.CreateForViewport(const AID: LongInt;
+  const AViewport: TCADSheetViewport);
+var
+  TmpRect: TRect2D;
+begin
+  { Ordered, because a frame's two points are read as bottom-left and
+    top-right by everything that touches it afterwards, and a viewport
+    rectangle set in code need not be the right way up. }
+  TmpRect := ReorderRect2D(AViewport.RectMM);
+  inherited Create(AID, TmpRect.FirstEdge, TmpRect.SecondEdge);
+  { After the inherited constructor, which updates the extension while
+    there is still nothing to push to - which is exactly what
+    _UpdateExtension's nil check is for. }
+  fViewport := AViewport;
+end;
+
+function TCADSheetViewportProxy2D.StandsFor: TObject;
+begin
+  Result := fViewport;
+end;
+
+procedure TCADSheetViewportProxy2D._UpdateExtension;
+begin
+  inherited;
+  { The viewport is the truth and this is a handle on it.
+    _UpdateExtension is where the library settles an object's shape -
+    after a transform, after a control point moved, after an edit was
+    accepted - so it is the one place that catches every way the
+    rectangle can change without knowing which of them happened.
+
+    Box is in the sheet's millimetres, which is what RectMM is in, so
+    the two are the same numbers and no conversion belongs here. }
+  if fViewport <> nil then
+    fViewport.RectMM := ReorderRect2D(Box);
+end;
+
+procedure TCADSheetViewportProxy2D.Refresh;
+var
+  TmpRect: TRect2D;
+begin
+  if fViewport = nil then
+    Exit;
+  TmpRect := ReorderRect2D(fViewport.RectMM);
+  { The transform goes back to the identity: the rectangle is given in
+    the sheet's millimetres, which is the space this object lives in,
+    and a transform left over from an earlier drag would be applied to
+    it a second time. }
+  ModelTransform := IdentityTransf2D;
+  Points.DisableEvents := True;
+  try
+    Points[0] := TmpRect.FirstEdge;
+    Points[1] := TmpRect.SecondEdge;
+  finally
+    Points.DisableEvents := False;
+  end;
+  UpdateExtension(Self);
+end;
+
+function CADSheetShowViewportProxies(const ASheet: TCADSheet): Integer;
+var
+  Cont: Integer;
+  TmpVP: TCADSheetViewport;
+begin
+  Result := 0;
+  if ASheet = nil then
+    Exit;
+  for Cont := 0 to ASheet.ViewportCount - 1 do
+  begin
+    TmpVP := ASheet.Viewports[Cont];
+    if CADSheetViewportProxy(ASheet, TmpVP) <> nil then
+      Continue;
+    { Through AddObject, so the handle is numbered and owned like
+      anything else on the sheet - it is only its StandsFor that makes
+      it different. }
+    ASheet.AddObject(TCADSheetViewportProxy2D.CreateForViewport(-1, TmpVP));
+    Inc(Result);
+  end;
+end;
+
+function CADSheetHideViewportProxies(const ASheet: TCADSheet): Integer;
+var
+  Cont: Integer;
+begin
+  Result := 0;
+  if ASheet = nil then
+    Exit;
+  for Cont := 0 to ASheet.ViewportCount - 1 do
+    Result := Result +
+      ASheet.RemoveStandInsFor(TObject(ASheet.Viewports[Cont]));
+end;
+
+function CADSheetViewportProxy(const ASheet: TCADSheet;
+  const AViewport: TCADSheetViewport): TCADSheetViewportProxy2D;
+var
+  TmpIter: TGraphicObjIterator;
+  TmpObj: TGraphicObject;
+begin
+  Result := nil;
+  if (ASheet = nil) or (AViewport = nil) then
+    Exit;
+  TmpIter := ASheet.ObjectsIterator;
+  try
+    TmpObj := TmpIter.First;
+    while TmpObj <> nil do
+    begin
+      if TmpObj.StandsFor = TObject(AViewport) then
+      begin
+        Result := TCADSheetViewportProxy2D(TmpObj);
+        Exit;
+      end;
+      TmpObj := TmpIter.Next;
+    end;
+  finally
+    TmpIter.Free;
+  end;
+end;
+
+procedure CADSheetRefreshViewportProxies(const ASheet: TCADSheet);
+var
+  TmpIter: TGraphicObjIterator;
+  TmpObj: TGraphicObject;
+begin
+  if ASheet = nil then
+    Exit;
+  TmpIter := ASheet.ObjectsIterator;
+  try
+    TmpObj := TmpIter.First;
+    while TmpObj <> nil do
+    begin
+      if TmpObj is TCADSheetViewportProxy2D then
+        TCADSheetViewportProxy2D(TmpObj).Refresh;
+      TmpObj := TmpIter.Next;
+    end;
+  finally
+    TmpIter.Free;
   end;
 end;
 

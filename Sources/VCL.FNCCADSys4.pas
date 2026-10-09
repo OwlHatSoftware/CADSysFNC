@@ -1798,6 +1798,27 @@ type
       the library.
     }
     procedure SaveToJSON(const AJSON: TJSONObject); virtual;
+    { : What this object stands in for, or nil - which is the answer for
+      everything the document is made of, and so for every class the
+      library defines but one.
+
+      An editing session sometimes needs something that is not a
+      TObject2D to be selectable: a sheet viewport, for one, is a
+      rectangle of paper showing part of the model, and not a shape.
+      Rather than teach picking, selection, the rubber band, moving and
+      edit points about a second kind of thing, a stand-in object goes
+      into the list and says here what it represents.
+
+      The library treats a stand-in as belonging to the session rather
+      than to the drawing: it is not written to a file, not drawn by
+      CADDrawSheet - so it reaches no printer and no PDF - and changes
+      to it are not reported as changes to the document. Whatever owns
+      the represented thing can find the stand-in again by comparing
+      this.
+
+      See VCL.FNCCS4Shapes' TCADSheetViewportProxy2D, which is the one
+      of these the library ships. }
+    function StandsFor: TObject; virtual;
     { : This method is used to make deep copy of the object by obtaining state
       informations from another.
 
@@ -5440,6 +5461,49 @@ type
       plain stretch with no aspect of its own. }
     function ModelWindow(const ACAD: TFNCCADCmp2D): TRect2D;
 
+    { : The model point in the middle of the viewport. }
+    function ModelCentre(const ACAD: TFNCCADCmp2D): TPoint2D;
+    { : Puts AModelCentre in the middle of the viewport, at the scale it
+      already has.
+
+      Panning, in other words - and the only one of these that means
+      anything when UnitsPerMM is 0, because a fitted viewport's window
+      is its contents and moving it is the application's business, not
+      a scale change. }
+    procedure SetModelCentre(const ACAD: TFNCCADCmp2D;
+      const AModelCentre: TPoint2D);
+    { : Moves the window by a distance in model units: the drawing
+      appears to move the other way, as dragging a sheet of paper under
+      a window does. }
+    procedure PanModelBy(const ACAD: TFNCCADCmp2D;
+      const ADXModel, ADYModel: TRealType);
+    { : Changes the scale about the viewport's own centre, so that what
+      was in the middle stays there.
+
+      AFactor above one zooms in - fewer drawing units to a millimetre
+      of paper, a larger plan on the page. A viewport that was fitting
+      its view is pinned at the scale it was fitted to first, so the
+      first zoom moves by the factor asked for and not to some other
+      scale entirely. Nothing happens for a factor of zero or less. }
+    procedure ZoomBy(const ACAD: TFNCCADCmp2D; const AFactor: TRealType);
+    { : A point in the sheet's millimetres as a point in the model, seen
+      through this viewport.
+
+      The two rectangles and nothing else: the window this viewport
+      shows maps onto its rectangle of paper, both with Y upwards, so
+      this is a straight proportion and not the device transform with
+      its pixel-centre convention. A viewport with no area returns the
+      point it was given, the same answer
+      <See Function=CADSheetViewportTransform> gives by handing back the
+      identity - an honest failure rather than a plausible wrong
+      number. }
+    function PointMMToModel(const ACAD: TFNCCADCmp2D;
+      const APointMM: TPoint2D): TPoint2D;
+    { : The reverse: where a model point lands on the paper, in the
+      sheet's millimetres. }
+    function ModelToPointMM(const ACAD: TFNCCADCmp2D;
+      const APointModel: TPoint2D): TPoint2D;
+
     { : The viewport as a JSON object. The caller owns it. }
     function SaveToJSON: TJSONObject;
     procedure LoadFromJSON(const AJSON: TJSONObject);
@@ -5572,6 +5636,25 @@ type
     function AddViewport: TCADSheetViewport;
     procedure DeleteViewport(const AIndex: Integer);
     procedure ClearViewports;
+    { : Takes off the sheet every object that stands in for AThing, and
+      frees it. Returns how many went.
+
+      Called when a viewport goes, so that its handle does not outlive
+      it holding a dangling reference. Public because whatever puts a
+      stand-in on a sheet is outside this unit - see
+      <See Method=TGraphicObject@StandsFor>. }
+    function RemoveStandInsFor(const AThing: TObject): Integer;
+    { : The index of the viewport whose rectangle contains APointMM, or
+      -1.
+
+      In the sheet's own millimetres, so this is the question asked of
+      the model rather than of a device - <See Function=CADSheetViewportIndexAt>
+      is the same question in pixels. Searched from the end, because
+      the last viewport drawn is the one on top, and where two overlap
+      a click belongs to the one the user can see. }
+    function ViewportIndexAt(const APointMM: TPoint2D): Integer;
+    { : The viewport under APointMM, or nil. }
+    function ViewportAt(const APointMM: TPoint2D): TCADSheetViewport;
 
     { : The sheet as a JSON object - paper, viewports and annotation.
       The caller owns it. }
@@ -14789,6 +14872,12 @@ begin
   JSetBoolDef(AJSON, 'toBeSaved', fToBeSaved, True);
 end;
 
+function TGraphicObject.StandsFor: TObject;
+begin
+  { Part of the document, like everything else the library defines. }
+  Result := nil;
+end;
+
 procedure TGraphicObject.Assign(const Obj: TGraphicObject);
 begin
   if (Obj = Self) then
@@ -15994,6 +16083,98 @@ begin
     TmpCY + TmpH / 2);
 end;
 
+function TCADSheetViewport.ModelCentre(const ACAD: TFNCCADCmp2D): TPoint2D;
+var
+  TmpWin: TRect2D;
+begin
+  { Of the window actually shown, which ModelWindow grew about the
+    view's centre - so this is that centre, and the two agree by
+    construction rather than by both being computed the same way. }
+  TmpWin := ModelWindow(ACAD);
+  Result := Point2D((TmpWin.Left + TmpWin.Right) / 2,
+    (TmpWin.Bottom + TmpWin.Top) / 2);
+end;
+
+procedure TCADSheetViewport.SetModelCentre(const ACAD: TFNCCADCmp2D;
+  const AModelCentre: TPoint2D);
+var
+  TmpWin: TRect2D;
+  TmpHalfW, TmpHalfH: TRealType;
+begin
+  TmpWin := ReorderRect2D(EffectiveWindow(ACAD));
+  TmpHalfW := (TmpWin.Right - TmpWin.Left) / 2;
+  TmpHalfH := (TmpWin.Top - TmpWin.Bottom) / 2;
+  fView.Window := Rect2D(AModelCentre.X - TmpHalfW,
+    AModelCentre.Y - TmpHalfH, AModelCentre.X + TmpHalfW,
+    AModelCentre.Y + TmpHalfH);
+end;
+
+procedure TCADSheetViewport.PanModelBy(const ACAD: TFNCCADCmp2D;
+  const ADXModel, ADYModel: TRealType);
+var
+  TmpCentre: TPoint2D;
+begin
+  TmpCentre := ModelCentre(ACAD);
+  SetModelCentre(ACAD, Point2D(TmpCentre.X + ADXModel,
+    TmpCentre.Y + ADYModel));
+end;
+
+procedure TCADSheetViewport.ZoomBy(const ACAD: TFNCCADCmp2D;
+  const AFactor: TRealType);
+var
+  TmpCentre: TPoint2D;
+  TmpUnits: TRealType;
+begin
+  if AFactor <= 0 then
+    Exit;
+  TmpCentre := ModelCentre(ACAD);
+  { Resolved first: zooming a fitted viewport has to start from the
+    scale it was fitted to, or the first click jumps. }
+  TmpUnits := EffectiveUnitsPerMM(ACAD);
+  if TmpUnits <= 0 then
+    Exit;
+  fUnitsPerMM := TmpUnits / AFactor;
+  { And the centre put back, because the window that was fitting the
+    view no longer decides what is shown. }
+  SetModelCentre(ACAD, TmpCentre);
+end;
+
+function TCADSheetViewport.PointMMToModel(const ACAD: TFNCCADCmp2D;
+  const APointMM: TPoint2D): TPoint2D;
+var
+  TmpWin, TmpRect: TRect2D;
+  TmpW, TmpH: TRealType;
+begin
+  Result := APointMM;
+  TmpRect := ReorderRect2D(fRectMM);
+  TmpW := TmpRect.Right - TmpRect.Left;
+  TmpH := TmpRect.Top - TmpRect.Bottom;
+  if (TmpW <= 0) or (TmpH <= 0) then
+    Exit;
+  TmpWin := ModelWindow(ACAD);
+  Result := Point2D(TmpWin.Left + (APointMM.X - TmpRect.Left) / TmpW *
+    (TmpWin.Right - TmpWin.Left), TmpWin.Bottom +
+    (APointMM.Y - TmpRect.Bottom) / TmpH * (TmpWin.Top - TmpWin.Bottom));
+end;
+
+function TCADSheetViewport.ModelToPointMM(const ACAD: TFNCCADCmp2D;
+  const APointModel: TPoint2D): TPoint2D;
+var
+  TmpWin, TmpRect: TRect2D;
+  TmpW, TmpH: TRealType;
+begin
+  Result := APointModel;
+  TmpWin := ModelWindow(ACAD);
+  TmpW := TmpWin.Right - TmpWin.Left;
+  TmpH := TmpWin.Top - TmpWin.Bottom;
+  if (TmpW = 0) or (TmpH = 0) then
+    Exit;
+  TmpRect := ReorderRect2D(fRectMM);
+  Result := Point2D(TmpRect.Left + (APointModel.X - TmpWin.Left) / TmpW *
+    (TmpRect.Right - TmpRect.Left), TmpRect.Bottom +
+    (APointModel.Y - TmpWin.Bottom) / TmpH * (TmpRect.Top - TmpRect.Bottom));
+end;
+
 function TCADSheetViewport.SaveToJSON: TJSONObject;
 begin
   Result := TJSONObject.Create;
@@ -16138,8 +16319,13 @@ begin
     application that marks a file modified has to hear about a title
     block as well as about the model. Fired here rather than from the
     viewport so that a sheet edited in code says so too - which is also
-    what makes it testable without a window. }
-  if fOwnerCAD <> nil then
+    what makes it testable without a window.
+
+    Not for a stand-in: putting the viewport handles on the sheet is
+    not a change to the document, and an application that marks a file
+    modified when it hears this would mark it on a mouse click that
+    changed nothing. }
+  if (fOwnerCAD <> nil) and (AObj.StandsFor = nil) then
     fOwnerCAD.SheetObjectChanged(Self, AObj, scoAdded);
 end;
 
@@ -16177,8 +16363,9 @@ begin
     Raise ECADListObjNotFound.Create
       ('TCADSheet.DeleteObject: No object found');
   { Before it goes, so that a handler still has something to look at -
-    a moment later the object has been freed. }
-  if fOwnerCAD <> nil then
+    a moment later the object has been freed. Not for a stand-in, which
+    was never part of the document. }
+  if (fOwnerCAD <> nil) and (TmpObj.StandsFor = nil) then
     fOwnerCAD.SheetObjectChanged(Self, TmpObj, scoRemoved);
   fObjects.Delete(AID);
 end;
@@ -16191,7 +16378,7 @@ begin
   if TmpObj = nil then
     Raise ECADListObjNotFound.Create
       ('TCADSheet.RemoveObject: No object found');
-  if fOwnerCAD <> nil then
+  if (fOwnerCAD <> nil) and (TmpObj.StandsFor = nil) then
     fOwnerCAD.SheetObjectChanged(Self, TmpObj, scoRemoved);
   TmpObj.fOwnerCAD := nil;
   fObjects.Remove(AID);
@@ -16232,8 +16419,63 @@ procedure TCADSheet.DeleteViewport(const AIndex: Integer);
 begin
   if (AIndex < 0) or (AIndex >= fViewports.Count) then
     Exit;
+  { The handle first, while the viewport it points at is still there. }
+  RemoveStandInsFor(TObject(fViewports[AIndex]));
   TCADSheetViewport(fViewports[AIndex]).Free;
   fViewports.Delete(AIndex);
+end;
+
+function TCADSheet.RemoveStandInsFor(const AThing: TObject): Integer;
+var
+  TmpIter: TExclusiveGraphicObjIterator;
+  TmpObj: TGraphicObject;
+begin
+  Result := 0;
+  if AThing = nil then
+    Exit;
+  TmpIter := fObjects.GetExclusiveIterator;
+  try
+    TmpObj := TmpIter.First;
+    while TmpObj <> nil do
+    begin
+      if TmpObj.StandsFor = AThing then
+      begin
+        { DeleteCurrent frees it; the list owns what is on the sheet. }
+        TmpIter.DeleteCurrent;
+        Inc(Result);
+        TmpObj := TmpIter.Current;
+      end
+      else
+        TmpObj := TmpIter.Next;
+    end;
+  finally
+    TmpIter.Free;
+  end;
+end;
+
+function TCADSheet.ViewportIndexAt(const APointMM: TPoint2D): Integer;
+var
+  Cont: Integer;
+begin
+  Result := -1;
+  for Cont := fViewports.Count - 1 downto 0 do
+    if IsPointInBox2D(APointMM,
+      ReorderRect2D(TCADSheetViewport(fViewports[Cont]).RectMM)) then
+    begin
+      Result := Cont;
+      Exit;
+    end;
+end;
+
+function TCADSheet.ViewportAt(const APointMM: TPoint2D): TCADSheetViewport;
+var
+  TmpIndex: Integer;
+begin
+  TmpIndex := ViewportIndexAt(APointMM);
+  if TmpIndex < 0 then
+    Result := nil
+  else
+    Result := TCADSheetViewport(fViewports[TmpIndex]);
 end;
 
 procedure TCADSheet.ClearViewports;
@@ -16241,7 +16483,10 @@ var
   Cont: Integer;
 begin
   for Cont := 0 to fViewports.Count - 1 do
+  begin
+    RemoveStandInsFor(TObject(fViewports[Cont]));
     TCADSheetViewport(fViewports[Cont]).Free;
+  end;
   fViewports.Clear;
 end;
 
@@ -16298,7 +16543,12 @@ begin
       TmpObj := TmpIter.First;
       while TmpObj <> nil do
       begin
-        JAddItem(TmpObjects, CADSysObjectToJSON(TmpObj));
+        { Everything except a stand-in, which belongs to the editing
+          session and not to the drawing: the viewport it represents is
+          already saved, and saving its handle as well would load a
+          second time as an ordinary rectangle nobody asked for. }
+        if TmpObj.StandsFor = nil then
+          JAddItem(TmpObjects, CADSysObjectToJSON(TmpObj));
         TmpObj := TmpIter.Next;
       end;
     finally
@@ -16827,7 +17077,13 @@ begin
       TmpObj := TObject2D(TmpIter.First);
       while TmpObj <> nil do
       begin
-        if TmpObj.IsVisible(ASheet.PaperRect2D, ADrawMode) then
+        { A stand-in is a handle for editing, not part of the sheet, so
+          this is where it stops: everything that puts a sheet on paper
+          - the printer, the PDF writer, the preview - comes through
+          here, and only the editing viewport, which draws the sheet's
+          objects through its own display list, shows them. }
+        if (TmpObj.StandsFor = nil) and
+          TmpObj.IsVisible(ASheet.PaperRect2D, ADrawMode) then
         begin
           ACAD.Layers.SetCanvas(ACanvas, TmpObj.Layer);
           TmpObj.Draw(TmpTransf, ACanvas, TmpClip, ADrawMode);
