@@ -814,6 +814,44 @@ type
     <See Class=TCAD2DSelectObjects> to pick objects
     interactively on the screen.
   }
+  { : The parameter of <See Class=TCAD2DEditPrimitive>.
+
+    It holds the primitive being edited and a copy of it: the copy is
+    what the user drags, and AcceptEdited is what puts the copy's
+    geometry onto the original. That is why a control point released in
+    the middle of a drag changes nothing until the task is accepted.
+
+    In the interface beside the other task parameters as of 2026-10-09.
+    It was the only one declared in the implementation, which read as an
+    oversight rather than a decision: an application driving the edit
+    task, or a test exercising it, cannot name a type it cannot see. }
+  TCAD2DEditPrimitiveParam = class(TCAD2DCommonParam)
+  private
+    fCurrentPrimitive, fOriginalPrimitive: TPrimitive2D;
+    fCurrentCtrlPt: Integer;
+    fApertureSize: Word;
+    fLastPt: TPoint2D;
+  public
+    { : Prim is the primitive to edit. It is referenced, not owned - the
+      drawing owns it - and the copy this makes of it is owned and
+      freed here. }
+    constructor Create(Prim: TPrimitive2D; ApertureSize: Word);
+    destructor Destroy; override;
+
+    procedure SetCtrlPoint(Viewport: TFNCCADViewport2D; Pt: TPoint2D);
+    procedure AddCtrlPoint(Viewport: TFNCCADViewport2D; Pt: TPoint2D);
+    procedure UnSetCtrlPoint;
+    { : Puts the edited copy's geometry onto the original. }
+    procedure AcceptEdited;
+    procedure MoveCtrlPoint(Viewport: TFNCCADViewport2D; Pt: TPoint2D);
+    procedure DrawOSD(Viewport: TFNCCADViewport2D; Pt: TPoint2D;
+      FirstTime: Boolean);
+    procedure DrawModifiedPrim(Viewport: TFNCCADViewport2D);
+
+    { : Which control point is being dragged, or -1. }
+    property CurrentCtrlPt: Integer read fCurrentCtrlPt;
+  end;
+
   TCAD2DSelectObjectsParam = class(TCAD2DCommonParam)
   private
     fApertureSize: Word;
@@ -1509,29 +1547,6 @@ type
       Shift: TShiftState; Key: Word; var NextState: TCADStateClass)
       : Boolean; override;
     procedure OnStop; override;
-  end;
-
-  // -----===== Starting Cs4CADPrgTasks2D.pas =====-----
-  TCAD2DEditPrimitiveParam = class(TCAD2DCommonParam)
-  private
-    fCurrentPrimitive, fOriginalPrimitive: TPrimitive2D;
-    fCurrentCtrlPt: Integer;
-    fApertureSize: Word;
-    fLastPt: TPoint2D;
-  public
-    constructor Create(Prim: TPrimitive2D; ApertureSize: Word);
-    destructor Destroy; override;
-
-    procedure SetCtrlPoint(Viewport: TFNCCADViewport2D; Pt: TPoint2D);
-    procedure AddCtrlPoint(Viewport: TFNCCADViewport2D; Pt: TPoint2D);
-    procedure UnSetCtrlPoint;
-    procedure AcceptEdited;
-    procedure MoveCtrlPoint(Viewport: TFNCCADViewport2D; Pt: TPoint2D);
-    procedure DrawOSD(Viewport: TFNCCADViewport2D; Pt: TPoint2D;
-      FirstTime: Boolean);
-    procedure DrawModifiedPrim(Viewport: TFNCCADViewport2D);
-
-    property CurrentCtrlPt: Integer read fCurrentCtrlPt;
   end;
 
   // -----===== Starting Cs4CADPrgTasks.pas =====-----
@@ -3242,11 +3257,24 @@ begin
   inherited Create(nil);
 
   fOriginalPrimitive := Prim;
-  fCurrentPrimitive := CADSysFindClassByName(fOriginalPrimitive.ClassName)
+  { The object's own class, not a lookup of its name in the persistence
+    registry. The registry was a roundabout way of arriving at the class
+    reference this object already carries, and it answered only for
+    classes that can be saved - so editing a shape an application had
+    not registered raised ECADObjClassNotFound out of a state
+    constructor, where the engine swallows it and resets. The viewport
+    handle is exactly such a shape, deliberately: it must never reach a
+    file.
+
+    Through TGraphicObjectClass, because that is the class reference
+    whose Create takes an identifier and nothing else - exactly the
+    constructor the registry path called. As there, only the base
+    constructor runs and Assign below fills the rest in. }
+  fCurrentPrimitive := TGraphicObjectClass(fOriginalPrimitive.ClassType)
     .Create(0) as TPrimitive2D;
   if not Assigned(fCurrentPrimitive) then
     Raise ECADSysException.Create
-      ('TCAD2DEditPrimitive: Only registered classes are allowed');
+      ('TCAD2DEditPrimitive: the primitive could not be copied');
   fCurrentPrimitive.Assign(fOriginalPrimitive);
   fApertureSize := ApertureSize;
   fCurrentCtrlPt := -1;

@@ -165,6 +165,8 @@ type
     procedure ASelectAreaParameterFreesTheOneItKeepsForItsCaller;
     [Test]
     procedure ACallerThatTakesItsParameterBackKeepsIt;
+    [Test]
+    procedure AnUnregisteredPrimitiveCanStillBeEdited;
   end;
 
   TDeferredFindingNotes = class(TObject)
@@ -514,6 +516,12 @@ type
     destructor Destroy; override;
   end;
 
+  { : A primitive of the kind an application writes and does not
+    register, because it is never saved. The sheet viewport handle is
+    one of these. }
+  TUnregisteredPrimitive = class(TFrame2D)
+  end;
+
 var
   ParamSpiesDestroyed: Integer = 0;
   UserObjectSpiesDestroyed: Integer = 0;
@@ -592,6 +600,42 @@ begin
   Assert.AreEqual(0, ParamSpiesDestroyed, 'not freed under the caller');
   TmpCaller.Free;
   Assert.AreEqual(1, ParamSpiesDestroyed, 'and freed when the caller is done');
+end;
+
+procedure TParamOwnershipRegressionTests.AnUnregisteredPrimitiveCanStillBeEdited;
+var
+  TmpPrim: TUnregisteredPrimitive;
+  TmpParam: TCAD2DEditPrimitiveParam;
+begin
+  { The edit task copies the primitive it is editing, and used to find
+    the class to copy by looking its name up in the persistence
+    registry. That answered only for classes that can be saved, so
+    editing a shape an application had not registered raised
+    ECADObjClassNotFound out of a state constructor - where the engine
+    resets silently, so the command appeared to do nothing at all. The
+    sheet viewport handle is exactly such a shape, deliberately: it
+    must never reach a file. }
+  TmpPrim := TUnregisteredPrimitive.Create(0, Point2D(0, 0),
+    Point2D(10, 10));
+  try
+    { The premise, stated rather than assumed. }
+    Assert.WillRaise(
+      procedure
+      var
+        TmpIdx: Word;
+      begin
+        TmpIdx := CADSysFindClassIndex('TUnregisteredPrimitive');
+        Assert.AreEqual(0, Integer(TmpIdx), 'unreachable');
+      end, ECADObjClassNotFound, 'this class is not in the registry');
+    TmpParam := TCAD2DEditPrimitiveParam.Create(TmpPrim, 5);
+    try
+      Assert.IsTrue(TmpParam.CurrentCtrlPt < 0, 'nothing grabbed yet');
+    finally
+      TmpParam.Free;
+    end;
+  finally
+    TmpPrim.Free;
+  end;
 end;
 
 { TDeferredFindingNotes }
