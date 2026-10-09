@@ -228,7 +228,10 @@ pen, because a handle is exactly the viewport's rectangle and otherwise lands
 invisibly on top of the border the viewport already draws.
 
 The handle is a `TFrame2D`, so it has two control points - the bottom-left and
-the top-right corner - and those are the two a resize drags. The other two
+the top-right corner - and those are the two a resize drags. Resizing is
+`TCAD2DEditPrimitive`'s ordinary flow: select the handle, press and hold a
+control point, drag, release, then accept the task. The task edits a copy, so
+nothing reaches `RectMM` until it is accepted. The other two
 corners are drawn but are not control points, here as on every frame and
 rectangle in the library.
 
