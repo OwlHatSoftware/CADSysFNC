@@ -194,6 +194,48 @@ type
     procedure ThePiecesGetIdentifiersFromTheSpaceTheyLandIn;
   end;
 
+  { : A stand-in for an application's own registered classes. The
+    legend box VisualPlanner puts on a sheet is exactly this shape: a
+    TFrame2D descendant with a field of its own, registered by the
+    application rather than by the library.
+
+    The two JSON hooks are the whole contract a custom class has to
+    meet - the base writes the type name, the identifier and the
+    geometry, and the descendant adds its own. }
+  TTestLegendBox = class(TFrame2D)
+  private
+    fCaption: String;
+  public
+    constructor CreateFromJSON(const AJSON: TJSONObject); override;
+    procedure SaveToJSON(const AJSON: TJSONObject); override;
+    property Caption: String read fCaption write fCaption;
+  end;
+
+  { : Sheet persistence through the class registry: an application's own
+    classes have to survive a sheet round trip exactly as the library's
+    own do, because a title block is made of them. }
+  [TestFixture]
+  TCADSheetCustomClassTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FSheet: TCADSheet;
+    function NewBox(const ACaption: String): TTestLegendBox;
+    { The drawing reloaded through its own JSON text. Caller frees. }
+    function Reload: TFNCCADCmp2D;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    [Test]
+    procedure ACustomClassOnASheetRoundTrips;
+    [Test]
+    procedure TheSheetGoesThroughTheSameRegistryAsTheModel;
+    [Test]
+    procedure AnUnknownClassIsSkippedWithAWarning;
+  end;
+
   [TestFixture]
   TCADSheetDrawingTests = class(TObject)
   private
@@ -1083,6 +1125,146 @@ begin
 end;
 
 { ==================================================================
+  TTestLegendBox and TCADSheetCustomClassTests
+  ================================================================== }
+
+const
+  { : Where an application's classes start, per the library's own
+    advice. Registered in Setup and taken out again in TearDown, so
+    that the rest of the suite runs with the registry it expects. }
+  CADTestLegendBoxIndex = 150;
+
+var
+  { : The last warning the library reported. CADSysOnWarning is a plain
+    procedure variable, not an event, so this cannot be a field on the
+    fixture. }
+  TestLastWarning: String;
+
+procedure CaptureWarning(const AMessage: String);
+begin
+  TestLastWarning := AMessage;
+end;
+
+constructor TTestLegendBox.CreateFromJSON(const AJSON: TJSONObject);
+begin
+  inherited;
+  fCaption := JGetStr(AJSON, 'caption');
+end;
+
+procedure TTestLegendBox.SaveToJSON(const AJSON: TJSONObject);
+begin
+  inherited SaveToJSON(AJSON);
+  JSetStr(AJSON, 'caption', fCaption);
+end;
+
+procedure TCADSheetCustomClassTests.Setup;
+begin
+  CADSysRegisterClass(CADTestLegendBoxIndex, TTestLegendBox);
+  FCAD := TFNCCADCmp2D.Create(nil);
+  FSheet := FCAD.Sheets.Add('Plan');
+end;
+
+procedure TCADSheetCustomClassTests.TearDown;
+begin
+  FCAD.Free;
+  CADSysUnregisterClass(CADTestLegendBoxIndex);
+  CADSysOnWarning := nil;
+  TestLastWarning := '';
+end;
+
+function TCADSheetCustomClassTests.NewBox(const ACaption: String)
+  : TTestLegendBox;
+begin
+  Result := TTestLegendBox.Create(-1, Point2D(10, 10), Point2D(90, 40));
+  Result.Caption := ACaption;
+end;
+
+function TCADSheetCustomClassTests.Reload: TFNCCADCmp2D;
+begin
+  { Through the text, as the other persistence tests do. }
+  Result := TFNCCADCmp2D.Create(nil);
+  try
+    Result.LoadFromJSONString(FCAD.SaveToJSONString);
+  except
+    Result.Free;
+    Raise;
+  end;
+end;
+
+procedure TCADSheetCustomClassTests.ACustomClassOnASheetRoundTrips;
+var
+  TmpBack: TFNCCADCmp2D;
+  TmpObj: TObject2D;
+begin
+  FSheet.AddObject(NewBox('Drawn by'), 4);
+  TmpBack := Reload;
+  try
+    Assert.AreEqual(1, TmpBack.Sheets[0].ObjectsCount, 'one object');
+    TmpObj := TmpBack.Sheets[0].GetObject(4);
+    Assert.IsNotNull(TmpObj, 'and it kept its identifier');
+    { The class, not just something frame-shaped: the registry is what
+      turns the saved type name back into the application's own class,
+      and a sheet has to go through it like the model. }
+    Assert.IsTrue(TmpObj.ClassType = TTestLegendBox,
+      'reloaded as itself, not as a ' + TmpObj.ClassName);
+    Assert.AreEqual('Drawn by', TTestLegendBox(TmpObj).Caption,
+      'with its own field');
+    Assert.AreEqual(10.0, TmpObj.Box.Left, 1E-9, 'and its geometry');
+    Assert.AreEqual(90.0, TmpObj.Box.Right, 1E-9, 'both corners');
+  finally
+    TmpBack.Free;
+  end;
+end;
+
+procedure TCADSheetCustomClassTests.TheSheetGoesThroughTheSameRegistryAsTheModel;
+var
+  TmpBack: TFNCCADCmp2D;
+begin
+  { One registry, two spaces. If the sheet had its own loading path
+    this is where it would show. }
+  FCAD.AddObject(-1, NewBox('In the model'));
+  FSheet.AddObject(NewBox('On the paper'));
+  TmpBack := Reload;
+  try
+    Assert.AreEqual(1, TmpBack.ObjectsCount, 'the model''s one');
+    Assert.AreEqual(1, TmpBack.Sheets[0].ObjectsCount, 'the sheet''s one');
+    Assert.AreEqual('On the paper',
+      TTestLegendBox(TmpBack.Sheets[0].GetObject(0)).Caption,
+      'and each kept its own caption');
+  finally
+    TmpBack.Free;
+  end;
+end;
+
+procedure TCADSheetCustomClassTests.AnUnknownClassIsSkippedWithAWarning;
+var
+  TmpText: String;
+  TmpBack: TFNCCADCmp2D;
+begin
+  FSheet.AddObject(NewBox('Drawn by'));
+  TmpText := FCAD.SaveToJSONString;
+  { Opened somewhere the application's classes are not registered -
+    another program, or this one with a plug-in missing. The drawing
+    has to open anyway, without the object and with something said
+    about it. }
+  CADSysUnregisterClass(CADTestLegendBoxIndex);
+  CADSysOnWarning := CaptureWarning;
+  TestLastWarning := '';
+  TmpBack := TFNCCADCmp2D.Create(nil);
+  try
+    TmpBack.LoadFromJSONString(TmpText);
+    Assert.AreEqual(1, TmpBack.Sheets.Count, 'the sheet is still there');
+    Assert.AreEqual(0, TmpBack.Sheets[0].ObjectsCount,
+      'without the object it could not make');
+    Assert.IsTrue(TestLastWarning <> '', 'and it said so');
+  finally
+    TmpBack.Free;
+    { Put it back: TearDown takes it out again. }
+    CADSysRegisterClass(CADTestLegendBoxIndex, TTestLegendBox);
+  end;
+end;
+
+{ ==================================================================
   TCADSpaceTests
   ================================================================== }
 
@@ -1408,6 +1590,7 @@ TDUnitX.RegisterTestFixture(TCADSheetPersistenceTests);
 TDUnitX.RegisterTestFixture(TCADSheetEditingTests);
 TDUnitX.RegisterTestFixture(TCADSpaceTests);
 TDUnitX.RegisterTestFixture(TCADExplodeTests);
+TDUnitX.RegisterTestFixture(TCADSheetCustomClassTests);
 TDUnitX.RegisterTestFixture(TCADSheetDrawingTests);
 
 end.
