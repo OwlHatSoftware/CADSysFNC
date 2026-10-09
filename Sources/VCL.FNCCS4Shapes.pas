@@ -4722,8 +4722,15 @@ begin
   if TmpVects = nil then
     fSubVects := TIndexedObjectList.Create(0)
   else
-  begin
     fSubVects := TIndexedObjectList.Create(TmpVects.Count);
+  { The glyph owns its vectors, exactly as TVectChar.Create says it
+    does. Without this the list lets go of them on the way out and
+    every character loaded from a file leaks its points - a defect
+    inherited from the original library, where CreateFromStream had
+    the same omission. }
+  fSubVects.FreeOnClear := True;
+  if TmpVects <> nil then
+  begin
     for Cont := 0 to TmpVects.Count - 1 do
     begin
       TmpPts := JItemArray(TmpVects, Cont);
@@ -4792,6 +4799,8 @@ var
 begin
   inherited Create;
   fVects := TIndexedObjectList.Create(256);
+  { As in TVectFont.Create: the font owns its characters. }
+  fVects.FreeOnClear := True;
   TmpChars := JGetArray(AJSON, 'chars');
   if TmpChars = nil then
     Exit;
