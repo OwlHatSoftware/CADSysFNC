@@ -328,6 +328,16 @@ begin
   Param := nil;
 end;
 
+{ The library's warning hook. A plain procedure, not a method -
+  TCADWarningEvent is not of object - so it logs through the unit-level
+  Log rather than through the form. This is where a task that refused to
+  start says so: the engine resets a failed state constructor silently,
+  and without this the command simply appears to do nothing. }
+procedure DemoLibraryWarning(const AMessage: String);
+begin
+  Log('library: ' + AMessage);
+end;
+
 { ===================== construction ===================== }
 
 procedure TMainForm.LayoutToolbar;
@@ -638,6 +648,7 @@ begin
   end;
 
   Log('configuring view and program');
+  CADSysOnWarning := DemoLibraryWarning;
   fCAD.DefaultLayersColor := cadtcBlack;
   fView.UsePaintingThread := False;
   fView.ShowGrid := fShowGridItem.IsChecked;

@@ -166,6 +166,9 @@ type
     procedure PickReportClick(Sender: TObject);
     procedure ViewMouseDown2D(Sender: TObject; Button: TMouseButton;
       Shift: TShiftState; WX, WY: TRealType; X, Y: Integer);
+    procedure ViewMouseUp2D(Sender: TObject; Button: TMouseButton;
+      Shift: TShiftState; WX, WY: TRealType; X, Y: Integer);
+    procedure LogPick(const AWhat: String; const WX, WY: TRealType);
     procedure AddBlockClick(Sender: TObject);
 
     { ---- program control ---- }
@@ -329,6 +332,16 @@ begin
   NextState := CADPrg.DefaultState;
   Param.Free;
   Param := nil;
+end;
+
+{ The library's warning hook. A plain procedure, not a method -
+  TCADWarningEvent is not of object - so it logs through the unit-level
+  Log rather than through the form. This is where a task that refused to
+  start says so: the engine resets a failed state constructor silently,
+  and without this the command simply appears to do nothing. }
+procedure DemoLibraryWarning(const AMessage: String);
+begin
+  Log('library: ' + AMessage);
 end;
 
 { ===================== construction ===================== }
@@ -658,6 +671,7 @@ begin
     which task is running. The three questions asked of a click that
     seems to do nothing, answered in one line. }
   fView.OnMouseDown2D := ViewMouseDown2D;
+  fView.OnMouseUp2D := ViewMouseUp2D;
   fPrg.OnStartOperation := PrgStartOperation;
   fPrg.OnEndOperation := PrgEndOperation;
   fPrg.OnStopOperation := PrgStopOperation;
@@ -698,6 +712,7 @@ begin
   end;
 
   Log('configuring view and program');
+  CADSysOnWarning := DemoLibraryWarning;
   fCAD.DefaultLayersColor := cadtcBlack;
   fView.UsePaintingThread := False;
   fView.ShowGrid := fShowGridItem.Checked;
@@ -839,6 +854,8 @@ end;
 procedure TMainForm.PrgEndOperation(Sender: TObject;
   const Operation: TCADStateClass; const Param: TCADPrgParam);
 begin
+  if Operation <> nil then
+    Log('task end: ' + Operation.ClassName);
   if Assigned(fCurrentOpBtn) then
   begin
     fCurrentOpBtn.Caption := fCurrentOpText;
@@ -1043,9 +1060,15 @@ begin
 end;
 
 procedure TMainForm.EditClick(Sender: TObject);
+var
+  TmpPar: TCAD2DSelectObjectsParam;
 begin
-  StartDraw(TButton(Sender), TCAD2DSelectObject,
-    TCAD2DSelectObjectsParam.Create(5, TCAD2DEditSelectedPrimitive));
+  TmpPar := TCAD2DSelectObjectsParam.Create(5, TCAD2DEditSelectedPrimitive);
+  { So the log says whether the selection was taken. This command's
+    parameter never had a handler, so a pick the task accepted and one
+    it declined looked exactly alike from outside. }
+  TmpPar.OnObjectSelected := OnSelectedObj;
+  StartDraw(TButton(Sender), TCAD2DSelectObject, TmpPar);
 end;
 
 procedure TMainForm.DefBlockClick(Sender: TObject);
@@ -1077,20 +1100,18 @@ end;
   something that is plainly on the screen cannot be selected - the
   answer is always one of those numbers, and guessing which is slower
   than reading it. }
-procedure TMainForm.ViewMouseDown2D(Sender: TObject;
-  Button: TMouseButton; Shift: TShiftState; WX, WY: TRealType;
-  X, Y: Integer);
+procedure TMainForm.LogPick(const AWhat: String; const WX, WY: TRealType);
 var
   TmpPicked: TObject2D;
   TmpNPoint: Integer;
-  TmpWhat, TmpTask: String;
+  TmpPick, TmpTask: String;
 begin
   TmpNPoint := 0;
   TmpPicked := fView.PickObject(Point2D(WX, WY), 5, False, TmpNPoint);
   if TmpPicked = nil then
-    TmpWhat := 'nothing'
+    TmpPick := 'nothing'
   else
-    TmpWhat := Format('%s id %d point %d',
+    TmpPick := Format('%s id %d point %d',
       [TmpPicked.ClassName, TmpPicked.ID, TmpNPoint]);
   if fPrg.IsBusy and (fPrg.CurrentOperation <> nil) then
     TmpTask := fPrg.CurrentOperation.ClassName
@@ -1098,9 +1119,25 @@ begin
     TmpTask := 'busy, no class'
   else
     TmpTask := 'idle';
-  Log(Format('click %d at %.2f, %.2f %s - picks %s, task %s',
-    [Ord(Button), WX, WY, BoolToStr(fView.Sheet <> nil, True), TmpWhat,
-    TmpTask]));
+  Log(Format('%s at %.2f, %.2f %s - picks %s, task %s',
+    [AWhat, WX, WY, BoolToStr(fView.Sheet <> nil, True), TmpPick, TmpTask]));
+end;
+
+procedure TMainForm.ViewMouseDown2D(Sender: TObject;
+  Button: TMouseButton; Shift: TShiftState; WX, WY: TRealType;
+  X, Y: Integer);
+begin
+  LogPick(Format('down %d', [Ord(Button)]), WX, WY);
+end;
+
+procedure TMainForm.ViewMouseUp2D(Sender: TObject;
+  Button: TMouseButton; Shift: TShiftState; WX, WY: TRealType;
+  X, Y: Integer);
+begin
+  { The select tasks act on the up, not the down, and this is the event
+    nobody has watched yet: whether it arrives at all, and what the
+    library picks at the point the task will use. }
+  LogPick(Format('up %d', [Ord(Button)]), WX, WY);
 end;
 
 procedure TMainForm.PickReportClick(Sender: TObject);

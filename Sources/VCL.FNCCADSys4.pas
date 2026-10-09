@@ -23553,8 +23553,23 @@ begin
         fCurrentState := NextState.Create(Self, LastParam, NextState);
         fCurrentState.CanBeSuspended := TmpBool;
       except
-        Reset;
-        Break;
+        on E: Exception do
+        begin
+          { Said out loud. A state constructor that raises is reset
+            silently, which from outside is a command that does nothing
+            at all: no error, no change, no clue. An edit task refusing
+            a shape its registry did not know hid behind this for an
+            afternoon. }
+          CADSysWarn(Format('%s could not start: %s: %s',
+            [NextState.ClassName, E.ClassName, E.Message]));
+          { And the parameter is freed, because the state was never
+            built: nothing adopted it and nothing else will ever free
+            it. The constructors all check before they touch it, so it
+            is still the object handed in. }
+          LastParam.Free;
+          Reset;
+          Break;
+        end;
       end;
       if Assigned(fOnEntState) then
         fOnEntState(Self, fCurrentState);
@@ -23861,12 +23876,17 @@ begin
       // e' il primo stato a det. la sospendibilità
       fCurrentState.CanBeSuspended := TmpBool;
     except
-      { As in SendEvent: the state was never built, so nothing adopted
-        the parameter and nothing else will free it. }
-      Param.Free;
-      Param := nil;
-      Reset;
-      Break;
+      on E: Exception do
+      begin
+        CADSysWarn(Format('%s could not start: %s: %s',
+          [NewNext.ClassName, E.ClassName, E.Message]));
+        { As in SendEvent: the state was never built, so nothing adopted
+          the parameter and nothing else will free it. }
+        Param.Free;
+        Param := nil;
+        Reset;
+        Break;
+      end;
     end;
     Param := fCurrentState.fParam;
     if Assigned(fOnEntState) then
@@ -23946,12 +23966,17 @@ begin
       // e' il primo stato a det. la sospendibilità
       fCurrentState.CanBeSuspended := TmpBool;
     except
-      { As in SendEvent: the state was never built, so nothing adopted
-        the parameter and nothing else will free it. }
-      Param.Free;
-      Param := nil;
-      Reset;
-      Break;
+      on E: Exception do
+      begin
+        CADSysWarn(Format('%s could not start: %s: %s',
+          [NewNext.ClassName, E.ClassName, E.Message]));
+        { As in SendEvent: the state was never built, so nothing adopted
+          the parameter and nothing else will free it. }
+        Param.Free;
+        Param := nil;
+        Reset;
+        Break;
+      end;
     end;
     Param := fCurrentState.fParam;
     if Assigned(fOnEntState) then
