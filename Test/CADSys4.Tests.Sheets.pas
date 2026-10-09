@@ -89,6 +89,33 @@ type
   end;
 
   [TestFixture]
+  TCADSheetEditingTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FSheet: TCADSheet;
+    { What the drawing reported, in the order it reported it. }
+    FLog: TStringList;
+    procedure SheetObjectChanged(Sender: TObject; const ASheet: TCADSheet;
+      const AObj: TGraphicObject; const AChange: TCADSheetChange);
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    [Test]
+    procedure AddingToASheetTellsTheDrawing;
+    [Test]
+    procedure TheEventNamesTheSheetItHappenedOn;
+    [Test]
+    procedure AddingToTheModelDoesNotFireTheSheetEvent;
+    [Test]
+    procedure ASheetKeepsItsOwnIdCounter;
+    [Test]
+    procedure AnObjectOnASheetStillBelongsToTheDrawing;
+  end;
+
+  [TestFixture]
   TCADSheetDrawingTests = class(TObject)
   private
     FCAD: TFNCCADCmp2D;
@@ -511,6 +538,108 @@ begin
 end;
 
 { ==================================================================
+  TCADSheetEditingTests
+  ================================================================== }
+
+procedure TCADSheetEditingTests.SheetObjectChanged(Sender: TObject;
+  const ASheet: TCADSheet; const AObj: TGraphicObject;
+  const AChange: TCADSheetChange);
+var
+  TmpWhat: String;
+begin
+  case AChange of
+    scoAdded:
+      TmpWhat := 'added';
+    scoRemoved:
+      TmpWhat := 'removed';
+  else
+    TmpWhat := 'changed';
+  end;
+  FLog.Add(Format('%s %s %s', [TmpWhat, ASheet.Name,
+    AObj.ClassName]));
+end;
+
+procedure TCADSheetEditingTests.Setup;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+  FCAD.OnSheetObjectChange := SheetObjectChanged;
+  FSheet := FCAD.Sheets.Add('Plan');
+  FLog := TStringList.Create;
+end;
+
+procedure TCADSheetEditingTests.TearDown;
+begin
+  FCAD.Free;
+  FLog.Free;
+end;
+
+procedure TCADSheetEditingTests.AddingToASheetTellsTheDrawing;
+begin
+  { The notification is fired by TCADSheet.AddObject rather than by the
+    viewport's AddObjectToActiveSpace, for two reasons: a sheet edited
+    in code says so too, and it can be tested at all. Nothing in this
+    suite can instantiate a TFNCCADViewport2D - an FNC control wants a
+    window and a canvas, which a console test runner has no business
+    creating - so a notification raised in the control would have been
+    untestable here and verified by hand or not at all. }
+  FSheet.AddObject(TLine2D.Create(-1, Point2D(0, 0), Point2D(10, 0)));
+  Assert.AreEqual(1, FLog.Count, 'one notification for one object');
+  Assert.AreEqual('added Plan TLine2D', FLog[0],
+    'and it says what happened, where, and to what');
+end;
+
+procedure TCADSheetEditingTests.TheEventNamesTheSheetItHappenedOn;
+var
+  TmpSecond: TCADSheet;
+begin
+  { Which space it happened in is the thing OnAddObject cannot tell an
+    application, and with two sheets it is not enough to know that it
+    was 'a sheet'. }
+  TmpSecond := FCAD.Sheets.Add('Detail');
+  FSheet.AddObject(TLine2D.Create(-1, Point2D(0, 0), Point2D(1, 0)));
+  TmpSecond.AddObject(TLine2D.Create(-1, Point2D(0, 0), Point2D(1, 0)));
+  Assert.AreEqual('added Plan TLine2D', FLog[0], 'the first sheet');
+  Assert.AreEqual('added Detail TLine2D', FLog[1], 'and the second');
+end;
+
+procedure TCADSheetEditingTests.AddingToTheModelDoesNotFireTheSheetEvent;
+begin
+  { Deliberately separate from OnAddObject: a handler written before
+    sheets existed assumes its object is in the display list, and would
+    be wrong about one on a sheet. The two channels do not cross. }
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(10, 0)));
+  Assert.AreEqual(0, FLog.Count,
+    'the model has its own event and does not borrow this one');
+end;
+
+procedure TCADSheetEditingTests.ASheetKeepsItsOwnIdCounter;
+var
+  TmpA, TmpB: TObject2D;
+begin
+  { A sheet numbers its objects from zero, independently of the model -
+    which is why an object cannot simply be moved from one space to the
+    other without being re-added. }
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(1, 0)));
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(1, 0)));
+  TmpA := FSheet.AddObject(TLine2D.Create(-1, Point2D(0, 0), Point2D(1, 0)));
+  TmpB := FSheet.AddObject(TLine2D.Create(-1, Point2D(0, 0), Point2D(1, 0)));
+  Assert.AreEqual(0, TmpA.ID, 'the sheet starts at zero whatever the model did');
+  Assert.AreEqual(1, TmpB.ID, 'and counts on from there');
+end;
+
+procedure TCADSheetEditingTests.AnObjectOnASheetStillBelongsToTheDrawing;
+var
+  TmpObj: TObject2D;
+begin
+  { OwnerCAD stays the drawing: a shape on a sheet is part of the
+    document, and anything that walks back to its owner - a layer
+    lookup, UpdateExtension - has to find the drawing there. }
+  TmpObj := FSheet.AddObject(TLine2D.Create(-1, Point2D(0, 0), Point2D(1, 0)));
+  Assert.AreSame(FCAD, TmpObj.OwnerCAD,
+    'the sheet holds it, the drawing owns it');
+end;
+
+{ ==================================================================
   TCADSheetDrawingTests
   ================================================================== }
 
@@ -820,6 +949,7 @@ initialization
 TDUnitX.RegisterTestFixture(TCADSheetHitTestTests);
 TDUnitX.RegisterTestFixture(TCADSheetModelTests);
 TDUnitX.RegisterTestFixture(TCADSheetPersistenceTests);
+TDUnitX.RegisterTestFixture(TCADSheetEditingTests);
 TDUnitX.RegisterTestFixture(TCADSheetDrawingTests);
 
 end.

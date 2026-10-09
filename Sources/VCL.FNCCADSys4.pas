@@ -777,6 +777,26 @@ type
     value regardless of the procedure that added the object.
   }
   TAddObjectEvent = procedure(Sender: TObject; Obj: TGraphicObject) of object;
+  { : What happened to a sheet's contents.
+
+    scoChanged is for an object already on the sheet that was moved,
+    transformed or edited - the object is the one that changed, and the
+    library does not say how. }
+  TCADSheetChange = (scoAdded, scoRemoved, scoChanged);
+  { : Fired when a sheet's own objects change.
+
+    Paper space is saved with the drawing, so an application that marks
+    a drawing modified has to hear about a title block being edited as
+    well as about the model. This is the hearing: ASheet says which
+    space it happened in, which is the thing OnAddObject cannot tell
+    you. AObj may be nil for a change that is not about one object.
+
+    It is deliberately separate from OnAddObject rather than folded
+    into it: an existing handler written before sheets existed assumes
+    its object is in the display list, and would be wrong about one on
+    a sheet. }
+  TCADSheetObjectEvent = procedure(Sender: TObject; const ASheet: TCADSheet;
+    const AObj: TGraphicObject; const AChange: TCADSheetChange) of object;
   { : This type defines the event that is fired when a drawing created
     with a previous version is being loaded.
 
@@ -2635,6 +2655,7 @@ type
 
     { event handlers. }
     fOnAddObject: TAddObjectEvent;
+    fOnSheetObjectChange: TCADSheetObjectEvent;
     fOnVerError: TBadVersionEvent;
     fOnLoadProgress: TOnLoadProgress;
     fOnSaveProgress: TOnSaveProgress;
@@ -2794,6 +2815,13 @@ type
       The method returns the added object.
     }
     function AddObject(ID: LongInt; const Obj: TGraphicObject): TGraphicObject;
+    { : Fires <See Property=TFNCCADCmp@OnSheetObjectChange>.
+
+      Called by TCADSheet when its contents change, and public so that
+      an application doing its own editing of a sheet can say so with
+      the same event rather than inventing a second channel. }
+    procedure SheetObjectChanged(const ASheet: TCADSheet;
+      const AObj: TGraphicObject; const AChange: TCADSheetChange);
     { : This method insert a new object in a given position.
 
       <I=ID> is the identifier number of the object to insert and Obj is the
@@ -3290,6 +3318,12 @@ type
       See also <See Type=TAddObjectEvent>.
     }
     property OnAddObject: TAddObjectEvent read fOnAddObject write fOnAddObject;
+    { : This property may contain an event handler that is called when
+      the contents of one of this drawing's sheets change.
+
+      See also <See Type=TCADSheetObjectEvent>. }
+    property OnSheetObjectChange: TCADSheetObjectEvent
+      read fOnSheetObjectChange write fOnSheetObjectChange;
     { : This property may contain an event handler that is
       called when a drawing created with an older version
       of the library is loaded.
@@ -5762,6 +5796,26 @@ type
       deletes one sheet - put it down before deleting the sheet being
       looked at. }
     property Sheet: TCADSheet read fSheet write SetSheet;
+
+    { : The object list this viewport is currently editing: the showing
+      sheet's own objects, or the drawing's display list.
+
+      The same rule DoUpdateViewport and PickObject already follow, in
+      one place that an application can ask. What is drawn, what is
+      picked and what an edit changes are then the same list by
+      construction rather than by three agreeing accidents. }
+    function ActiveObjects: TGraphicObjList;
+    { : Adds AObj to whichever space is active, and repaints.
+
+      This is the one door for a new object. Every drawing task in
+      VCL.FNCCS4Tasks goes through it, so "everything you draw" lands
+      on the paper while a sheet is showing and in the model otherwise.
+
+      The ID comes from the active space's own counter - a sheet keeps
+      its own, which is why an object cannot simply be moved between
+      the two without being re-added. OwnerCAD stays the drawing in
+      both cases: a shape on a sheet still belongs to the document. }
+    function AddObjectToActiveSpace(const AObj: TObject2D): TObject2D;
 
     { : This method draws a 2D object on the viewport.
 
@@ -15902,6 +15956,13 @@ begin
   Inc(fNextID);
   AObj.UpdateExtension(fOwnerCAD);
   fObjects.Add(AObj);
+  { The drawing is told, because the drawing is what gets saved: an
+    application that marks a file modified has to hear about a title
+    block as well as about the model. Fired here rather than from the
+    viewport so that a sheet edited in code says so too - which is also
+    what makes it testable without a window. }
+  if fOwnerCAD <> nil then
+    fOwnerCAD.SheetObjectChanged(Self, AObj, scoAdded);
 end;
 
 function TCADSheet.ObjectsIterator: TGraphicObjIterator;
@@ -16808,6 +16869,13 @@ begin
     fListOfBlocks.Delete(ID);
   except
   end;
+end;
+
+procedure TFNCCADCmp.SheetObjectChanged(const ASheet: TCADSheet;
+  const AObj: TGraphicObject; const AChange: TCADSheetChange);
+begin
+  if Assigned(fOnSheetObjectChange) then
+    fOnSheetObjectChange(Self, ASheet, AObj, AChange);
 end;
 
 function TFNCCADCmp.AddObject(ID: LongInt; const Obj: TGraphicObject)
@@ -19989,6 +20057,38 @@ begin
   fOffScreenCanvas.Brush.Style := cbsSolid;
   fOffScreenCanvas.Graphics.Rectangle(TmpRect.Left, TmpRect.Top,
     TmpRect.Right, TmpRect.Bottom);
+end;
+
+function TFNCCADViewport2D.ActiveObjects: TGraphicObjList;
+begin
+  { ViewportObjects first, because that is what DoUpdateViewport and
+    PickObject prefer, and because SetSheet points it at the sheet's
+    list. An application that sets it for its own reasons gets the same
+    answer here as it sees drawn. }
+  if fViewportObjects <> nil then
+    Result := fViewportObjects
+  else if fCADCmp2D <> nil then
+    Result := fCADCmp2D.ObjectList
+  else
+    Result := nil;
+end;
+
+function TFNCCADViewport2D.AddObjectToActiveSpace(const AObj: TObject2D)
+  : TObject2D;
+begin
+  Result := AObj;
+  if AObj = nil then
+    Exit;
+  if fSheet <> nil then
+  begin
+    fSheet.AddObject(AObj);
+    { TFNCCADCmp.AddObject redraws the new object itself when DrawOnAdd
+      is set, through the viewports it knows about. A sheet has no
+      viewports of its own, so the one showing it repaints here. }
+    Repaint;
+  end
+  else if fCADCmp2D <> nil then
+    fCADCmp2D.AddObject(AObj.ID, AObj);
 end;
 
 procedure TFNCCADViewport2D.DrawUnderlay(const ARect: TRect2D);

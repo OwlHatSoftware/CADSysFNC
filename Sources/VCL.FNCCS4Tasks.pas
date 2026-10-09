@@ -2001,7 +2001,12 @@ begin
           TmpBool := Viewport2D.CADCmp2D.DrawOnAdd;
           Viewport2D.CADCmp2D.DrawOnAdd := True;
           try
-            Viewport2D.CADCmp2D.AddObject(fObject.ID, fObject);
+            { One door for every drawing task: while a sheet is showing the
+              new object goes onto the paper, otherwise into the model.
+              DrawOnAdd above belongs to the drawing either way - it is
+              what makes the model redraw a new object - so it is still
+              set and put back around this. }
+            Viewport2D.AddObjectToActiveSpace(fObject);
           finally
             Viewport2D.CADCmp2D.DrawOnAdd := TmpBool;
             IgnoreEvents := False;
@@ -2073,7 +2078,7 @@ begin
           TmpBool := Viewport2D.CADCmp2D.DrawOnAdd;
           Viewport2D.CADCmp2D.DrawOnAdd := True;
           try
-            Viewport2D.CADCmp2D.AddObject(fPrimObject.ID, fPrimObject);
+            Viewport2D.AddObjectToActiveSpace(fPrimObject);
           finally
             Viewport2D.CADCmp2D.DrawOnAdd := TmpBool;
             IgnoreEvents := False;
@@ -2119,7 +2124,7 @@ begin
             TmpBool := Viewport2D.CADCmp2D.DrawOnAdd;
             Viewport2D.CADCmp2D.DrawOnAdd := True;
             try
-              Viewport2D.CADCmp2D.AddObject(fPrimObject.ID, fPrimObject);
+              Viewport2D.AddObjectToActiveSpace(fPrimObject);
             finally
               Viewport2D.CADCmp2D.DrawOnAdd := TmpBool;
               IgnoreEvents := False;
@@ -2194,7 +2199,7 @@ begin
           TmpBool := Viewport2D.CADCmp2D.DrawOnAdd;
           Viewport2D.CADCmp2D.DrawOnAdd := True;
           try
-            Viewport2D.CADCmp2D.AddObject(fPrimObject.ID, fPrimObject);
+            Viewport2D.AddObjectToActiveSpace(fPrimObject);
           finally
             Viewport2D.CADCmp2D.DrawOnAdd := TmpBool;
             IgnoreEvents := False;
@@ -2298,7 +2303,7 @@ begin
           TmpBool := Viewport2D.CADCmp2D.DrawOnAdd;
           Viewport2D.CADCmp2D.DrawOnAdd := True;
           try
-            Viewport2D.CADCmp2D.AddObject(fArcObject.ID, fArcObject);
+            Viewport2D.AddObjectToActiveSpace(fArcObject);
           finally
             Viewport2D.CADCmp2D.DrawOnAdd := TmpBool;
             IgnoreEvents := False;
@@ -2336,7 +2341,7 @@ begin
             Viewport2D.CADCmp2D.DrawOnAdd := True;
             IgnoreEvents := True;
             try
-              Viewport2D.CADCmp2D.AddObject(fArcObject.ID, fArcObject);
+              Viewport2D.AddObjectToActiveSpace(fArcObject);
             finally
               Viewport2D.CADCmp2D.DrawOnAdd := TmpBool;
               IgnoreEvents := False;
