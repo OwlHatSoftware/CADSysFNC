@@ -315,6 +315,11 @@ type
       so every number in these tests is a millimetre and can be read
       off the sheet with a ruler. }
     function Device: TCADPageDevice;
+    { : Draws the sheet to a canvas that has never been drawn on
+      before. ALines is how many lines came out of it - a TLine2D
+      draws itself with MoveTo and LineTo, so its MoveTo is the count -
+      and AText the whole log. }
+    procedure DrawSheetNow(out ALines: Integer; out AText: String);
   public
     [Setup]
     procedure Setup;
@@ -331,6 +336,10 @@ type
     procedure ABorderlessViewportDrawsNoOutline;
     [Test]
     procedure TheCanvasScaleIsPutBack;
+    [Test]
+    procedure AnObjectAddedToTheModelIsThereOnTheNextDraw;
+    [Test]
+    procedure AnObjectMovedInTheModelIsDrawnWhereItNowIs;
   end;
 
   [TestFixture]
@@ -834,6 +843,49 @@ begin
     'the sheet holds it, the drawing owns it');
 end;
 
+procedure TCADSheetDrawingTests.AnObjectAddedToTheModelIsThereOnTheNextDraw;
+var
+  TmpBefore, TmpAfter: Integer;
+  TmpText: String;
+begin
+  DrawSheetNow(TmpBefore, TmpText);
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(10, 10), Point2D(290, 140)));
+  DrawSheetNow(TmpAfter, TmpText);
+  { A viewport is a window on the model, not a picture of it taken
+    once: every draw walks the drawing's list again. Nothing here
+    invalidates a cache, because there is no cache to invalidate - and
+    this is the test that says so. }
+  Assert.AreEqual(TmpBefore + 1, TmpAfter,
+    'the new line came through the viewport: ' + TmpText);
+end;
+
+procedure TCADSheetDrawingTests.AnObjectMovedInTheModelIsDrawnWhereItNowIs;
+var
+  TmpLines: Integer;
+  TmpFirst, TmpSecond: String;
+  TmpObj: TObject2D;
+  TmpSpec: TCADViewSpec;
+begin
+  { A fixed window and a fixed scale. Left fitting, the viewport would
+    re-frame the one object it can see and draw the moved line in
+    exactly the same place - a true answer to the wrong question. }
+  TmpSpec := TCADViewSpec.Default;
+  TmpSpec.Window := Rect2D(0, 0, 300, 150);
+  FViewport.View := TmpSpec;
+  FViewport.UnitsPerMM := 3;
+  DrawSheetNow(TmpLines, TmpFirst);
+  TmpObj := TObject2D(FCAD.GetObject(0));
+  Assert.IsNotNull(TmpObj, 'the model line is there to move');
+  TmpObj.Transform(Translate2D(50, 25));
+  DrawSheetNow(TmpLines, TmpSecond);
+  { Same number of lines, different coordinates: the viewport drew the
+    object where it is now and not where it was when the sheet was
+    first painted. }
+  Assert.AreEqual(1, TmpLines, 'still one line');
+  Assert.AreNotEqual(TmpFirst, TmpSecond,
+    'and it moved on the paper: ' + TmpSecond);
+end;
+
 { ==================================================================
   TCADSheetViewportProxyTests
   ================================================================== }
@@ -1161,6 +1213,27 @@ end;
 function TCADSheetDrawingTests.Device: TCADPageDevice;
 begin
   Result := TCADPageDevice.FromDPI(CADMMPerInch, CADMMPerInch);
+end;
+
+procedure TCADSheetDrawingTests.DrawSheetNow(out ALines: Integer;
+  out AText: String);
+var
+  TmpRec: TRecordingGraphics;
+  TmpCanvas: TDecorativeCanvas;
+begin
+  TmpRec := TRecordingGraphics.Create(Rect(0, 0, 420, 297));
+  try
+    TmpCanvas := TDecorativeCanvas.Create(TmpRec, False);
+    try
+      CADDrawSheet(FCAD, FSheet, Device, TmpCanvas);
+    finally
+      TmpCanvas.Free;
+    end;
+    ALines := TmpRec.CountOf('MoveTo');
+    AText := TmpRec.Log.Text;
+  finally
+    TmpRec.Free;
+  end;
 end;
 
 procedure TCADSheetDrawingTests.Setup;
