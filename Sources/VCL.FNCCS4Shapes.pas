@@ -4947,8 +4947,16 @@ begin
         RowHeight := {%H-}MaxValue([RowHeight, 1.0 - Bottom]);
       end
     else if Str[Cont] = ' ' then
-      // Space.
-      RowLen := RowLen + (0.5 + InterChar)
+      { Space. 0.4, not 0.5: DrawChar2D and DrawChar3D both advance the
+        pen by (0.4 + ICS) * H for a space, and this is the measurement
+        of what they draw. At 0.5 every space made a line measure
+        0.1 * H wider than it was drawn, so a text's bounding box grew
+        by a tenth of its height per space - which is a selection
+        rectangle that does not fit its text, and a justified line that
+        does not sit where it was measured to sit. Two drawing paths
+        agree on 0.4; changing them to 0.5 instead would move the text
+        in every drawing ever saved. }
+      RowLen := RowLen + (0.4 + InterChar)
     else if Str[Cont] <> #13 then
       // Carattere nullo.
       with _NullChar.Extension do

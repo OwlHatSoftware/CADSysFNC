@@ -63,6 +63,28 @@ type
     procedure X5_CreateChar_WithinLatin1_StillWorks;
   end;
 
+  { A space was measured wider than it was drawn: GetTextExtension added
+    0.5 * H for one while DrawChar2D and DrawChar3D both advanced the pen by
+    0.4 * H, so every space in a string made its measured width 0.1 * H too
+    large. Reported by the user, 2026-10-08. }
+  [TestFixture]
+  TVectFontSpaceWidthRegressionTests = class(TObject)
+  private
+    FFont: TVectFont;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    [Test]
+    procedure ASpaceMeasuresWhatItDraws;
+    [Test]
+    procedure ASpaceMeasuresWhatItDrawsIn3DToo;
+    [Test]
+    procedure EachSpaceInALineMeasuresWhatItDraws;
+  end;
+
   { CADSysFindFontByIndex indexed the global font registry with an unchecked
     Word read straight from a stream, while every sibling accessor
     bounds-checked. }
@@ -298,6 +320,71 @@ begin
     'An unmapped Latin-1 slot must still return nil, unchanged by the fix');
 end;
 
+{ TVectFontSpaceWidthRegressionTests                                    }
+
+procedure TVectFontSpaceWidthRegressionTests.Setup;
+begin
+  FFont := TVectFont.Create;
+end;
+
+procedure TVectFontSpaceWidthRegressionTests.TearDown;
+begin
+  FreeAndNil(FFont);
+end;
+
+procedure TVectFontSpaceWidthRegressionTests.ASpaceMeasuresWhatItDraws;
+var
+  TmpPt: TPoint2D;
+begin
+  { The two numbers are compared with each other rather than with 0.4,
+    which is the whole point: a test that restated the constant would
+    have passed happily while the two paths disagreed. Either number may
+    be changed in future, as long as both are.
+
+    A space needs no glyph - DrawChar2D returns before it touches the
+    canvas or the font's character list - so an empty font and a nil
+    canvas are enough, and this needs no font file. }
+  TmpPt := Point2D(0, 0);
+  FFont.DrawChar2D(' ', TmpPt, 10.0, 0.0, IdentityTransf2D, nil);
+  Assert.AreEqual(TmpPt.X, FFont.GetTextExtension(' ', 10.0, 0.0, 0.0).Right,
+    1E-9, 'a space has to measure exactly as wide as the pen moves for it');
+end;
+
+procedure TVectFontSpaceWidthRegressionTests.ASpaceMeasuresWhatItDrawsIn3DToo;
+var
+  TmpPt: TPoint2D;
+begin
+  { DrawChar3D carries its own copy of the advance, so it is its own
+    chance to drift. }
+  TmpPt := Point2D(0, 0);
+  FFont.DrawChar3D(' ', TmpPt, 10.0, 0.0, IdentityTransf3D, IdentityTransf2D,
+    nil);
+  Assert.AreEqual(TmpPt.X, FFont.GetTextExtension(' ', 10.0, 0.0, 0.0).Right,
+    1E-9, 'and the 3D path has to agree with the same measurement');
+end;
+
+procedure TVectFontSpaceWidthRegressionTests.EachSpaceInALineMeasuresWhatItDraws;
+var
+  TmpPt: TPoint2D;
+  TmpWidth: TRealType;
+begin
+  { Four spaces, because the error was per space: at 0.5 against 0.4 one
+    space was out by 1 and four by 4, on a height of 10. An inter-char
+    space of 0.2 is included so that the test would also catch the
+    advance and the measurement disagreeing about whether ICS applies. }
+  TmpPt := Point2D(0, 0);
+  FFont.DrawChar2D(' ', TmpPt, 10.0, 0.2, IdentityTransf2D, nil);
+  FFont.DrawChar2D(' ', TmpPt, 10.0, 0.2, IdentityTransf2D, nil);
+  FFont.DrawChar2D(' ', TmpPt, 10.0, 0.2, IdentityTransf2D, nil);
+  FFont.DrawChar2D(' ', TmpPt, 10.0, 0.2, IdentityTransf2D, nil);
+  { GetTextExtension drops the trailing inter-char space of the last
+    character, which is right - the text ends at its last glyph, not at
+    the gap after it - so the drawn total is compared less that one gap. }
+  TmpWidth := FFont.GetTextExtension('    ', 10.0, 0.2, 0.0).Right;
+  Assert.AreEqual(TmpPt.X - 0.2 * 10.0, TmpWidth, 1E-9,
+    'four spaces measure what four spaces draw');
+end;
+
 procedure TVectFontUnicodeRegressionTests.X5_GetTextExtension_WithNonLatin1Text_DoesNotRaise;
 begin
   Assert.WillNotRaise(
@@ -410,6 +497,7 @@ initialization
 
 TDUnitX.RegisterTestFixture(TContainerAssignRegressionTests);
 TDUnitX.RegisterTestFixture(TVectFontUnicodeRegressionTests);
+TDUnitX.RegisterTestFixture(TVectFontSpaceWidthRegressionTests);
 TDUnitX.RegisterTestFixture(TFontRegistryRegressionTests);
 TDUnitX.RegisterTestFixture(TUntestableHeadlessRegressionNotes);
 TDUnitX.RegisterTestFixture(TDeferredFindingNotes);
