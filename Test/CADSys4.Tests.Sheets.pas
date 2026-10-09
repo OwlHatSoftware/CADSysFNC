@@ -25,6 +25,7 @@ uses
   VCL.FNCCS4Views,
   VCL.FNCCADSys4,
   VCL.FNCCS4Shapes,
+  VCL.FNCCS4Tasks,
   VCL.FNCCS4Graphics,
   VCL.FNCCS4Print,
   VCL.FNCCadSysRegister,
@@ -113,6 +114,68 @@ type
     procedure ASheetKeepsItsOwnIdCounter;
     [Test]
     procedure AnObjectOnASheetStillBelongsToTheDrawing;
+  end;
+
+  { : TCADSpace2D - the pair that says which space an operation works
+    in - and the two things that depend on it being right: where a new
+    object lands, and which object an identifier means. }
+  [TestFixture]
+  TCADSpaceTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FSheet: TCADSheet;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    [Test]
+    procedure ModelSpaceIsTheDrawingsList;
+    [Test]
+    procedure PaperSpaceIsTheSheetsList;
+    [Test]
+    procedure AddingToPaperSpaceLeavesTheModelAlone;
+    [Test]
+    procedure TheSpaceAssignsTheIdentifier;
+    [Test]
+    procedure AGivenIdentifierIsKeptAndMovesTheCounterPastIt;
+    [Test]
+    procedure TheSameIdentifierMeansTwoDifferentObjects;
+    [Test]
+    procedure ASheetReloadsWithTheIdentifiersItWasSavedWith;
+  end;
+
+  { : The explode family, which until now put its pieces in the drawing
+    whatever space the original was in. }
+  [TestFixture]
+  TCADExplodeTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FSheet: TCADSheet;
+    { A three-sided polygon, not yet in any space. }
+    function NewTriangle: TPolygon2D;
+    { The first object in AList that is not ASource - the piece, when
+      the only other thing in the space is the object that was
+      exploded. Not "the first TPolyline2D": TPolygon2D descends from
+      TPolyline2D, so asking by class finds the source itself and the
+      test passes whether anything was added or not. }
+    function OtherThan(const AList: TGraphicObjList;
+      const ASource: TGraphicObject): TGraphicObject;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    [Test]
+    procedure ExplodingOnASheetLeavesThePiecesOnThePaper;
+    [Test]
+    procedure ExplodingInTheModelStillLandsInTheModel;
+    [Test]
+    procedure APieceKeepsTheSourcesLayerInEitherSpace;
+    [Test]
+    procedure ThePiecesGetIdentifiersFromTheSpaceTheyLandIn;
   end;
 
   [TestFixture]
@@ -555,16 +618,21 @@ begin
   else
     TmpWhat := 'changed';
   end;
-  FLog.Add(Format('%s %s %s', [TmpWhat, ASheet.Name,
-    AObj.ClassName]));
+  { AObj is documented as possibly nil - a change that is not about one
+    object - so the log says so rather than dereferencing it. }
+  if AObj <> nil then
+    FLog.Add(Format('%s %s %s', [TmpWhat, ASheet.Name, AObj.ClassName]))
+  else
+    FLog.Add(Format('%s %s', [TmpWhat, ASheet.Name]));
 end;
 
 procedure TCADSheetEditingTests.Setup;
 begin
+  { The log first: the handler is live from the next line on. }
+  FLog := TStringList.Create;
   FCAD := TFNCCADCmp2D.Create(nil);
   FCAD.OnSheetObjectChange := SheetObjectChanged;
   FSheet := FCAD.Sheets.Add('Plan');
-  FLog := TStringList.Create;
 end;
 
 procedure TCADSheetEditingTests.TearDown;
@@ -944,12 +1012,260 @@ begin
     'fifty millimetres past the right edge, at three units each');
 end;
 
+{ ==================================================================
+  TCADSpaceTests
+  ================================================================== }
+
+procedure TCADSpaceTests.Setup;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+  FSheet := FCAD.Sheets.Add('Plan');
+end;
+
+procedure TCADSpaceTests.TearDown;
+begin
+  FCAD.Free;
+end;
+
+procedure TCADSpaceTests.ModelSpaceIsTheDrawingsList;
+var
+  TmpList: TGraphicObjList;
+begin
+  Assert.IsFalse(CADSpaceIsPaper(CADSpace(FCAD)), 'no sheet, no paper');
+  { TFNCCADCmp.ObjectList is protected, which is the reason
+    CADSpaceObjects exists: the list is identified by what it contains
+    rather than by comparing references. }
+  TmpList := CADSpaceObjects(CADSpace(FCAD));
+  Assert.IsNotNull(TmpList, 'model space has a list');
+  Assert.IsFalse(TmpList = FSheet.ObjectList, 'and it is not the sheet''s');
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(10, 10)));
+  Assert.AreEqual(FCAD.ObjectsCount, Integer(TmpList.Count),
+    'it is the drawing''s own display list');
+end;
+
+procedure TCADSpaceTests.PaperSpaceIsTheSheetsList;
+begin
+  Assert.IsTrue(CADSpaceIsPaper(CADSpace(FCAD, FSheet)), 'a sheet is paper');
+  Assert.AreSame(FSheet.ObjectList, CADSpaceObjects(CADSpace(FCAD, FSheet)),
+    'the sheet''s own objects');
+end;
+
+procedure TCADSpaceTests.AddingToPaperSpaceLeavesTheModelAlone;
+begin
+  CADSpaceAddObject(CADSpace(FCAD, FSheet), -1,
+    TLine2D.Create(-1, Point2D(0, 0), Point2D(10, 10)));
+  Assert.AreEqual(1, FSheet.ObjectsCount, 'on the paper');
+  Assert.AreEqual(0, FCAD.ObjectsCount, 'and not in the model');
+end;
+
+procedure TCADSpaceTests.TheSpaceAssignsTheIdentifier;
+var
+  TmpFirst, TmpSecond: TObject2D;
+begin
+  { A negative identifier is what a caller that does not care passes,
+    and the answer comes back on the object: the sheet's counter starts
+    at zero and has nothing to do with the drawing's. }
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(1, 1)));
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(2, 2)));
+  TmpFirst := CADSpaceAddObject(CADSpace(FCAD, FSheet), -1,
+    TLine2D.Create(-1, Point2D(0, 0), Point2D(3, 3)));
+  TmpSecond := CADSpaceAddObject(CADSpace(FCAD, FSheet), -1,
+    TLine2D.Create(-1, Point2D(0, 0), Point2D(4, 4)));
+  Assert.AreEqual(0, TmpFirst.ID, 'the sheet numbers from zero');
+  Assert.AreEqual(1, TmpSecond.ID, 'and counts up on its own');
+end;
+
+procedure TCADSpaceTests.AGivenIdentifierIsKeptAndMovesTheCounterPastIt;
+var
+  TmpGiven, TmpNext: TObject2D;
+begin
+  { The drawing's rule, so that a sheet can be reloaded with the
+    identifiers it was saved with. }
+  TmpGiven := CADSpaceAddObject(CADSpace(FCAD, FSheet), 7,
+    TLine2D.Create(-1, Point2D(0, 0), Point2D(1, 1)));
+  TmpNext := CADSpaceAddObject(CADSpace(FCAD, FSheet), -1,
+    TLine2D.Create(-1, Point2D(0, 0), Point2D(2, 2)));
+  Assert.AreEqual(7, TmpGiven.ID, 'the one it was given');
+  Assert.AreEqual(8, TmpNext.ID, 'and the counter is past it');
+end;
+
+procedure TCADSpaceTests.TheSameIdentifierMeansTwoDifferentObjects;
+var
+  TmpSpace: TCADSpace2D;
+begin
+  { The trap this lookup exists for. Both spaces number from zero, so
+    an application that asks the drawing for object 0 while the user is
+    looking at a sheet gets the model's object 0 - a different shape,
+    silently. }
+  FCAD.AddObject(0, TLine2D.Create(0, Point2D(0, 0), Point2D(10, 10)));
+  FSheet.AddObject(TFrame2D.Create(-1, Point2D(0, 0), Point2D(50, 20)));
+  Assert.IsTrue(FCAD.GetObject(0) is TLine2D, 'the model''s nought');
+  Assert.IsTrue(FSheet.GetObject(0) is TFrame2D, 'the sheet''s nought');
+
+  TmpSpace := CADSpace(FCAD, FSheet);
+  Assert.IsTrue(CADSpaceGetObject(TmpSpace, 0) is TFrame2D,
+    'and the space is asked, not the drawing');
+  Assert.IsTrue(CADSpaceGetObject(CADSpace(FCAD), 0) is TLine2D,
+    'model space answers for itself');
+  Assert.IsNull(FSheet.GetObject(99), 'nothing found is nil, not an error');
+end;
+
+procedure TCADSpaceTests.ASheetReloadsWithTheIdentifiersItWasSavedWith;
+var
+  TmpText: String;
+  TmpBack: TFNCCADCmp2D;
+begin
+  CADSpaceAddObject(CADSpace(FCAD, FSheet), 5,
+    TLine2D.Create(-1, Point2D(0, 0), Point2D(10, 10)));
+  CADSpaceAddObject(CADSpace(FCAD, FSheet), 9,
+    TFrame2D.Create(-1, Point2D(0, 0), Point2D(50, 20)));
+  TmpText := FCAD.SaveToJSONString;
+
+  TmpBack := TFNCCADCmp2D.Create(nil);
+  try
+    TmpBack.LoadFromJSONString(TmpText);
+    { Renumbering on load would break anything that keeps an ID: a
+      selection, an undo entry, an application's own reference to the
+      box it drew. }
+    Assert.IsTrue(TmpBack.Sheets[0].GetObject(5) is TLine2D,
+      'five is still five');
+    Assert.IsTrue(TmpBack.Sheets[0].GetObject(9) is TFrame2D,
+      'and nine is still nine');
+    Assert.IsNull(TmpBack.Sheets[0].GetObject(0),
+      'and nothing was renumbered to nought');
+  finally
+    TmpBack.Free;
+  end;
+end;
+
+{ ==================================================================
+  TCADExplodeTests
+  ================================================================== }
+
+procedure TCADExplodeTests.Setup;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+  FSheet := FCAD.Sheets.Add('Plan');
+end;
+
+procedure TCADExplodeTests.TearDown;
+begin
+  FCAD.Free;
+end;
+
+function TCADExplodeTests.NewTriangle: TPolygon2D;
+begin
+  Result := TPolygon2D.Create(-1, [Point2D(0, 0), Point2D(10, 0),
+    Point2D(10, 10)]);
+end;
+
+function TCADExplodeTests.OtherThan(const AList: TGraphicObjList;
+  const ASource: TGraphicObject): TGraphicObject;
+var
+  TmpIter: TGraphicObjIterator;
+begin
+  Result := nil;
+  TmpIter := AList.GetIterator;
+  try
+    TmpIter.First;
+    while TmpIter.Current <> nil do
+    begin
+      if TmpIter.Current <> ASource then
+      begin
+        Result := TmpIter.Current;
+        Exit;
+      end;
+      TmpIter.Next;
+    end;
+  finally
+    TmpIter.Free;
+  end;
+end;
+
+procedure TCADExplodeTests.ExplodingOnASheetLeavesThePiecesOnThePaper;
+var
+  TmpPoly: TPolygon2D;
+  TmpPiece: TGraphicObject;
+begin
+  TmpPoly := TPolygon2D(FSheet.AddObject(NewTriangle));
+  { The destination, not the source's owner: a title block on a sheet
+    has the drawing as its OwnerCAD, which is how the pieces used to
+    end up in the model where nobody could see them. }
+  Explode(TmpPoly, CADSpace(FCAD, FSheet));
+  Assert.AreEqual(2, FSheet.ObjectsCount,
+    'the polygon and the polyline it became');
+  Assert.AreEqual(0, FCAD.ObjectsCount, 'and nothing in the model');
+  TmpPiece := OtherThan(FSheet.ObjectList, TmpPoly);
+  Assert.IsNotNull(TmpPiece, 'something was added');
+  { The exact class: TPolygon2D is itself a TPolyline2D, so 'is' would
+    be true of the source as well. }
+  Assert.IsTrue(TmpPiece.ClassType = TPolyline2D,
+    'a polygon explodes into a polyline, not a ' + TmpPiece.ClassName);
+end;
+
+procedure TCADExplodeTests.ExplodingInTheModelStillLandsInTheModel;
+var
+  TmpPoly: TPolygon2D;
+begin
+  TmpPoly := TPolygon2D(FCAD.AddObject(-1, NewTriangle));
+  Explode(TmpPoly, CADSpace(FCAD));
+  Assert.AreEqual(2, FCAD.ObjectsCount, 'the polygon and its polyline');
+  Assert.AreEqual(0, FSheet.ObjectsCount, 'the sheet is not involved');
+end;
+
+procedure TCADExplodeTests.APieceKeepsTheSourcesLayerInEitherSpace;
+var
+  TmpPoly: TPolygon2D;
+  TmpPiece: TGraphicObject;
+begin
+  { A drawing puts whatever it is handed on its current layer, so a
+    piece has to be put back on the source's layer after the add. The
+    current layer is set to something else here on purpose: without the
+    correction the model's piece would come out on layer 4. }
+  FCAD.CurrentLayer := 4;
+  TmpPoly := TPolygon2D(FSheet.AddObject(NewTriangle));
+  TmpPoly.Layer := 3;
+  Explode(TmpPoly, CADSpace(FCAD, FSheet));
+  TmpPiece := OtherThan(FSheet.ObjectList, TmpPoly);
+  Assert.IsNotNull(TmpPiece, 'the piece is there');
+  Assert.AreEqual(3, Integer(TmpPiece.Layer), 'on the paper');
+
+  TmpPoly := TPolygon2D(FCAD.AddObject(-1, NewTriangle));
+  TmpPoly.Layer := 3;
+  Explode(TmpPoly, CADSpace(FCAD));
+  TmpPiece := OtherThan(CADSpaceObjects(CADSpace(FCAD)), TmpPoly);
+  Assert.IsNotNull(TmpPiece, 'and in the model');
+  Assert.AreEqual(3, Integer(TmpPiece.Layer),
+    'not the drawing''s current layer');
+end;
+
+procedure TCADExplodeTests.ThePiecesGetIdentifiersFromTheSpaceTheyLandIn;
+var
+  TmpPoly: TPolygon2D;
+  TmpPiece: TGraphicObject;
+begin
+  { The model is given a couple of objects first, so that a piece
+    carrying a drawing identifier onto the paper would show up as the
+    wrong number rather than coincidentally the right one. }
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(1, 1)));
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(2, 2)));
+  TmpPoly := TPolygon2D(FSheet.AddObject(NewTriangle));
+  Assert.AreEqual(0, TmpPoly.ID, 'the polygon is the sheet''s nought');
+  Explode(TmpPoly, CADSpace(FCAD, FSheet));
+  TmpPiece := OtherThan(FSheet.ObjectList, TmpPoly);
+  Assert.IsNotNull(TmpPiece, 'the piece is there');
+  Assert.AreEqual(1, Integer(TmpPiece.ID),
+    'and it is the sheet''s one, not the drawing''s two');
+end;
+
 initialization
 
 TDUnitX.RegisterTestFixture(TCADSheetHitTestTests);
 TDUnitX.RegisterTestFixture(TCADSheetModelTests);
 TDUnitX.RegisterTestFixture(TCADSheetPersistenceTests);
 TDUnitX.RegisterTestFixture(TCADSheetEditingTests);
+TDUnitX.RegisterTestFixture(TCADSpaceTests);
+TDUnitX.RegisterTestFixture(TCADExplodeTests);
 TDUnitX.RegisterTestFixture(TCADSheetDrawingTests);
 
 end.

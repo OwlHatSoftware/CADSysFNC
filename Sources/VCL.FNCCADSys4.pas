@@ -797,6 +797,29 @@ type
     a sheet. }
   TCADSheetObjectEvent = procedure(Sender: TObject; const ASheet: TCADSheet;
     const AObj: TGraphicObject; const AChange: TCADSheetChange) of object;
+  { : Which of a drawing's two spaces an operation works in.
+
+    Model space is the drawing's own display list. Paper space is one
+    sheet's own objects, in millimetres of paper. This pair is what the
+    library passes around in place of a bare TFNCCADCmp2D wherever an
+    operation can sensibly happen in either: somewhere to put a new
+    object, a list to walk, a place to look something up.
+
+    A record rather than a class, so that it needs no owner and can be
+    built, copied and thrown away in an expression; and a plain record
+    rather than one with methods, so that Delphi and FPC agree about it
+    without a mode switch. The operations on it are the CADSpace
+    functions declared further down.
+
+    See also <See Function=CADSpace>,
+    <See Method=TFNCCADViewport2D@ActiveSpace>. }
+  TCADSpace2D = record
+    { : The drawing. Never nil in a usable space: a sheet's objects
+      still belong to a document. }
+    CAD: TFNCCADCmp2D;
+    { : The sheet, or nil for model space. }
+    Sheet: TCADSheet;
+  end;
   { : This type defines the event that is fired when a drawing created
     with a previous version is being loaded.
 
@@ -5474,8 +5497,25 @@ type
     function PrintableRect2D: TRect2D;
 
     { : Adds an annotation object, in millimetres. The sheet owns it
-      and frees it. }
-    function AddObject(const AObj: TObject2D): TObject2D;
+      and frees it.
+
+      The identifier follows the drawing's rule: a negative AID, which
+      is what a caller that does not care passes, takes the next free
+      one from the sheet's own counter, and a given one is kept and
+      moves the counter past it. That is what lets a sheet reload with
+      the identifiers it was saved with - an application that refers to
+      an object by its ID would otherwise find them renumbered. }
+    function AddObject(const AObj: TObject2D;
+      const AID: LongInt = -1): TObject2D;
+    { : The object on this sheet with that identifier, or nil.
+
+      A sheet numbers from its own counter, so an ID on a sheet and the
+      same ID in the model are two different objects.
+      TFNCCADCmp.GetObject searches the model and would answer with the
+      wrong one, which is why this exists rather than being left to the
+      drawing. An application that does not know which space it is in
+      asks <See Method=TFNCCADViewport2D@GetActiveObject>. }
+    function GetObject(const AID: LongInt): TObject2D;
     { : Every annotation object on the sheet. The caller frees the
       iterator. }
     function ObjectsIterator: TGraphicObjIterator;
@@ -5805,6 +5845,26 @@ type
       picked and what an edit changes are then the same list by
       construction rather than by three agreeing accidents. }
     function ActiveObjects: TGraphicObjList;
+    { : The space this viewport is editing: the showing sheet, or the
+      model.
+
+      What to hand the library wherever it asks for a
+      <See Type=TCADSpace2D> - a destination for a new object, a list
+      to walk, a space to look an ID up in - so that an operation lands
+      where the user is looking. }
+    function ActiveSpace: TCADSpace2D;
+    { : The object with that identifier in the space being edited, or
+      nil.
+
+      The two spaces number independently: a sheet's objects come from
+      the sheet's own counter, so CADCmp2D.GetObject(ID) in paper space
+      answers with the model object that happens to share the number.
+      An application that keeps identifiers - a selection, a reference
+      from its own data - asks this instead.
+
+      It searches <See Method=TFNCCADViewport2D@ActiveObjects>, so what
+      is drawn, what is picked and what a lookup finds are one list. }
+    function GetActiveObject(const AID: LongInt): TGraphicObject;
     { : Adds AObj to whichever space is active, and repaints.
 
       This is the one door for a new object. Every drawing task in
@@ -8762,6 +8822,39 @@ function CADSheetPointToModel(const ACAD: TFNCCADCmp2D;
 function CADSheetModelToPoint(const ACAD: TFNCCADCmp2D;
   const ASheet: TCADSheet; const AViewport: TCADSheetViewport;
   const ADevice: TCADPageDevice; const APointModel: TPoint2D): TPoint;
+
+{ : Builds a <See Type=TCADSpace2D>. A nil ASheet is model space, so
+  CADSpace(ACAD) is the drawing itself.
+
+  Nothing stops a caller filling the record in by hand; this exists so
+  that a destination can be written in the call that uses it. }
+function CADSpace(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet = nil): TCADSpace2D;
+{ : True when ASpace is a sheet rather than the model. }
+function CADSpaceIsPaper(const ASpace: TCADSpace2D): Boolean;
+{ : The object list ASpace is made of: the sheet's own objects, or the
+  drawing's display list. nil if the space has no drawing. }
+function CADSpaceObjects(const ASpace: TCADSpace2D): TGraphicObjList;
+{ : Puts AObj into ASpace and returns it.
+
+  The space assigns the identifier. A negative AID asks for the next
+  free one, which is what a caller that does not care passes; a sheet
+  numbers from its own counter, so a drawing and a sheet both tell you
+  the answer on the object afterwards rather than ahead of time.
+
+  This is the one implementation of "where does a new object go", used
+  by <See Method=TFNCCADViewport2D@AddObjectToActiveSpace> and by the
+  explode family in VCL.FNCCS4Tasks. }
+function CADSpaceAddObject(const ASpace: TCADSpace2D; const AID: LongInt;
+  const AObj: TObject2D): TObject2D;
+{ : The object in ASpace with that identifier, or nil.
+
+  The two spaces number independently, so the same identifier means a
+  different object in each: this is the lookup that asks the right one.
+  See <See Method=TFNCCADViewport2D@GetActiveObject> for the same
+  question asked of whichever space a viewport is showing. }
+function CADSpaceGetObject(const ASpace: TCADSpace2D;
+  const AID: LongInt): TGraphicObject;
 
 { 2D functions. }
 
@@ -15943,17 +16036,28 @@ begin
     TmpH - fMargins.Top);
 end;
 
-function TCADSheet.AddObject(const AObj: TObject2D): TObject2D;
+function TCADSheet.AddObject(const AObj: TObject2D;
+  const AID: LongInt): TObject2D;
+var
+  TmpID: LongInt;
 begin
   Result := AObj;
   if AObj = nil then
     Exit;
-  { The same three things TFNCCADCmp.AddObject does, less the ID
-    bookkeeping it shares with blocks and less the redraw: a sheet has
-    no viewports of its own to tell. }
+  { The same things TFNCCADCmp.AddObject does, including its identifier
+    rule, less the redraw: a sheet has no viewports of its own to tell.
+    The counter is the sheet's own, which is why an object cannot simply
+    be moved between the two spaces without being re-added. }
+  TmpID := AID;
+  if TmpID < 0 then
+  begin
+    TmpID := fNextID;
+    Inc(fNextID);
+  end
+  else if TmpID >= fNextID then
+    fNextID := TmpID + 1;
   AObj.fOwnerCAD := fOwnerCAD;
-  AObj.ID := fNextID;
-  Inc(fNextID);
+  AObj.ID := TmpID;
   AObj.UpdateExtension(fOwnerCAD);
   fObjects.Add(AObj);
   { The drawing is told, because the drawing is what gets saved: an
@@ -15963,6 +16067,21 @@ begin
     what makes it testable without a window. }
   if fOwnerCAD <> nil then
     fOwnerCAD.SheetObjectChanged(Self, AObj, scoAdded);
+end;
+
+function TCADSheet.GetObject(const AID: LongInt): TObject2D;
+var
+  TmpIter: TGraphicObjIterator;
+begin
+  TmpIter := fObjects.GetIterator;
+  try
+    { Paper is flat - LoadFromJSON discards anything that is not a
+      TObject2D and AddObject takes nothing else - so the cast is sound
+      and saves every caller one of its own. }
+    Result := TObject2D(TmpIter.Search(AID));
+  finally
+    TmpIter.Free;
+  end;
 end;
 
 function TCADSheet.ObjectsIterator: TGraphicObjIterator;
@@ -16115,7 +16234,10 @@ begin
         TmpObj.Free;
         Continue;
       end;
-      AddObject(TObject2D(TmpObj));
+      { With the identifier it was saved with: anything in the drawing
+        or in the application that refers to an object on a sheet by its
+        ID has to still find it after a reload. }
+      AddObject(TObject2D(TmpObj), TmpObj.ID);
     end;
 end;
 
@@ -16208,6 +16330,55 @@ begin
     Exit;
   for Cont := 0 to AJSON.Count - 1 do
     Add.LoadFromJSON(JItemObject(AJSON, Cont));
+end;
+
+{ ==================================================================
+  Model space and paper space
+  ================================================================== }
+
+function CADSpace(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet): TCADSpace2D;
+begin
+  Result.CAD := ACAD;
+  Result.Sheet := ASheet;
+end;
+
+function CADSpaceIsPaper(const ASpace: TCADSpace2D): Boolean;
+begin
+  Result := ASpace.Sheet <> nil;
+end;
+
+function CADSpaceObjects(const ASpace: TCADSpace2D): TGraphicObjList;
+begin
+  if ASpace.Sheet <> nil then
+    Result := ASpace.Sheet.ObjectList
+  else if ASpace.CAD <> nil then
+    Result := ASpace.CAD.ObjectList
+  else
+    Result := nil;
+end;
+
+function CADSpaceAddObject(const ASpace: TCADSpace2D; const AID: LongInt;
+  const AObj: TObject2D): TObject2D;
+begin
+  Result := AObj;
+  if AObj = nil then
+    Exit;
+  if ASpace.Sheet <> nil then
+    ASpace.Sheet.AddObject(AObj, AID)
+  else if ASpace.CAD <> nil then
+    ASpace.CAD.AddObject(AID, AObj);
+end;
+
+function CADSpaceGetObject(const ASpace: TCADSpace2D;
+  const AID: LongInt): TGraphicObject;
+begin
+  if ASpace.Sheet <> nil then
+    Result := ASpace.Sheet.GetObject(AID)
+  else if ASpace.CAD <> nil then
+    Result := ASpace.CAD.GetObject(AID)
+  else
+    Result := nil;
 end;
 
 { ==================================================================
@@ -20073,22 +20244,44 @@ begin
     Result := nil;
 end;
 
+function TFNCCADViewport2D.ActiveSpace: TCADSpace2D;
+begin
+  Result := CADSpace(fCADCmp2D, fSheet);
+end;
+
+function TFNCCADViewport2D.GetActiveObject(const AID: LongInt)
+  : TGraphicObject;
+var
+  TmpList: TGraphicObjList;
+  TmpIter: TGraphicObjIterator;
+begin
+  Result := nil;
+  TmpList := ActiveObjects;
+  if TmpList = nil then
+    Exit;
+  TmpIter := TmpList.GetIterator;
+  try
+    Result := TmpIter.Search(AID);
+  finally
+    TmpIter.Free;
+  end;
+end;
+
 function TFNCCADViewport2D.AddObjectToActiveSpace(const AObj: TObject2D)
   : TObject2D;
 begin
   Result := AObj;
   if AObj = nil then
     Exit;
+  { One implementation of the rule, in CADSpaceAddObject: the ID the
+    object carries, which for a negative one means the next free in
+    whichever space it lands in. }
+  CADSpaceAddObject(ActiveSpace, AObj.ID, AObj);
   if fSheet <> nil then
-  begin
-    fSheet.AddObject(AObj);
     { TFNCCADCmp.AddObject redraws the new object itself when DrawOnAdd
       is set, through the viewports it knows about. A sheet has no
       viewports of its own, so the one showing it repaints here. }
     Repaint;
-  end
-  else if fCADCmp2D <> nil then
-    fCADCmp2D.AddObject(AObj.ID, AObj);
 end;
 
 procedure TFNCCADViewport2D.DrawUnderlay(const ARect: TRect2D);

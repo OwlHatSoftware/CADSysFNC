@@ -1431,6 +1431,49 @@ type
       var NextState: TCADStateClass); override;
   end;
 
+{ : Replaces AObject2D with the simpler objects it is made of, putting
+  them in ADest.
+
+  What a piece becomes depends on what it was: a polygon becomes a
+  closed polyline, a frame becomes a polygon, a polyline or a polygon
+  becomes its individual lines, any other outline becomes one polyline
+  through its profile points, and a container or a block becomes copies
+  of its contents with its own transform composed onto each. Anything
+  else is left alone - there is nothing simpler for a line or a text to
+  become.
+
+  AObject2D itself is neither changed nor removed: a caller that means
+  to replace it deletes it afterwards, which is also what lets it put
+  the pieces somewhere else and keep the original.
+
+  ADest is where the pieces go, and it may be a sheet: exploding a
+  title block in paper space leaves the pieces on the paper rather than
+  in the model. <See Method=TFNCCADViewport2D@ActiveSpace> is the
+  destination an interactive caller wants. The pieces get fresh
+  identifiers from that space and the source's layer.
+
+  The individual explode procedures below are the same operation for
+  one known kind, for a caller that already knows what it has. }
+procedure Explode(AObject2D: TObject2D; const ADest: TCADSpace2D);
+{ : An outline as one polyline through its profile points - or, for a
+  polyline or a polygon, as its individual <See Class=TLine2D>
+  segments. See <See Procedure=Explode>. }
+procedure ExplodeOutline2D(AOutline2D: TOutline2D; const ADest: TCADSpace2D);
+{ : A container as copies of its contents, with the container's own
+  transform composed onto each, nested containers included. See
+  <See Procedure=Explode>. }
+procedure ExplodeContainer(AContainer2D: TContainer2D;
+  const ADest: TCADSpace2D);
+{ : A block as copies of its source block's contents, with the block's
+  own transform composed onto each. See <See Procedure=Explode>. }
+procedure ExplodeBlock(ABlock: TBlock2D; const ADest: TCADSpace2D);
+{ : A frame as the <See Class=TPolygon2D> through its corners. See
+  <See Procedure=Explode>. }
+procedure ExplodeFrame2D(AObject2D: TObject2D; const ADest: TCADSpace2D);
+{ : A polygon as the closed <See Class=TPolyline2D> through its points.
+  See <See Procedure=Explode>. }
+procedure ExplodePolygon2D(AObject2D: TObject2D; const ADest: TCADSpace2D);
+
 implementation
 
 uses
@@ -3447,7 +3490,8 @@ end;
 
 { TCAD2DExplodeObjects }
 
-procedure ExplodePolyline2DTPolygon2D(AOutline2D: TOutline2D);
+procedure ExplodePolyline2DTPolygon2D(AOutline2D: TOutline2D;
+  const ADest: TCADSpace2D);
 var
   i: Integer;
   TmpLine2D: TLine2D;
@@ -3467,7 +3511,10 @@ begin
       TmpLine2D.ReserveStr2:= AOutline2D.ReserveStr2;
     }
     TmpLine2D.Transform(AOutline2D.ModelTransform);
-    TFNCCADCmp2D(AOutline2D.OwnerCAD).AddObject(TmpLine2D.ID, TmpLine2D);
+    { Into the destination space, not through the source's OwnerCAD: a
+      shape on a sheet has the drawing as its owner, so asking the owner
+      put the pieces of a title block into the model. }
+    CADSpaceAddObject(ADest, -1, TmpLine2D);
     // TmpLine2D.fReserveInt1:= AOutline2D.fReserveInt1;
     TmpLine2D.Layer := AOutline2D.Layer;
   end;
@@ -3486,7 +3533,7 @@ begin
       TmpLine2D.ReserveStr2:= AOutline2D.ReserveStr2;
     }
     TmpLine2D.Transform(AOutline2D.ModelTransform);
-    TFNCCADCmp2D(AOutline2D.OwnerCAD).AddObject(TmpLine2D.ID, TmpLine2D);
+    CADSpaceAddObject(ADest, -1, TmpLine2D);
     // TmpLine2D.fReserveInt1:= AOutline2D.fReserveInt1;
     TmpLine2D.Layer := AOutline2D.Layer;
 
@@ -3494,16 +3541,14 @@ begin
   AOutline2D.EndUseProfilePoints;
 end;
 
-procedure ExplodeOutline2D(AOutline2D: TOutline2D);
+procedure ExplodeOutline2D(AOutline2D: TOutline2D; const ADest: TCADSpace2D);
 var
   i: Integer;
-  TmpLine2D: TLine2D;
   TmpPolyline2D: TPolyline2D;
-  P0, P1: TPoint2D;
 begin
   if AOutline2D is TPolyline2D then
   begin
-    ExplodePolyline2DTPolygon2D(AOutline2D);
+    ExplodePolyline2DTPolygon2D(AOutline2D, ADest);
     Exit;
   end;
   AOutline2D.BeginUseProfilePoints;
@@ -3511,11 +3556,13 @@ begin
   for i := 0 to AOutline2D.ProfilePoints.Count - 1 do
     TmpPolyline2D.Points.Add(AOutline2D.ProfilePoints[i]);
   TmpPolyline2D.Transform(AOutline2D.ModelTransform);
-  TFNCCADCmp2D(AOutline2D.OwnerCAD).AddObject(-1, TmpPolyline2D);
+  CADSpaceAddObject(ADest, -1, TmpPolyline2D);
+  TmpPolyline2D.Layer := AOutline2D.Layer;
   AOutline2D.EndUseProfilePoints;
 end;
 
-procedure ExplodeContainer(AContainer2D: TContainer2D; ADestCAD: TFNCCADCmp2D);
+procedure ExplodeContainer(AContainer2D: TContainer2D;
+  const ADest: TCADSpace2D);
 var
   TmpIter: TExclusiveGraphicObjIterator;
   TmpClass: TGraphicObjectClass;
@@ -3543,17 +3590,21 @@ begin
         if (TmpObj is TPrimitive2D) then
         begin
           TPrimitive2D(TmpObj).Transform(AContainer2D.ModelTransform);
-          ADestCAD.AddObject(-1, TObject2D(TmpObj));
-          { Ownership has passed to the destination drawing. }
+          CADSpaceAddObject(ADest, -1, TObject2D(TmpObj));
+          { After the add, not before: a drawing puts what it is given
+            on its current layer. A sheet does not, but the piece should
+            end up on the source's layer either way. }
+          TmpObj.Layer := TmpSrc.Layer;
+          { Ownership has passed to the destination space. }
           TmpObj := nil;
         end
         else if (TmpObj is TContainer2D) then
         begin
           TContainer2D(TmpObj).Transform(AContainer2D.ModelTransform);
-          ExplodeContainer(TContainer2D(TmpObj), ADestCAD);
+          ExplodeContainer(TContainer2D(TmpObj), ADest);
         end;
       finally
-        { Whatever was not handed to ADestCAD is ours to release. }
+        { Whatever was not handed to ADest is ours to release. }
         TmpObj.Free;
       end;
       TmpSrc := TmpIter.Next;
@@ -3563,7 +3614,7 @@ begin
   end;
 end;
 
-procedure ExplodeBlock(ABlock: TBlock2D; ADestCAD: TFNCCADCmp2D);
+procedure ExplodeBlock(ABlock: TBlock2D; const ADest: TCADSpace2D);
 var
   TmpIter: TExclusiveGraphicObjIterator;
   TmpClass: TGraphicObjectClass;
@@ -3583,13 +3634,17 @@ begin
         if (TmpObj is TPrimitive2D) then
         begin
           TPrimitive2D(TmpObj).Transform(ABlock.ModelTransform);
-          ADestCAD.AddObject(-1, TObject2D(TmpObj));
-          { Ownership has passed to the destination drawing. }
+          CADSpaceAddObject(ADest, -1, TObject2D(TmpObj));
+          { After the add, not before: a drawing puts what it is given
+            on its current layer. A sheet does not, but the piece should
+            end up on the source's layer either way. }
+          TmpObj.Layer := TmpSrc.Layer;
+          { Ownership has passed to the destination space. }
           TmpObj := nil;
         end
         else if (TmpObj is TBlock2D) then
         begin
-          ExplodeBlock(TBlock2D(TmpObj), ADestCAD);
+          ExplodeBlock(TBlock2D(TmpObj), ADest);
         end;
       finally
         TmpObj.Free;
@@ -3601,7 +3656,7 @@ begin
   end;
 end;
 
-procedure ExplodeFrame2D(AObject2D: TObject2D; ADestCAD: TFNCCADCmp2D);
+procedure ExplodeFrame2D(AObject2D: TObject2D; const ADest: TCADSpace2D);
 var
   TmpPolygon2D: TPolygon2D;
 begin
@@ -3609,10 +3664,13 @@ begin
   TmpPolygon2D.Assign(AObject2D);
   TmpPolygon2D.ProfilePoints.Copy(TFrame2D(AObject2D).ProfilePoints, 0,
     TFrame2D(AObject2D).ProfilePoints.Count - 2);
-  ADestCAD.AddObject(-1, TmpPolygon2D);
+  CADSpaceAddObject(ADest, -1, TmpPolygon2D);
+  { After the add: a drawing puts what it is given on its current
+    layer. }
+  TmpPolygon2D.Layer := AObject2D.Layer;
 end;
 
-procedure ExplodePolygon2D(AObject2D: TObject2D; ADestCAD: TFNCCADCmp2D);
+procedure ExplodePolygon2D(AObject2D: TObject2D; const ADest: TCADSpace2D);
 var
   TmpPolyline2D: TPolyline2D;
 begin
@@ -3623,7 +3681,10 @@ begin
   TmpPolyline2D.ProfilePoints.Add(TPolygon2D(AObject2D).ProfilePoints[0]);
   // TmpPolyline2D.Points.Add(TPolygon2D(AObject2D).ProfilePoints[0]);
   TmpPolyline2D.UpdateExtension(nil);
-  ADestCAD.AddObject(-1, TmpPolyline2D);
+  CADSpaceAddObject(ADest, -1, TmpPolyline2D);
+  { After the add: a drawing puts what it is given on its current
+    layer. }
+  TmpPolyline2D.Layer := AObject2D.Layer;
 end;
 
 // procedure ExplodeSegment2D(AObject2D: TObject2D; ADestCAD: TFNCCADCmp2D);
@@ -3654,27 +3715,27 @@ end;
 // end;
 // end;
 
-procedure Explode(AObject2D: TObject2D; ADestCAD: TFNCCADCmp2D);
+procedure Explode(AObject2D: TObject2D; const ADest: TCADSpace2D);
 begin
   if (AObject2D is TPolygon2D) then
-    ExplodePolygon2D(AObject2D, ADestCAD)
+    ExplodePolygon2D(AObject2D, ADest)
   else if (AObject2D is TFrame2D) then
-    ExplodeFrame2D(AObject2D, ADestCAD)
+    ExplodeFrame2D(AObject2D, ADest)
     {
       else if (AObject2D is TSegment2D) then
-      ExplodeSegment2D(AObject2D, ADestCAD)
+      ExplodeSegment2D(AObject2D, ADest)
       else if (AObject2D is TSector2D) then
-      ExplodeSector2D(AObject2D, ADestCAD)
+      ExplodeSector2D(AObject2D, ADest)
     }
   else if (AObject2D is TOutline2D) then
-    ExplodeOutline2D(TOutline2D(AObject2D))
+    ExplodeOutline2D(TOutline2D(AObject2D), ADest)
     // else if (AObject2D is TJustifiedVectText2D) then
     // ExplodeJustifiedVectText2D(TJustifiedVectText2D(AObject2D))
   else if (AObject2D is TContainer2D) then
-    ExplodeContainer(TContainer2D(AObject2D), ADestCAD)
+    ExplodeContainer(TContainer2D(AObject2D), ADest)
   else if (AObject2D is TBlock2D) then
-    // ExplodeContainer(TContainer2D(TBlock2D(AObject2D).SourceBlock), ADestCAD);
-    ExplodeBlock(TBlock2D(AObject2D), ADestCAD);
+    // ExplodeContainer(TContainer2D(TBlock2D(AObject2D).SourceBlock), ADest);
+    ExplodeBlock(TBlock2D(AObject2D), ADest);
 end;
 
 constructor TCAD2DExplodeObjects.Create(const ACADPrg: TFNCCADPrg;
