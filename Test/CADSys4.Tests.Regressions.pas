@@ -19,6 +19,7 @@ uses
   VCL.FNCCS4BaseTypes,
   VCL.FNCCADSys4,
   VCL.FNCCS4Shapes,
+  VCL.FNCCS4Tasks,
   VCL.FNCCadSysRegister;
 
 type
@@ -138,14 +139,36 @@ type
   { Findings deliberately NOT yet fixed. These are written as the failing
     cases they will need, and ignored until the corresponding phase lands. }
   [TestFixture]
+  { M5/M7/M8/A3 - who owns a task parameter. The rule is written out on
+    TCADPrgParam: the state it was handed to owns it until it gives it
+    away, the engine frees it when the task ends or when a constructor
+    raises, and TCADState.Destroy does not.
+
+    What can be checked here is the half that is plain objects. The
+    other half - a constructor that raises having its parameter freed,
+    and SuspendOperation no longer handing the suspended state's own
+    parameter to the task interposed on it - needs a running task
+    engine, which needs an FNC control, which a console runner cannot
+    make. The demo's leak report on shutdown is the test for those, and
+    it is the one that found this in the first place. }
+  [TestFixture]
+  TParamOwnershipRegressionTests = class(TObject)
+  public
+    [Setup]
+    procedure Setup;
+
+    [Test]
+    procedure AParameterFreesItsUserObject;
+    [Test]
+    procedure AParameterToldItDoesNotOwnTheObjectLeavesItAlone;
+    [Test]
+    procedure ASelectAreaParameterFreesTheOneItKeepsForItsCaller;
+    [Test]
+    procedure ACallerThatTakesItsParameterBackKeepsIt;
+  end;
+
   TDeferredFindingNotes = class(TObject)
   public
-    [Test]
-    [Ignore('M5/M7/M8/A3 - param ownership rework. TCADPrgSelectAreaParam.Destroy ' +
-            'still leaks fCallerParam, and SuspendOperation still aliases the ' +
-            'suspended state param. These must be fixed together; see the review.')]
-    procedure ParamOwnershipContract;
-
     [Test]
     [Ignore('M2 - TPointsSet2D/3D fCapacity is a Word and truncates in Expand above ' +
             '~32767 points, shrinking the buffer and zeroing live points. Needs the ' +
@@ -476,12 +499,102 @@ begin
   Assert.Pass;
 end;
 
-{ TDeferredFindingNotes }
+{ TParamOwnershipRegressionTests }
 
-procedure TDeferredFindingNotes.ParamOwnershipContract;
+type
+  { : Counts its own destruction, so a test can say whether something
+    was freed without reading freed memory to find out. }
+  TParamSpy = class(TCADPrgParam)
+  public
+    destructor Destroy; override;
+  end;
+
+  TUserObjectSpy = class(TObject)
+  public
+    destructor Destroy; override;
+  end;
+
+var
+  ParamSpiesDestroyed: Integer = 0;
+  UserObjectSpiesDestroyed: Integer = 0;
+
+destructor TParamSpy.Destroy;
 begin
-  Assert.Pass;
+  Inc(ParamSpiesDestroyed);
+  inherited;
 end;
+
+destructor TUserObjectSpy.Destroy;
+begin
+  Inc(UserObjectSpiesDestroyed);
+  inherited;
+end;
+
+procedure TParamOwnershipRegressionTests.Setup;
+begin
+  ParamSpiesDestroyed := 0;
+  UserObjectSpiesDestroyed := 0;
+end;
+
+procedure TParamOwnershipRegressionTests.AParameterFreesItsUserObject;
+var
+  TmpParam: TCADPrgParam;
+begin
+  TmpParam := TCADPrgParam.Create(nil);
+  TmpParam.UserObject := TUserObjectSpy.Create;
+  TmpParam.Free;
+  { The default, and what every task that puts an object of its own
+    making there relies on. }
+  Assert.AreEqual(1, UserObjectSpiesDestroyed, 'it went with the parameter');
+end;
+
+procedure TParamOwnershipRegressionTests.AParameterToldItDoesNotOwnTheObjectLeavesItAlone;
+var
+  TmpParam: TCADPrgParam;
+  TmpObj: TUserObjectSpy;
+begin
+  TmpObj := TUserObjectSpy.Create;
+  TmpParam := TCADPrgParam.Create(nil);
+  TmpParam.OwnsUserObject := False;
+  TmpParam.UserObject := TmpObj;
+  TmpParam.Free;
+  { The case that matters: an edit task puts the primitive it is editing
+    here, and that primitive is in the drawing's display list. Freeing
+    it with the parameter takes a live object out of the drawing. }
+  Assert.AreEqual(0, UserObjectSpiesDestroyed, 'the object is still there');
+  TmpObj.Free;
+  Assert.AreEqual(1, UserObjectSpiesDestroyed, 'and ours to free');
+end;
+
+procedure TParamOwnershipRegressionTests.ASelectAreaParameterFreesTheOneItKeepsForItsCaller;
+var
+  TmpArea: TCADPrgSelectAreaParam;
+begin
+  TmpArea := TCADPrgSelectAreaParam.Create(nil, TParamSpy.Create(nil));
+  TmpArea.Free;
+  { The class always documented this. The code did not do it, so every
+    area selection or area zoom that was cancelled dropped the caller's
+    parameter on the floor. }
+  Assert.AreEqual(1, ParamSpiesDestroyed, 'the caller''s parameter went too');
+end;
+
+procedure TParamOwnershipRegressionTests.ACallerThatTakesItsParameterBackKeepsIt;
+var
+  TmpArea: TCADPrgSelectAreaParam;
+  TmpCaller: TCADPrgParam;
+begin
+  TmpArea := TCADPrgSelectAreaParam.Create(nil, TParamSpy.Create(nil));
+  { What TCAD2DSelectObjectsInArea does when the user completes the
+    rectangle: it takes its parameter back and says so. }
+  TmpCaller := TmpArea.CallerParam;
+  TmpArea.CallerParam := nil;
+  TmpArea.Free;
+  Assert.AreEqual(0, ParamSpiesDestroyed, 'not freed under the caller');
+  TmpCaller.Free;
+  Assert.AreEqual(1, ParamSpiesDestroyed, 'and freed when the caller is done');
+end;
+
+{ TDeferredFindingNotes }
 
 procedure TDeferredFindingNotes.PointsSet_CapacityAbove32767;
 begin
@@ -500,6 +613,7 @@ TDUnitX.RegisterTestFixture(TVectFontUnicodeRegressionTests);
 TDUnitX.RegisterTestFixture(TVectFontSpaceWidthRegressionTests);
 TDUnitX.RegisterTestFixture(TFontRegistryRegressionTests);
 TDUnitX.RegisterTestFixture(TUntestableHeadlessRegressionNotes);
+TDUnitX.RegisterTestFixture(TParamOwnershipRegressionTests);
 TDUnitX.RegisterTestFixture(TDeferredFindingNotes);
 
 end.

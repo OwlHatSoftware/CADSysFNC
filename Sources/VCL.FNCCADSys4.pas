@@ -7722,10 +7722,41 @@ type
     Result := True;
     >
   }
+  { : The parameter of an interaction task.
+
+    WHO OWNS ONE. The rule, in one sentence: a parameter belongs to the
+    state it was handed to, from the moment that state's constructor is
+    entered until the state gives it away.
+
+    In detail, because every leak this library had in this area came of
+    one of these being left out:
+
+    <LI=the state's constructor adopts it - <See Method=TCADState@Create>
+    assigns it to Param - so a state that replaces its parameter frees
+    the one it was given first, unless it has deliberately handed that
+    one to something else that now owns it.>
+    <LI=a state that passes its parameter on through NextState has given
+    it away: the next state's constructor adopts it.>
+    <LI=when a task ends, <See Method=TFNCCADPrg@GoToDefaultState> frees
+    the current state's parameter. A state's OnStop frees it too, for
+    the case where the task is stopped rather than finishing.>
+    <LI=if a constructor raises, the state was never built, so the engine
+    frees the parameter it was handing over. Every "Invalid param"
+    exception in the task unit used to leak one.>
+    <LI=TCADState.Destroy does NOT free it. The engine does, at the
+    points above, and a destructor that also freed it would double free
+    every time a state handed its parameter to the next one.>
+
+    UserObject follows the parameter by default: destroying the
+    parameter destroys it. When the object belongs to the drawing rather
+    than to the task - the primitive an edit task is editing, say - set
+    <See Property=TCADPrgParam@OwnsUserObject> to False, or the drawing
+    loses an object it still has in its list. }
   TCADPrgParam = class(TObject)
   private
     fAfterState: TCADStateClass;
     fUserObject: TObject;
+    fOwnsUserObject: Boolean;
   public
     { : This is the constructor of the parameter.
 
@@ -7752,6 +7783,16 @@ type
       by the current task.
     }
     property UserObject: TObject read fUserObject write fUserObject;
+    { : Whether destroying this parameter destroys
+      <See Property=TCADPrgParam@UserObject> with it. True by default,
+      which is right when the task made the object.
+
+      False when the object belongs to somebody else - the drawing, for
+      one. An edit task puts the primitive it is editing here, and that
+      primitive is in the display list: freeing it with the parameter
+      takes a live object out of the drawing. }
+    property OwnsUserObject: Boolean read fOwnsUserObject
+      write fOwnsUserObject;
   end;
 
   TCS4MouseButton = (cmbNone, cmbLeft, cmbRight, cmbMiddle);
@@ -23337,11 +23378,14 @@ begin
   inherited Create;
 
   fAfterState := AfterS;
+  { The parameter owns its user object unless told otherwise, which is
+    what every task that puts an object of its own making here expects. }
+  fOwnsUserObject := True;
 end;
 
 destructor TCADPrgParam.Destroy;
 begin
-  if Assigned(fUserObject) then
+  if fOwnsUserObject and Assigned(fUserObject) then
     fUserObject.Free;
   inherited;
 end;
@@ -23370,8 +23414,14 @@ end;
 
 destructor TCADState.Destroy;
 begin
-//  if Assigned(Param) then
-//     FreeAndNil(Param);
+  { Param is deliberately not freed here. A state hands its parameter to
+    the next state by leaving it in Param and setting NextState, and the
+    engine then destroys this state and passes that same parameter to
+    the next one's constructor - so a destructor that freed it would
+    free it out from under every successor state in the library. The
+    engine frees it instead, where the task actually ends: see
+    GoToDefaultState, StopOperation and the exception handlers around
+    the state constructors. }
   inherited;
 end;
 
@@ -23811,6 +23861,10 @@ begin
       // e' il primo stato a det. la sospendibilità
       fCurrentState.CanBeSuspended := TmpBool;
     except
+      { As in SendEvent: the state was never built, so nothing adopted
+        the parameter and nothing else will free it. }
+      Param.Free;
+      Param := nil;
       Reset;
       Break;
     end;
@@ -23864,8 +23918,16 @@ begin
   fSuspendedState := CurrentState;
   fSuspendedOperation := fCurrentOperation;
   fIsSuspended := True;
-  if not Assigned(Param) then
-    Param := fSuspendedState.fParam;
+  { The suspended state keeps its own parameter, and the interposing
+    task gets what the caller passed - which is usually nothing.
+
+    This used to hand the suspended state's own parameter to the new
+    task when the caller supplied none. That left two states holding one
+    object with no way to say which of them should free it, and it is
+    the reason TCADPrgPan carries a note about deliberately not freeing
+    what it was given, and the reason a select area cannot free the
+    parameter it keeps for its caller. Both of those are repaired by
+    this line not existing. }
   NewNext := StartState;
   TmpBool := True;
   repeat
@@ -23884,6 +23946,10 @@ begin
       // e' il primo stato a det. la sospendibilità
       fCurrentState.CanBeSuspended := TmpBool;
     except
+      { As in SendEvent: the state was never built, so nothing adopted
+        the parameter and nothing else will free it. }
+      Param.Free;
+      Param := nil;
       Reset;
       Break;
     end;

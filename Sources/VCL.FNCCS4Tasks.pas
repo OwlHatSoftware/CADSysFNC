@@ -1548,6 +1548,15 @@ end;
 destructor TCADPrgSelectAreaParam.Destroy;
 begin
   fFrame.Free;
+  { And the caller's parameter, which this one was given to look after
+    while the user drags a rectangle. The class documentation always
+    said this happened; the code did not do it, so every area selection
+    or area zoom that was cancelled - and every one that finished, in
+    the zoom case - dropped the caller's parameter on the floor.
+
+    A caller that wants its parameter back takes it and sets CallerParam
+    to nil, which TCAD2DSelectObjectsInArea does on the way in. }
+  fCallerParam.Free;
   inherited Destroy;
 end;
 
@@ -1753,13 +1762,18 @@ begin
   inherited Create(CADPrg, StateParam, NextState);
   { CS4-FIX (M6): the state is documented as taking no parameter, so the
     documented call StartOperation(TCADPrgPan, nil) faulted on StateParam.
-    NOTE: StateParam is deliberately NOT freed here. SuspendOperation
-    (VCL.FNCCADSys4.pas ~20705) aliases the suspended state's own param into
-    StateParam when the caller supplies none, so freeing it would destroy
-    the suspended task's parameter. That leak is resolved together with the
-    param-ownership rework (findings M7/M8/A3). }
+
+    The note that used to stand here said StateParam was deliberately not
+    freed, because SuspendOperation aliased the suspended state's own
+    parameter into it and freeing it would have destroyed the suspended
+    task's. SuspendOperation does not do that any more, so this state
+    owns what it was handed like every other, and takes the one thing it
+    wants out of it before letting it go. }
   if Assigned(StateParam) then
-    Param := TCADPrgParam.Create(StateParam.AfterState)
+  begin
+    Param := TCADPrgParam.Create(StateParam.AfterState);
+    StateParam.Free;
+  end
   else
     Param := TCADPrgParam.Create(nil);
   Param.UserObject := TLine2D.Create(0, Point2D(0, 0), Point2D(0, 0));
@@ -3350,10 +3364,14 @@ begin
     NewParam.DrawOSD(Viewport2D, Point2D(0, 0), True);
     NewParam.DrawModifiedPrim(Viewport2D);
   end;
-  // The incoming StateParam is replaced here, so it must be released or it
-  // leaks (see TCAD2DMoveSelectedObjects / TCAD2DRotateSelectedObjects).
-  // Its UserObject is the primitive owned by the drawing and TCADPrgParam.Destroy
-  // frees UserObject, so detach it first.
+  { The incoming parameter is replaced here, so this state releases it:
+    it was handed over, and nothing else will.
+
+    UserObject is detached first because it is the primitive being
+    edited, which belongs to the drawing. TCAD2DEditSelectedPrimitive
+    marks its own parameter as not owning it, but an application is
+    documented as being able to start this task with a parameter of its
+    own making, and that one's OwnsUserObject is True by default. }
   TCADPrgParam(StateParam).UserObject := nil;
   StateParam.Free;
   Param := NewParam;
@@ -3477,6 +3495,11 @@ begin
   // Param := NewParam;
   NewParam := TCADPrgParam.Create(nil);
   try
+    { The object is the drawing's, not this parameter's: without this the
+      parameter's destructor takes a live object out of the display list
+      on any route that frees it - and since a constructor that raises
+      now has its parameter freed by the engine, there is such a route. }
+    NewParam.OwnsUserObject := False;
     NewParam.UserObject := NewObj;
     FreeAndNil(Param);
     Param := NewParam;
