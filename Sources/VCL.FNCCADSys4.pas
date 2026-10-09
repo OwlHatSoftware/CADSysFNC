@@ -751,6 +751,10 @@ type
     const ACAD: TFNCCADCmp2D);
   TFNCCADViewport = class;
   TFNCCADViewport2D = class;
+  { Forward declared this far up because TFNCCADViewport has a field of
+    this type - the other end of TFNCCADPrg.LinkedViewport - and the
+    task engine itself is declared four thousand lines further down. }
+  TFNCCADPrg = class;
   TObject2D = class;
   TFNCCADCmp3D = class;
   TFNCCADViewport3D = class;
@@ -3426,6 +3430,11 @@ type
   private
     fViewGuard: TCADSysCriticalSection;
     fCADCmp: TFNCCADCmp;
+    { : Set by TFNCCADPrg.SetLinkedViewport, both ways, so that the
+      viewport can tell the task engine something it cannot otherwise
+      know - see TFNCCADViewport2D.SetSheet. nil when no task engine is
+      driving this viewport. }
+    fLinkedPrg: TFNCCADPrg;
     fDrawMode: Cardinal;
     fVisualWindow: TRect2D; { The current viewport on the view plane. }
     fViewportToScreen, fScreenToViewport: TTransf2D;
@@ -4171,6 +4180,13 @@ type
       You must assign it before using the viewport.
     }
     property CADCmp: TFNCCADCmp read fCADCmp write SetCADCmp;
+    { : The task engine driving this viewport, or nil.
+
+      <See Property=TFNCCADPrg@LinkedViewport> is the one that is set;
+      this is the same link read from the other end, kept so that the
+      viewport can reach the engine for the few things only it knows -
+      changing space while an operation is running, for one. }
+    property LinkedPrg: TFNCCADPrg read fLinkedPrg;
     { : This property contains the off screen canvas used to
       store the drawing before copying it to the canvas of the
       control.
@@ -5516,6 +5532,37 @@ type
       drawing. An application that does not know which space it is in
       asks <See Method=TFNCCADViewport2D@GetActiveObject>. }
     function GetObject(const AID: LongInt): TObject2D;
+    { : Takes the object with that identifier off the sheet and frees
+      it, or raises <See Class=ECADListObjNotFound> if it is not there.
+
+      The sheet's own counter is not wound back: identifiers are not
+      reused while a drawing is open, here as in the drawing. }
+    procedure DeleteObject(const AID: LongInt);
+    { : Takes it off the sheet without freeing it, and clears its
+      OwnerCAD. The caller owns it afterwards - this is the half of a
+      move to another space that takes it out. }
+    procedure RemoveObject(const AID: LongInt);
+    { : Puts the object with AIDOrigin immediately before the one with
+      AIDDestination in the list, which is the order the sheet is drawn
+      in: behind it, in other words. "Send behind that" is the
+      operation, and it is what "bring to front" and "send to back"
+      are built out of.
+
+      The drawing's own <See Method=TFNCCADCmp@MoveObject> by another
+      name, on the sheet's list. Raises
+      <See Class=ECADListObjNotFound> if either identifier is not
+      there, and <See Class=ECADListBlocked> if the list has an
+      iterator open on it. }
+    procedure MoveObject(const AIDOrigin, AIDDestination: LongInt);
+    { : Says that AObj, which is already on this sheet, has been changed
+      - moved, transformed, edited.
+
+      The sheet cannot notice that by itself: whoever did it says so,
+      and the drawing passes it on through
+      <See Property=TFNCCADCmp@OnSheetObjectChange>. An application
+      that marks a file modified, or keeps an undo stack, listens there
+      rather than to each of its own edit paths. }
+    procedure ObjectChanged(const AObj: TObject2D);
     { : Every annotation object on the sheet. The caller frees the
       iterator. }
     function ObjectsIterator: TGraphicObjIterator;
@@ -5876,6 +5923,17 @@ type
       the two without being re-added. OwnerCAD stays the drawing in
       both cases: a shape on a sheet still belongs to the document. }
     function AddObjectToActiveSpace(const AObj: TObject2D): TObject2D;
+    { : Deletes the object with that identifier from the space being
+      edited, and shows the result.
+
+      The door out, as AddObjectToActiveSpace is the door in: in paper
+      space it takes a title block off the paper rather than hunting
+      for the model object that happens to share the number. Raises
+      <See Class=ECADListObjNotFound> if the space does not have it. }
+    procedure DeleteObjectFromActiveSpace(const AID: LongInt);
+    { : As DeleteObjectFromActiveSpace, but the object is not freed and
+      the caller owns it afterwards. }
+    procedure RemoveObjectFromActiveSpace(const AID: LongInt);
 
     { : This method draws a 2D object on the viewport.
 
@@ -7543,8 +7601,6 @@ type
   TCADPrgEvent = (ceMouseMove, ceMouseDown, ceMouseUp, ceMouseDblClick,
     ceKeyDown, ceKeyUp, cePaint, ceUserDefined);
 
-  TFNCCADPrg = class;
-
   { : This type define the class type used to specify a <See Class=TCADState> class.
   }
   TCADStateClass = class of TCADState;
@@ -8855,6 +8911,24 @@ function CADSpaceAddObject(const ASpace: TCADSpace2D; const AID: LongInt;
   question asked of whichever space a viewport is showing. }
 function CADSpaceGetObject(const ASpace: TCADSpace2D;
   const AID: LongInt): TGraphicObject;
+{ : Takes the object with that identifier out of ASpace and frees it.
+
+  Raises <See Class=ECADListObjNotFound> if the space does not have it,
+  which is what both the drawing and a sheet do on their own. }
+procedure CADSpaceDeleteObject(const ASpace: TCADSpace2D;
+  const AID: LongInt);
+{ : Takes it out without freeing it: the caller owns it afterwards.
+
+  Removing from one space and adding to another is how an object moves
+  between the model and a sheet - there is no single call for it,
+  because the two spaces number independently and the object has to be
+  given an identifier by the one it arrives in. }
+procedure CADSpaceRemoveObject(const ASpace: TCADSpace2D;
+  const AID: LongInt);
+{ : Changes the drawing order within ASpace: AIDOrigin comes to sit
+  immediately before AIDDestination, which is behind it. }
+procedure CADSpaceMoveObject(const ASpace: TCADSpace2D;
+  const AIDOrigin, AIDDestination: LongInt);
 
 { 2D functions. }
 
@@ -16094,8 +16168,56 @@ begin
   Result := fObjects.Count;
 end;
 
+procedure TCADSheet.DeleteObject(const AID: LongInt);
+var
+  TmpObj: TObject2D;
+begin
+  TmpObj := GetObject(AID);
+  if TmpObj = nil then
+    Raise ECADListObjNotFound.Create
+      ('TCADSheet.DeleteObject: No object found');
+  { Before it goes, so that a handler still has something to look at -
+    a moment later the object has been freed. }
+  if fOwnerCAD <> nil then
+    fOwnerCAD.SheetObjectChanged(Self, TmpObj, scoRemoved);
+  fObjects.Delete(AID);
+end;
+
+procedure TCADSheet.RemoveObject(const AID: LongInt);
+var
+  TmpObj: TObject2D;
+begin
+  TmpObj := GetObject(AID);
+  if TmpObj = nil then
+    Raise ECADListObjNotFound.Create
+      ('TCADSheet.RemoveObject: No object found');
+  if fOwnerCAD <> nil then
+    fOwnerCAD.SheetObjectChanged(Self, TmpObj, scoRemoved);
+  TmpObj.fOwnerCAD := nil;
+  fObjects.Remove(AID);
+end;
+
+procedure TCADSheet.MoveObject(const AIDOrigin, AIDDestination: LongInt);
+begin
+  fObjects.Move(AIDOrigin, AIDDestination);
+  { Nothing was added or removed and no one object is the subject: the
+    drawing order changed, which is a change to the sheet. }
+  if fOwnerCAD <> nil then
+    fOwnerCAD.SheetObjectChanged(Self, nil, scoChanged);
+end;
+
+procedure TCADSheet.ObjectChanged(const AObj: TObject2D);
+begin
+  if fOwnerCAD <> nil then
+    fOwnerCAD.SheetObjectChanged(Self, AObj, scoChanged);
+end;
+
 procedure TCADSheet.DeleteAllObjects;
 begin
+  { One notification with no object: the event's own answer to a change
+    that is not about one of them. }
+  if fOwnerCAD <> nil then
+    fOwnerCAD.SheetObjectChanged(Self, nil, scoRemoved);
   fObjects.Clear;
   fNextID := 0;
 end;
@@ -16379,6 +16501,33 @@ begin
     Result := ASpace.CAD.GetObject(AID)
   else
     Result := nil;
+end;
+
+procedure CADSpaceDeleteObject(const ASpace: TCADSpace2D;
+  const AID: LongInt);
+begin
+  if ASpace.Sheet <> nil then
+    ASpace.Sheet.DeleteObject(AID)
+  else if ASpace.CAD <> nil then
+    ASpace.CAD.DeleteObject(AID);
+end;
+
+procedure CADSpaceRemoveObject(const ASpace: TCADSpace2D;
+  const AID: LongInt);
+begin
+  if ASpace.Sheet <> nil then
+    ASpace.Sheet.RemoveObject(AID)
+  else if ASpace.CAD <> nil then
+    ASpace.CAD.RemoveObject(AID);
+end;
+
+procedure CADSpaceMoveObject(const ASpace: TCADSpace2D;
+  const AIDOrigin, AIDDestination: LongInt);
+begin
+  if ASpace.Sheet <> nil then
+    ASpace.Sheet.MoveObject(AIDOrigin, AIDDestination)
+  else if ASpace.CAD <> nil then
+    ASpace.CAD.MoveObject(AIDOrigin, AIDDestination);
 end;
 
 { ==================================================================
@@ -20115,6 +20264,14 @@ procedure TFNCCADViewport2D.SetSheet(const Value: TCADSheet);
 begin
   if fSheet = Value then
     Exit;
+  { A running task is about the space it was started in: its selection
+    holds objects from that list, and the two spaces number their
+    objects independently, so the same identifier means something else
+    on the other side of this line. Stopping it first is the only
+    honest thing to do with it - and it is a no-op when nothing is
+    running. }
+  if fLinkedPrg <> nil then
+    fLinkedPrg.StopOperation;
   { Going in: remember the model's framing. Coming out: put it back.
     Paper space replaces the viewport's world, and a user who looked at
     a sheet and came back to a drawing framed in millimetres would
@@ -20282,6 +20439,26 @@ begin
       is set, through the viewports it knows about. A sheet has no
       viewports of its own, so the one showing it repaints here. }
     Repaint;
+end;
+
+procedure TFNCCADViewport2D.DeleteObjectFromActiveSpace(const AID: LongInt);
+begin
+  CADSpaceDeleteObject(ActiveSpace, AID);
+  { A sheet has no viewports of its own to tell; a drawing tells all of
+    its own, because deleting a model object changes every view of it. }
+  if fSheet <> nil then
+    Repaint
+  else if fCADCmp2D <> nil then
+    fCADCmp2D.RepaintViewports;
+end;
+
+procedure TFNCCADViewport2D.RemoveObjectFromActiveSpace(const AID: LongInt);
+begin
+  CADSpaceRemoveObject(ActiveSpace, AID);
+  if fSheet <> nil then
+    Repaint
+  else if fCADCmp2D <> nil then
+    fCADCmp2D.RepaintViewports;
 end;
 
 procedure TFNCCADViewport2D.DrawUnderlay(const ARect: TRect2D);
@@ -20488,14 +20665,23 @@ procedure TFNCCADViewport2D.GroupObjects(const ResultLst: TGraphicObjList;
   Frm: TRect2D; const Mode: TGroupMode; const RemoveFromCAD: Boolean);
 var
   Tmp: TObject2D;
+  TmpList: TGraphicObjList;
   TmpObjectsIter: TExclusiveGraphicObjIterator;
 begin
-  if not Assigned(fCADCmp2D) or CADCmp.HasIterators then
+  { The list being edited, by the same rule PickObject follows. This
+    used to be the drawing's own list whatever the viewport was
+    showing, so selecting an area in paper space collected invisible
+    model objects and left the title block the user had drawn a box
+    round unselected. }
+  if not Assigned(fCADCmp2D) then
+    Exit;
+  TmpList := ActiveObjects;
+  if (TmpList = nil) or TmpList.HasIterators then
     Exit;
   StopRepaint;
   Frm := ReorderRect2D(Frm);
   ResultLst.FreeOnClear := RemoveFromCAD;
-  TmpObjectsIter := fCADCmp2D.ObjectsExclusiveIterator;
+  TmpObjectsIter := TmpList.GetExclusiveIterator;
   try
     Tmp := TmpObjectsIter.First as TObject2D;
     while Tmp <> nil do
@@ -22963,6 +23149,7 @@ begin
   begin
     if fShowCursorCross then
       HideCursorCross;
+    fLinkedViewport.fLinkedPrg := nil;
     fLinkedViewport.OnCADMouseDown := nil;
     fLinkedViewport.OnCADMouseMove := nil;
     fLinkedViewport.OnCADMouseUp := nil;
@@ -22976,6 +23163,7 @@ begin
   if Assigned(V) then
   begin
     V.FreeNotification(Self);
+    V.fLinkedPrg := Self;
     V.OnCADMouseDown := ViewOnMouseDown;
     V.OnCADMouseMove := ViewOnMouseMove;
     V.OnCADMouseUp := ViewOnMouseUp;

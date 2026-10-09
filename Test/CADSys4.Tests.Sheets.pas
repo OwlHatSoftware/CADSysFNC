@@ -114,6 +114,14 @@ type
     procedure ASheetKeepsItsOwnIdCounter;
     [Test]
     procedure AnObjectOnASheetStillBelongsToTheDrawing;
+    [Test]
+    procedure DeletingFromASheetTellsTheDrawing;
+    [Test]
+    procedure SayingAnObjectChangedTellsTheDrawing;
+    [Test]
+    procedure ClearingASheetReportsOnceWithNoObject;
+    [Test]
+    procedure DeletingSomethingThatIsNotThereRaises;
   end;
 
   { : TCADSpace2D - the pair that says which space an operation works
@@ -144,6 +152,14 @@ type
     procedure TheSameIdentifierMeansTwoDifferentObjects;
     [Test]
     procedure ASheetReloadsWithTheIdentifiersItWasSavedWith;
+    [Test]
+    procedure DeletingThroughASpaceTakesItFromThatSpace;
+    [Test]
+    procedure RemovingHandsTheObjectToTheCaller;
+    [Test]
+    procedure AnObjectMovesBetweenSpacesByRemoveAndAdd;
+    [Test]
+    procedure MovingChangesTheOrderTheSpaceIsDrawnIn;
   end;
 
   { : The explode family, which until now put its pieces in the drawing
@@ -1012,6 +1028,60 @@ begin
     'fifty millimetres past the right edge, at three units each');
 end;
 
+procedure TCADSheetEditingTests.DeletingFromASheetTellsTheDrawing;
+var
+  TmpLine: TObject2D;
+begin
+  TmpLine := FSheet.AddObject(TLine2D.Create(-1, Point2D(1, 1),
+    Point2D(2, 2)));
+  FLog.Clear;
+  FSheet.DeleteObject(TmpLine.ID);
+  Assert.AreEqual(1, FLog.Count, 'one report');
+  { Named, because the report goes out before the object is freed: a
+    handler that wants to put it on an undo stack has to be able to
+    look at it. }
+  Assert.AreEqual('removed Plan TLine2D', FLog[0], 'what went');
+  Assert.AreEqual(0, FSheet.ObjectsCount, 'and it is off the sheet');
+end;
+
+procedure TCADSheetEditingTests.SayingAnObjectChangedTellsTheDrawing;
+var
+  TmpLine: TObject2D;
+begin
+  TmpLine := FSheet.AddObject(TLine2D.Create(-1, Point2D(1, 1),
+    Point2D(2, 2)));
+  FLog.Clear;
+  { A sheet cannot notice a transform by itself - whoever did it says
+    so. This is the channel an application marking a file modified
+    listens on. }
+  FSheet.ObjectChanged(TmpLine);
+  Assert.AreEqual(1, FLog.Count, 'one report');
+  Assert.AreEqual('changed Plan TLine2D', FLog[0], 'and what it says');
+end;
+
+procedure TCADSheetEditingTests.ClearingASheetReportsOnceWithNoObject;
+begin
+  FSheet.AddObject(TLine2D.Create(-1, Point2D(1, 1), Point2D(2, 2)));
+  FSheet.AddObject(TLine2D.Create(-1, Point2D(3, 3), Point2D(4, 4)));
+  FLog.Clear;
+  FSheet.DeleteAllObjects;
+  { Not one report per object: the event documents a nil object as a
+    change that is not about one of them, and this is that. }
+  Assert.AreEqual(1, FLog.Count, 'once for the lot');
+  Assert.AreEqual('removed Plan', FLog[0], 'with no object named');
+end;
+
+procedure TCADSheetEditingTests.DeletingSomethingThatIsNotThereRaises;
+begin
+  { The drawing's own answer, so that an application handles one case
+    and not two. }
+  Assert.WillRaise(
+    procedure
+    begin
+      FSheet.DeleteObject(42);
+    end, ECADListObjNotFound, 'nothing with that identifier');
+end;
+
 { ==================================================================
   TCADSpaceTests
   ================================================================== }
@@ -1136,6 +1206,78 @@ begin
   finally
     TmpBack.Free;
   end;
+end;
+
+procedure TCADSpaceTests.DeletingThroughASpaceTakesItFromThatSpace;
+begin
+  { Both spaces hold an object numbered nought, which is the whole
+    trap: deleting "object nought" has to mean the one in the space the
+    user is looking at. }
+  FCAD.AddObject(0, TLine2D.Create(0, Point2D(0, 0), Point2D(10, 10)));
+  FSheet.AddObject(TFrame2D.Create(-1, Point2D(0, 0), Point2D(50, 20)));
+
+  CADSpaceDeleteObject(CADSpace(FCAD, FSheet), 0);
+  Assert.AreEqual(0, FSheet.ObjectsCount, 'off the paper');
+  Assert.AreEqual(1, FCAD.ObjectsCount, 'and the model''s nought is still there');
+
+  CADSpaceDeleteObject(CADSpace(FCAD), 0);
+  Assert.AreEqual(0, FCAD.ObjectsCount, 'and now it is not');
+end;
+
+procedure TCADSpaceTests.RemovingHandsTheObjectToTheCaller;
+var
+  TmpLine: TObject2D;
+begin
+  TmpLine := FSheet.AddObject(TLine2D.Create(-1, Point2D(1, 1),
+    Point2D(2, 2)));
+  CADSpaceRemoveObject(CADSpace(FCAD, FSheet), TmpLine.ID);
+  Assert.AreEqual(0, FSheet.ObjectsCount, 'off the sheet');
+  Assert.IsNull(TmpLine.OwnerCAD, 'and answering to nobody');
+  { Ours now - the sheet would have freed it, a remove does not. }
+  TmpLine.Free;
+end;
+
+procedure TCADSpaceTests.AnObjectMovesBetweenSpacesByRemoveAndAdd;
+var
+  TmpLine: TObject2D;
+begin
+  { There is no one call for this on purpose: the two spaces number
+    independently, so the object has to be given an identifier by the
+    one it arrives in. }
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(1, 1)));
+  TmpLine := FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(2, 2),
+    Point2D(3, 3))) as TObject2D;
+  Assert.AreEqual(1, TmpLine.ID, 'the drawing''s one');
+
+  CADSpaceRemoveObject(CADSpace(FCAD), TmpLine.ID);
+  CADSpaceAddObject(CADSpace(FCAD, FSheet), -1, TmpLine);
+
+  Assert.AreEqual(1, FCAD.ObjectsCount, 'gone from the model');
+  Assert.AreEqual(1, FSheet.ObjectsCount, 'and on the paper');
+  Assert.AreEqual(0, TmpLine.ID, 'renumbered by the space it arrived in');
+  Assert.AreSame(TObject(FCAD), TObject(TmpLine.OwnerCAD),
+    'still the drawing''s own object');
+end;
+
+procedure TCADSpaceTests.MovingChangesTheOrderTheSpaceIsDrawnIn;
+var
+  TmpIter: TGraphicObjIterator;
+  TmpFirst: LongInt;
+begin
+  { List order is drawing order, and a move puts the object in front of
+    the insertion point in the list - that is, behind it on the paper.
+    So this sends one behind nought, and one comes out first. }
+  FSheet.AddObject(TLine2D.Create(-1, Point2D(0, 0), Point2D(1, 1)));
+  FSheet.AddObject(TLine2D.Create(-1, Point2D(2, 2), Point2D(3, 3)));
+  CADSpaceMoveObject(CADSpace(FCAD, FSheet), 1, 0);
+  TmpIter := FSheet.ObjectsIterator;
+  try
+    TmpFirst := TmpIter.First.ID;
+  finally
+    TmpIter.Free;
+  end;
+  Assert.AreEqual(1, Integer(TmpFirst), 'one is drawn first now');
+  Assert.AreEqual(2, FSheet.ObjectsCount, 'and nothing was lost');
 end;
 
 { ==================================================================

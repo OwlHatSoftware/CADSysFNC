@@ -154,6 +154,7 @@ type
     procedure RotateClick(Sender: TObject);
     procedure EditClick(Sender: TObject);
     procedure DefBlockClick(Sender: TObject);
+    procedure DeleteSelectionClick(Sender: TObject);
     procedure AddBlockClick(Sender: TObject);
 
     { ---- program control ---- }
@@ -210,6 +211,15 @@ type
       var NextState: TCADStateClass); override;
   end;
 
+  { : The state that deletes a selection from whichever space the
+    viewport is showing - the model, or the sheet on the screen. }
+  TMyCADDeleteSelection = class(TCADState)
+  public
+    constructor Create(const CADPrg: TFNCCADPrg;
+      const StateParam: TCADPrgParam;
+      var NextState: TCADStateClass); override;
+  end;
+
 var
   MainForm: TMainForm;
 
@@ -258,6 +268,48 @@ begin
       end;
       CADPrg.RepaintAfterOperation;
     end;
+  NextState := CADPrg.DefaultState;
+  Param.Free;
+  Param := nil;
+end;
+
+constructor TMyCADDeleteSelection.Create(const CADPrg: TFNCCADPrg;
+  const StateParam: TCADPrgParam; var NextState: TCADStateClass);
+var
+  TmpIter: TGraphicObjIterator;
+  TmpView: TFNCCADViewport2D;
+  TmpIDs: array of LongInt;
+  TmpCount, Cont: Integer;
+begin
+  inherited;
+  if Param is TCAD2DSelectObjectsParam then
+  begin
+    TmpView := TFNCCADPrg2D(CADPrg).Viewport2D;
+    { The identifiers first and the deletions afterwards: a delete frees
+      the object, and walking a list of references to freed objects is
+      asking for trouble. }
+    SetLength(TmpIDs, TCAD2DSelectObjectsParam(Param).SelectedObjects.Count);
+    TmpCount := 0;
+    TmpIter := TCAD2DSelectObjectsParam(Param).SelectedObjects.GetIterator;
+    try
+      TmpIter.First;
+      while TmpIter.Current <> nil do
+      begin
+        TmpIDs[TmpCount] := TmpIter.Current.ID;
+        Inc(TmpCount);
+        TmpIter.Next;
+      end;
+    finally
+      TmpIter.Free;
+    end;
+    { Through the active space, which is the point of the command being
+      here at all: on a sheet this takes the object off the paper
+      instead of hunting down the model object that happens to share
+      the number. }
+    for Cont := 0 to TmpCount - 1 do
+      TmpView.DeleteObjectFromActiveSpace(TmpIDs[Cont]);
+    CADPrg.RepaintAfterOperation;
+  end;
   NextState := CADPrg.DefaultState;
   Param.Free;
   Param := nil;
@@ -452,6 +504,7 @@ begin
   fCancelItem := AddItem(TmpEdit, 'Cancel', CancelClick);
   AddSeparator(TmpEdit);
   AddItem(TmpEdit, 'Set point...', SetPointClick);
+  AddItem(TmpEdit, 'Delete selection', DeleteSelectionClick);
   AddSeparator(TmpEdit);
   AddItem(TmpEdit, 'Layers...', LayersClick);
   fUseAreaItem := AddCheckItem(TmpEdit, 'Use area to select objects',
@@ -946,6 +999,13 @@ end;
 procedure TMainForm.DefBlockClick(Sender: TObject);
 begin
   StartSelection(TMyCADCreateTheSourceBlock);
+end;
+
+procedure TMainForm.DeleteSelectionClick(Sender: TObject);
+begin
+  { The same command in both spaces, on purpose: what gets picked and
+    what gets deleted is whatever the viewport is showing. }
+  StartSelection(TMyCADDeleteSelection);
 end;
 
 procedure TMainForm.AddBlockClick(Sender: TObject);
