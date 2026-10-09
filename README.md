@@ -217,6 +217,9 @@ Documentations\ the original CADSys 4.2 help file and change log
 
 * [docs/migrating.md](docs/migrating.md) — what changed from CADSys 4.2, and what
   existing code has to change.
+* [docs/paper-space.md](docs/paper-space.md) — editable paper space: the two
+  spaces, what an application calls to draw, select, delete and group on a
+  sheet, and how a viewport is taken hold of.
 * [docs/json-format.md](docs/json-format.md) — the persisted document format.
 * [docs/port/](docs/port/) — the port history and the pre-port code review. These
   are a record of how the library got here, not a user guide, and they are kept

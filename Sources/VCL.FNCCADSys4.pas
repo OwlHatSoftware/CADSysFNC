@@ -4247,6 +4247,17 @@ type
       drawed on the screen (by using clipping).
     }
     property VisualRect: TRect2D read fVisualWindow write ZoomWindow;
+    { : One device pixel as a rectangle of the world, in the viewport's
+      present framing: X is how wide a pixel is, Y how tall.
+
+      The number every hit test is measured in. PickObject multiplies
+      it by the aperture in pixels to get an aperture in world units,
+      and an application doing its own hit testing - against a sheet
+      viewport's edges and corners, say - has to use the same figure
+      or its idea of "near enough" will disagree with the library's at
+      every zoom level. Public for that reason; GetPixelAperture, which
+      it calls, is protected because it is the overridable half. }
+    function PixelAperture: TPoint2D;
     { : This property may contains a <See Class=TGraphicObjList> instance
       to be used instead of the display list of the associated TFNCCADCmp
       control.
@@ -20973,6 +20984,11 @@ begin
   finally
     TmpObjectsIter.Free;
   end;
+end;
+
+function TFNCCADViewport.PixelAperture: TPoint2D;
+begin
+  Result := GetPixelAperture;
 end;
 
 function TFNCCADViewport2D.PickObject(Pt: TPoint2D; Aperture: Word;

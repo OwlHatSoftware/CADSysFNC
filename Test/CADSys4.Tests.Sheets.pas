@@ -275,6 +275,8 @@ type
     procedure AHandleIsNotDrawnOnPaper;
     [Test]
     procedure TheViewportUnderAPointInMillimetres;
+    [Test]
+    procedure AHandleIsPickableOnItsEdgesAndItsCorners;
   end;
 
   { : The viewport's own numbers: where it looks, how far in, and what a
@@ -1085,6 +1087,43 @@ begin
     'the one on top');
   Assert.AreEqual(0, FSheet.ViewportIndexAt(Point2D(20, 15)),
     'and where they do not overlap, the first');
+end;
+
+procedure TCADSheetViewportProxyTests.AHandleIsPickableOnItsEdgesAndItsCorners;
+var
+  TmpProxy: TCADSheetViewportProxy2D;
+  TmpDist: TRealType;
+begin
+  CADSheetShowViewportProxies(FSheet);
+  TmpProxy := CADSheetViewportProxy(FSheet, FViewport);
+  { The rectangle is 10,10 to 110,60. An aperture of 3 mm, which is
+    about what five pixels comes to on a sheet on the screen. }
+
+  TmpDist := 0;
+  Assert.AreEqual(PICK_ONOBJECT,
+    TmpProxy.OnMe(Point2D(60, 10.5), 3, TmpDist),
+    'the middle of an edge');
+
+  TmpDist := 0;
+  Assert.AreEqual(PICK_INBBOX,
+    TmpProxy.OnMe(Point2D(60, 35), 3, TmpDist),
+    'the middle of the rectangle is in the box and on nothing');
+
+  { Diagonally outside a corner. The library measures a point against a
+    line by projecting it onto the segment, so past the end of one it
+    counts as on neither of the two that meet there - and a corner is
+    exactly where somebody reaches to resize. This is the case the
+    demo found by hand: a click at 405,54, 39,34 against a corner at
+    405, 40 came back PICK_INBBOX and selected nothing. }
+  TmpDist := 0;
+  Assert.AreEqual(PICK_ONOBJECT,
+    TmpProxy.OnMe(Point2D(110.6, 9.4), 3, TmpDist),
+    'and just outside a corner');
+
+  TmpDist := 0;
+  Assert.AreEqual(PICK_NOOBJECT,
+    TmpProxy.OnMe(Point2D(130, 80), 3, TmpDist),
+    'well away from it, nothing');
 end;
 
 { ==================================================================

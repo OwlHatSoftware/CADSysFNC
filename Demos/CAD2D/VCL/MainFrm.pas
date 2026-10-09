@@ -79,6 +79,12 @@ type
     fUseSnapItem: TMenuItem;
     fUseOrtoItem: TMenuItem;
     fUseAreaItem: TMenuItem;
+    { : Whether the sheet's viewports have their handles on. }
+    fHandlesItem: TMenuItem;
+    { : Where the mouse was last seen, in world coordinates - paper
+      millimetres while a sheet is showing. Only the pick report uses
+      it. }
+    fLastWorldPt: TPoint2D;
     fLeftItem: TMenuItem;
     fCenterItem: TMenuItem;
     fRightItem: TMenuItem;
@@ -155,6 +161,11 @@ type
     procedure EditClick(Sender: TObject);
     procedure DefBlockClick(Sender: TObject);
     procedure DeleteSelectionClick(Sender: TObject);
+    procedure ViewportHandlesClick(Sender: TObject);
+    procedure MarkViewportHandles;
+    procedure PickReportClick(Sender: TObject);
+    procedure ViewMouseDown2D(Sender: TObject; Button: TMouseButton;
+      Shift: TShiftState; WX, WY: TRealType; X, Y: Integer);
     procedure AddBlockClick(Sender: TObject);
 
     { ---- program control ---- }
@@ -232,6 +243,11 @@ const
     because on the VCL they cannot be constants. }
   BarColumns = 5;
   BarRows = 4;
+
+  { The layer this demo draws viewport handles on. High, so that it is
+    out of the way of anything a drawing uses, and set up when the
+    handles are first turned on. }
+  DEMO_HANDLE_LAYER = 254;
 
 constructor TMyCADCreateTheSourceBlock.Create(const CADPrg: TFNCCADPrg;
   const StateParam: TCADPrgParam; var NextState: TCADStateClass);
@@ -500,11 +516,21 @@ begin
   AddItem(TmpFile, 'Exit', ExitClick);
 
   TmpEdit := AddMenu(fMenu.Items, 'Edit');
-  fAcceptItem := AddItem(TmpEdit, 'Accept', AcceptClick);
-  fCancelItem := AddItem(TmpEdit, 'Cancel', CancelClick);
+  { F2 and F3: a task that needs Accept in the middle of it should not
+    need a trip to the menu, which is where the mouse is not. }
+  fAcceptItem := AddItem(TmpEdit, 'Accept  F2', AcceptClick);
+  fAcceptItem.ShortCut := TextToShortCut('F2');
+  fCancelItem := AddItem(TmpEdit, 'Cancel  F3', CancelClick);
+  fCancelItem.ShortCut := TextToShortCut('F3');
   AddSeparator(TmpEdit);
   AddItem(TmpEdit, 'Set point...', SetPointClick);
   AddItem(TmpEdit, 'Delete selection', DeleteSelectionClick);
+  fHandlesItem := AddCheckItem(TmpEdit, 'Viewport handles',
+    ViewportHandlesClick, False);
+  { F8, because the report asks about wherever the mouse was last seen
+    over the drawing - and walking to the menu moves it. }
+  AddItem(TmpEdit, 'Pick report (log)  F8', PickReportClick).ShortCut :=
+    TextToShortCut('F8');
   AddSeparator(TmpEdit);
   AddItem(TmpEdit, 'Layers...', LayersClick);
   fUseAreaItem := AddCheckItem(TmpEdit, 'Use area to select objects',
@@ -628,6 +654,10 @@ begin
   Log('BuildControls: TFNCCADPrg2D');
   fPrg := TFNCCADPrg2D.Create(Self);
   fPrg.Viewport2D := fView;
+  { Every click logged with what the library picks at that point, and
+    which task is running. The three questions asked of a click that
+    seems to do nothing, answered in one line. }
+  fView.OnMouseDown2D := ViewMouseDown2D;
   fPrg.OnStartOperation := PrgStartOperation;
   fPrg.OnEndOperation := PrgEndOperation;
   fPrg.OnStopOperation := PrgStopOperation;
@@ -754,6 +784,8 @@ begin
     vertical one Y. }
   fRuler.SetMark(WX);
   fVRuler.SetMark(WY);
+  { Kept for the pick report below, which has to ask about somewhere. }
+  fLastWorldPt := Point2D(WX, WY);
 end;
 
 procedure TMainForm.ViewDblClick(Sender: TObject);
@@ -795,6 +827,8 @@ end;
 procedure TMainForm.PrgStartOperation(Sender: TObject;
   const Operation: TCADStateClass; const Param: TCADPrgParam);
 begin
+  if Operation <> nil then
+    Log('task start: ' + Operation.ClassName);
   if Assigned(fCurrentOpBtn) then
   begin
     fCurrentOpText := fCurrentOpBtn.Caption;
@@ -827,7 +861,25 @@ procedure TMainForm.OnSelectedObj(Sender: TCAD2DSelectObjectsParam;
   Obj: TObject2D; CtrlPt: Integer; Added: Boolean);
 begin
   if Assigned(Obj) then
+  begin
     fView.DrawObject2DWithRubber(Obj, True);
+    { Logged, because the rubber pen over a shape of the same colour
+      can be hard to see, and "did it select?" is the first question
+      asked of every one of these tasks.
+
+      Only a real pick: the task also calls this for every selected
+      object on every repaint, so that an application can put its
+      highlight back, and those carry PICK_NOOBJECT. Logging them too
+      buried the one line that mattered under a hundred that did
+      not. }
+    if CtrlPt <= PICK_INBBOX then
+      Exit;
+    if Added then
+      Log(Format('selected %s id %d, control point %d',
+        [Obj.ClassName, Obj.ID, CtrlPt]))
+    else
+      Log(Format('deselected %s id %d', [Obj.ClassName, Obj.ID]));
+  end;
 end;
 
 procedure TMainForm.PopupShown(Sender: TObject);
@@ -999,6 +1051,153 @@ end;
 procedure TMainForm.DefBlockClick(Sender: TObject);
 begin
   StartSelection(TMyCADCreateTheSourceBlock);
+end;
+
+{ Puts every viewport handle on the sheet onto the handle layer. Done
+  after showing them, and again after switching sheets, because a new
+  handle arrives on layer zero like anything else added to a sheet. }
+procedure TMainForm.MarkViewportHandles;
+var
+  Cont: Integer;
+  TmpProxy: TCADSheetViewportProxy2D;
+begin
+  if fView.Sheet = nil then
+    Exit;
+  for Cont := 0 to fView.Sheet.ViewportCount - 1 do
+  begin
+    TmpProxy := CADSheetViewportProxy(fView.Sheet, fView.Sheet.Viewports[Cont]);
+    if TmpProxy <> nil then
+      TmpProxy.Layer := DEMO_HANDLE_LAYER;
+  end;
+end;
+
+{ Says, in the log, what the library thinks is under the mouse: every
+  object on the sheet with its box, its flags and what its own OnMe
+  answers, and then what PickObject picks. For working out why
+  something that is plainly on the screen cannot be selected - the
+  answer is always one of those numbers, and guessing which is slower
+  than reading it. }
+procedure TMainForm.ViewMouseDown2D(Sender: TObject;
+  Button: TMouseButton; Shift: TShiftState; WX, WY: TRealType;
+  X, Y: Integer);
+var
+  TmpPicked: TObject2D;
+  TmpNPoint: Integer;
+  TmpWhat, TmpTask: String;
+begin
+  TmpNPoint := 0;
+  TmpPicked := fView.PickObject(Point2D(WX, WY), 5, False, TmpNPoint);
+  if TmpPicked = nil then
+    TmpWhat := 'nothing'
+  else
+    TmpWhat := Format('%s id %d point %d',
+      [TmpPicked.ClassName, TmpPicked.ID, TmpNPoint]);
+  if fPrg.IsBusy and (fPrg.CurrentOperation <> nil) then
+    TmpTask := fPrg.CurrentOperation.ClassName
+  else if fPrg.IsBusy then
+    TmpTask := 'busy, no class'
+  else
+    TmpTask := 'idle';
+  Log(Format('click %d at %.2f, %.2f %s - picks %s, task %s',
+    [Ord(Button), WX, WY, BoolToStr(fView.Sheet <> nil, True), TmpWhat,
+    TmpTask]));
+end;
+
+procedure TMainForm.PickReportClick(Sender: TObject);
+var
+  TmpIter: TGraphicObjIterator;
+  TmpObj, TmpPicked: TObject2D;
+  TmpDist, TmpAperture: TRealType;
+  TmpNPoint: Integer;
+begin
+  if fView.Sheet = nil then
+  begin
+    Say('Show a sheet first - this reports on paper space.');
+    Exit;
+  end;
+  if fPrg.IsBusy then
+    fPrg.StopOperation;
+  { The same figure PickObject measures in - a pixel in world units,
+    times the aperture in pixels. }
+  TmpAperture := fView.PixelAperture.X * 5;
+  Log(Format('pick report at %.3f, %.3f mm, aperture %.4f mm',
+    [fLastWorldPt.X, fLastWorldPt.Y, TmpAperture]));
+  Log(Format('  active list %d object(s), sheet %d object(s)',
+    [fView.ActiveObjects.Count, fView.Sheet.ObjectsCount]));
+  Log(Format('  area select %s, pick filter %s',
+    [BoolToStr(fUseAreaItem.Checked, True), fView.PickFilter.ClassName]));
+  TmpIter := fView.Sheet.ObjectsIterator;
+  try
+    TmpObj := TObject2D(TmpIter.First);
+    while TmpObj <> nil do
+    begin
+      TmpDist := 0;
+      Log(Format('  %s id %d layer %d box %.2f,%.2f..%.2f,%.2f ' +
+        'enabled %s visible %s onme %d',
+        [TmpObj.ClassName, TmpObj.ID, TmpObj.Layer, TmpObj.Box.Left,
+        TmpObj.Box.Bottom, TmpObj.Box.Right, TmpObj.Box.Top,
+        BoolToStr(TmpObj.Enabled, True),
+        BoolToStr(TmpObj.IsVisible(fView.VisualRect, fView.DrawMode), True),
+        TmpObj.OnMe(fLastWorldPt, TmpAperture, TmpDist)]));
+      TmpObj := TObject2D(TmpIter.Next);
+    end;
+  finally
+    { Freed before PickObject: it refuses to run while the list it
+      walks has an iterator open on it. }
+    TmpIter.Free;
+  end;
+  TmpNPoint := 0;
+  TmpPicked := fView.PickObject(fLastWorldPt, 5, False, TmpNPoint);
+  if TmpPicked = nil then
+    Log('  PickObject: nothing')
+  else
+    Log(Format('  PickObject: %s id %d, point %d',
+      [TmpPicked.ClassName, TmpPicked.ID, TmpNPoint]));
+  { No dialog: it would be in the way of pressing F8 twice, and the
+    log is the output. }
+  if fStateLbl <> nil then
+    fStateLbl.Caption := Format('pick report written at %.1f, %.1f',
+      [fLastWorldPt.X, fLastWorldPt.Y]);
+end;
+
+procedure TMainForm.ViewportHandlesClick(Sender: TObject);
+begin
+  if fView.Sheet = nil then
+  begin
+    Say('Viewport handles are a paper-space thing. File - Show sheet / '
+      + 'model first.');
+    Exit;
+  end;
+  fHandlesItem.Checked := not fHandlesItem.Checked;
+  if fHandlesItem.Checked then
+  begin
+    { A layer of their own first. A handle is exactly the viewport's
+      rectangle, so it lands precisely on top of the border the
+      viewport already draws - turning them on looked like nothing
+      happening at all until they were given a pen that says
+      "handle". The library has no opinion about how they look; this
+      is the application deciding. }
+    fCAD.Layers[DEMO_HANDLE_LAYER].Name := 'Viewport handles';
+    fCAD.Layers[DEMO_HANDLE_LAYER].Pen.Color := TColorToCADColor(cadtcRed);
+    fCAD.Layers[DEMO_HANDLE_LAYER].Pen.Style := cpsDash;
+    { One object per viewport, on the sheet, standing in for a
+      rectangle that is not an object. From here on the ordinary tools
+      work on it: pick it and drag it with Move, take a corner with
+      Edit primitive, catch it in an area selection. }
+    CADSheetShowViewportProxies(fView.Sheet);
+    MarkViewportHandles;
+    Log(Format('viewport handles on: %d', [fView.Sheet.ViewportCount]));
+    Say('Handles on - the red dashed rectangles, one per viewport, '
+      + 'sitting on the viewport borders. Move drags one, Edit '
+      + 'primitive takes a corner. They are not saved and not '
+      + 'printed: try the print preview with them on.');
+  end
+  else
+  begin
+    CADSheetHideViewportProxies(fView.Sheet);
+    Log('viewport handles off');
+  end;
+  fView.Repaint;
 end;
 
 procedure TMainForm.DeleteSelectionClick(Sender: TObject);
@@ -1565,6 +1764,19 @@ begin
       fView.Sheet.ObjectsCount]));
     Say(Format('Showing %s. The rulers are in millimetres of paper now, '
       + 'and so is everything you draw.', [fView.Sheet.Name]));
+  end;
+  { Handles belong to the sheet on the screen, so they follow it - and
+    there are none to have in the model. The ones left on the sheet we
+    just put down do no harm: they are not saved and not printed. }
+  if fHandlesItem.Checked then
+  begin
+    if fView.Sheet <> nil then
+    begin
+      CADSheetShowViewportProxies(fView.Sheet);
+      MarkViewportHandles;
+    end
+    else
+      fHandlesItem.Checked := False;
   end;
   fView.Repaint;
 end;

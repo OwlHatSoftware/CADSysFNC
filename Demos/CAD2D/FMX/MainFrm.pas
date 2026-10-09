@@ -86,6 +86,8 @@ type
     fUseSnapItem: TMenuItem;
     fUseOrtoItem: TMenuItem;
     fUseAreaItem: TMenuItem;
+    { : Whether the sheet's viewports have their handles on. }
+    fHandlesItem: TMenuItem;
     fLeftItem: TMenuItem;
     fCenterItem: TMenuItem;
     fRightItem: TMenuItem;
@@ -157,6 +159,8 @@ type
     procedure EditClick(Sender: TObject);
     procedure DefBlockClick(Sender: TObject);
     procedure DeleteSelectionClick(Sender: TObject);
+    procedure ViewportHandlesClick(Sender: TObject);
+    procedure MarkViewportHandles;
     procedure AddBlockClick(Sender: TObject);
 
     { ---- program control ---- }
@@ -236,6 +240,11 @@ const
     to mirror the VCL demo - here they really are constants. }
   BarColumns = 5;
   BarRows = 4;
+
+  { The layer this demo draws viewport handles on. High, so that it is
+    out of the way of anything a drawing uses, and set up when the
+    handles are first turned on. }
+  DEMO_HANDLE_LAYER = 254;
 
 constructor TMyCADCreateTheSourceBlock.Create(const CADPrg: TFNCCADPrg;
   const StateParam: TCADPrgParam; var NextState: TCADStateClass);
@@ -471,6 +480,8 @@ begin
   AddSeparator(TmpEdit);
   AddItem(TmpEdit, 'Set point...', SetPointClick);
   AddItem(TmpEdit, 'Delete selection', DeleteSelectionClick);
+  fHandlesItem := AddCheckItem(TmpEdit, 'Viewport handles',
+    ViewportHandlesClick, False);
   AddSeparator(TmpEdit);
   AddItem(TmpEdit, 'Layers...', LayersClick);
   fUseAreaItem := AddCheckItem(TmpEdit, 'Use area to select objects',
@@ -787,7 +798,25 @@ procedure TMainForm.OnSelectedObj(Sender: TCAD2DSelectObjectsParam;
   Obj: TObject2D; CtrlPt: Integer; Added: Boolean);
 begin
   if Assigned(Obj) then
+  begin
     fView.DrawObject2DWithRubber(Obj, True);
+    { Logged, because the rubber pen over a shape of the same colour
+      can be hard to see, and "did it select?" is the first question
+      asked of every one of these tasks.
+
+      Only a real pick: the task also calls this for every selected
+      object on every repaint, so that an application can put its
+      highlight back, and those carry PICK_NOOBJECT. Logging them too
+      buried the one line that mattered under a hundred that did
+      not. }
+    if CtrlPt <= PICK_INBBOX then
+      Exit;
+    if Added then
+      Log(Format('selected %s id %d, control point %d',
+        [Obj.ClassName, Obj.ID, CtrlPt]))
+    else
+      Log(Format('deselected %s id %d', [Obj.ClassName, Obj.ID]));
+  end;
 end;
 
 procedure TMainForm.PopupShown(Sender: TObject);
@@ -959,6 +988,64 @@ end;
 procedure TMainForm.DefBlockClick(Sender: TObject);
 begin
   StartSelection(TMyCADCreateTheSourceBlock);
+end;
+
+{ Puts every viewport handle on the sheet onto the handle layer. Done
+  after showing them, and again after switching sheets, because a new
+  handle arrives on layer zero like anything else added to a sheet. }
+procedure TMainForm.MarkViewportHandles;
+var
+  Cont: Integer;
+  TmpProxy: TCADSheetViewportProxy2D;
+begin
+  if fView.Sheet = nil then
+    Exit;
+  for Cont := 0 to fView.Sheet.ViewportCount - 1 do
+  begin
+    TmpProxy := CADSheetViewportProxy(fView.Sheet, fView.Sheet.Viewports[Cont]);
+    if TmpProxy <> nil then
+      TmpProxy.Layer := DEMO_HANDLE_LAYER;
+  end;
+end;
+
+procedure TMainForm.ViewportHandlesClick(Sender: TObject);
+begin
+  if fView.Sheet = nil then
+  begin
+    Say('Viewport handles are a paper-space thing. File - Show sheet / '
+      + 'model first.');
+    Exit;
+  end;
+  fHandlesItem.IsChecked := not fHandlesItem.IsChecked;
+  if fHandlesItem.IsChecked then
+  begin
+    { A layer of their own first. A handle is exactly the viewport's
+      rectangle, so it lands precisely on top of the border the
+      viewport already draws - turning them on looked like nothing
+      happening at all until they were given a pen that says
+      "handle". The library has no opinion about how they look; this
+      is the application deciding. }
+    fCAD.Layers[DEMO_HANDLE_LAYER].Name := 'Viewport handles';
+    fCAD.Layers[DEMO_HANDLE_LAYER].Pen.Color := TColorToCADColor(cadtcRed);
+    fCAD.Layers[DEMO_HANDLE_LAYER].Pen.Style := cpsDash;
+    { One object per viewport, on the sheet, standing in for a
+      rectangle that is not an object. From here on the ordinary tools
+      work on it: pick it and drag it with Move, take a corner with
+      Edit primitive, catch it in an area selection. }
+    CADSheetShowViewportProxies(fView.Sheet);
+    MarkViewportHandles;
+    Log(Format('viewport handles on: %d', [fView.Sheet.ViewportCount]));
+    Say('Handles on - the red dashed rectangles, one per viewport, '
+      + 'sitting on the viewport borders. Move drags one, Edit '
+      + 'primitive takes a corner. They are not saved and not '
+      + 'printed: try the print preview with them on.');
+  end
+  else
+  begin
+    CADSheetHideViewportProxies(fView.Sheet);
+    Log('viewport handles off');
+  end;
+  fView.Repaint;
 end;
 
 procedure TMainForm.DeleteSelectionClick(Sender: TObject);
@@ -1513,6 +1600,19 @@ begin
       fView.Sheet.ObjectsCount]));
     Say(Format('Showing %s. The rulers are in millimetres of paper now, '
       + 'and so is everything you draw.', [fView.Sheet.Name]));
+  end;
+  { Handles belong to the sheet on the screen, so they follow it - and
+    there are none to have in the model. The ones left on the sheet we
+    just put down do no harm: they are not saved and not printed. }
+  if fHandlesItem.IsChecked then
+  begin
+    if fView.Sheet <> nil then
+    begin
+      CADSheetShowViewportProxies(fView.Sheet);
+      MarkViewportHandles;
+    end
+    else
+      fHandlesItem.IsChecked := False;
   end;
   fView.Repaint;
 end;

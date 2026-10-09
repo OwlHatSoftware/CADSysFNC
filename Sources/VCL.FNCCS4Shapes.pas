@@ -602,6 +602,17 @@ type
       const AViewport: TCADSheetViewport);
     { : The viewport this stands in for. }
     function StandsFor: TObject; override;
+    { : As the inherited one, and the four corners as well.
+
+      The library measures a point against a line by projecting it onto
+      the segment, so a point past the end of a segment counts as being
+      on neither of the two lines that meet there: diagonally outside a
+      corner is a small blind spot. On an ordinary shape that is a
+      curiosity. On a handle it is the one place somebody reaches for,
+      because a corner is what you take hold of to resize something, so
+      here the corners get an aperture of their own. }
+    function OnMe(Pt: TPoint2D; Aperture: TRealType;
+      var Distance: TRealType): Integer; override;
     { : Takes the rectangle from the viewport again, for a viewport that
       was changed in code rather than by dragging this. }
     procedure Refresh;
@@ -4229,6 +4240,27 @@ begin
     the two are the same numbers and no conversion belongs here. }
   if fViewport <> nil then
     fViewport.RectMM := ReorderRect2D(Box);
+end;
+
+function TCADSheetViewportProxy2D.OnMe(Pt: TPoint2D; Aperture: TRealType;
+  var Distance: TRealType): Integer;
+var
+  TmpRect: TRect2D;
+  TmpDist: TRealType;
+begin
+  Result := inherited OnMe(Pt, Aperture, Distance);
+  if Result > PICK_INBBOX then
+    Exit;
+  TmpRect := ReorderRect2D(Box);
+  TmpDist := {%H-}MinValue([PointDistance2D(Pt, TmpRect.FirstEdge),
+    PointDistance2D(Pt, Point2D(TmpRect.Left, TmpRect.Top)),
+    PointDistance2D(Pt, TmpRect.SecondEdge),
+    PointDistance2D(Pt, Point2D(TmpRect.Right, TmpRect.Bottom))]);
+  if TmpDist <= Aperture then
+  begin
+    Distance := TmpDist;
+    Result := PICK_ONOBJECT;
+  end;
 end;
 
 procedure TCADSheetViewportProxy2D.Refresh;
