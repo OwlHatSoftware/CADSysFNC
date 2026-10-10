@@ -420,6 +420,8 @@ type
     [Test]
     procedure ABorderlessViewportDrawsNoOutline;
     [Test]
+    procedure TheBorderIsDrawnOverTheModel;
+    [Test]
     procedure TheCanvasScaleIsPutBack;
     [Test]
     procedure AnObjectAddedToTheModelIsThereOnTheNextDraw;
@@ -1856,6 +1858,48 @@ begin
       title block in front of the drawing rather than behind it. }
     Assert.IsTrue(TmpIdxAnnotation > TmpIdxViewport,
       'the annotation came after the viewport: ' + TmpRec.Log.Text);
+  finally
+    TmpRec.Free;
+  end;
+end;
+
+procedure TCADSheetDrawingTests.TheBorderIsDrawnOverTheModel;
+var
+  TmpRec: TRecordingGraphics;
+  TmpCanvas: TDecorativeCanvas;
+  TmpIdxModel, TmpIdxPop, TmpIdxBorder, Cont: Integer;
+begin
+  TmpRec := TRecordingGraphics.Create(Rect(0, 0, 420, 297));
+  try
+    TmpCanvas := TDecorativeCanvas.Create(TmpRec, False);
+    try
+      CADDrawSheet(FCAD, FSheet, Device, TmpCanvas);
+    finally
+      TmpCanvas.Free;
+    end;
+    TmpIdxModel := -1;
+    TmpIdxPop := -1;
+    TmpIdxBorder := -1;
+    for Cont := 0 to TmpRec.Log.Count - 1 do
+    begin
+      if (TmpIdxModel < 0) and TmpRec.Log[Cont].StartsWith('MoveTo') then
+        TmpIdxModel := Cont;
+      if (TmpIdxPop < 0) and (TmpRec.Log[Cont] = 'PopClip') then
+        TmpIdxPop := Cont;
+      if (TmpIdxBorder < 0) and TmpRec.Log[Cont].StartsWith('Polyline') then
+        TmpIdxBorder := Cont;
+    end;
+    Assert.IsTrue((TmpIdxModel >= 0) and (TmpIdxBorder >= 0),
+      'both were drawn: ' + TmpRec.Log.Text);
+    { The clip is the border's own rectangle, so a filled shape running
+      off the edge of the viewport paints over a border drawn before
+      it - which is what a sheet with a filled rectangle cut by a
+      detail viewport showed: a border with a corner missing. }
+    Assert.IsTrue(TmpIdxBorder > TmpIdxModel,
+      'the border after the model: ' + TmpRec.Log.Text);
+    Assert.IsTrue(TmpIdxBorder > TmpIdxPop,
+      'and outside the viewport''s clip, so none of it is cut: '
+      + TmpRec.Log.Text);
   finally
     TmpRec.Free;
   end;

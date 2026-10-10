@@ -17569,7 +17569,7 @@ begin
   Result := Point(Round(TmpPt.X), Round(TmpPt.Y));
 end;
 
-{ : One viewport: its border, and the model seen through it. }
+{ : One viewport: the model seen through it, and its border over that. }
 procedure DrawSheetViewport(const ACAD: TFNCCADCmp2D;
   const ASheet: TCADSheet; const AViewport: TCADSheetViewport;
   const ADevice: TCADPageDevice; const ACanvas: TDecorativeCanvas;
@@ -17592,18 +17592,6 @@ begin
   TmpDest := CADSheetViewportRectPx(ASheet, AViewport, ADevice);
   if (TmpDest.Right <= TmpDest.Left) or (TmpDest.Bottom <= TmpDest.Top) then
     Exit;
-  { The border is drawn in layer zero's pen, and as a polyline rather
-    than a rectangle: a rectangle is filled with the brush, and a
-    viewport painted over with layer zero's brush would hide the
-    drawing it exists to show. }
-  if AViewport.ShowBorder then
-  begin
-    ACAD.Layers.SetCanvas(ACanvas, 0);
-    ACanvas.Graphics.Polyline([Point(TmpDest.Left, TmpDest.Top),
-      Point(TmpDest.Right, TmpDest.Top), Point(TmpDest.Right, TmpDest.Bottom),
-      Point(TmpDest.Left, TmpDest.Bottom), Point(TmpDest.Left, TmpDest.Top)]);
-  end;
-
   TmpWindow := AViewport.ModelWindow(ACAD);
   { Through the same routine an application inverts, rather than a
     second copy of the expression. If the two ever disagree, a click
@@ -17636,6 +17624,22 @@ begin
     end;
   finally
     ACanvas.Graphics.PopClip;
+  end;
+
+  { The border last, over the drawing rather than under it. The clip is
+    the border's own rectangle, so anything filled that reaches the edge
+    of the viewport - a filled rectangle, a polygon, a filled ellipse
+    cut by the window - is painted over the line, and a border drawn
+    first came out with pieces missing wherever the drawing ran off the
+    edge. Layer zero's pen, and a polyline rather than a rectangle: a
+    rectangle is filled with the brush, and a viewport painted over with
+    layer zero's brush would hide the drawing it exists to show. }
+  if AViewport.ShowBorder then
+  begin
+    ACAD.Layers.SetCanvas(ACanvas, 0);
+    ACanvas.Graphics.Polyline([Point(TmpDest.Left, TmpDest.Top),
+      Point(TmpDest.Right, TmpDest.Top), Point(TmpDest.Right, TmpDest.Bottom),
+      Point(TmpDest.Left, TmpDest.Bottom), Point(TmpDest.Left, TmpDest.Top)]);
   end;
 end;
 
