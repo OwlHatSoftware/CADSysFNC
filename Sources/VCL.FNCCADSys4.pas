@@ -764,6 +764,8 @@ type
   TCADSheetViewport = class;
   TCADSheet = class;
   TCADSheets = class;
+  TCADNamedView = class;
+  TCADViews = class;
 
   { : This type defines a message handler function that is called
     when a <See Class=TPointsSet2D> object is changed.
@@ -2695,6 +2697,8 @@ type
     fLayers: TLayers; { Layers of the component. }
     fSheets: TCADSheets; { Paper space. Empty in every drawing until
       somebody asks for a sheet. }
+    fViews: TCADViews; { Named parts of the drawing, for sheet
+      viewports to link to. Empty until somebody names one. }
     fCurrentLayer: Word;
     fDrawOnAdd: Boolean;
     { If true the object will be drawn on all viewports and the viewports will be refreshed if an object is added. }
@@ -3268,6 +3272,13 @@ type
 
       See <See Class=TCADSheet>. }
     property Sheets: TCADSheets read fSheets;
+    { : The drawing's named views - "Detail A", "Section B-B" - which
+      sheet viewports link to.
+
+      Empty unless something names one, and saved with the drawing
+      when it is not; a drawing written before named views existed
+      loads with none. See <See Class=TCADNamedView>. }
+    property Views: TCADViews read fViews;
     { : This property is the current layer on which any object added to the
       CAD resides.
 
@@ -5420,6 +5431,95 @@ type
     property SourceName: TSourceBlockName read fSourceName;
   end;
 
+  { : A part of the drawing worth naming - "Detail A", "Section B-B",
+    "Plan" - kept in the drawing so that sheets can show it.
+
+    A <See Type=TCADViewSpec> with an identity of its own. The identity
+    is what a sheet viewport links to, not the name: names are for
+    people and get corrected, and a link by name would break the first
+    time somebody fixed a typo. The identifier is made when the view is,
+    is never shown, never changes, and is a GUID, so that views from two
+    drawings merged into one cannot collide.
+
+    See <See Property=TFNCCADCmp@Views> and
+    <See Property=TCADSheetViewport@ViewLink>. }
+  TCADNamedView = class(TObject)
+  private
+    fId: String;
+    fSpec: TCADViewSpec;
+    function GetName: String;
+    procedure SetName(const AValue: String);
+  public
+    { : A new view of ASpec, with a fresh identifier. }
+    constructor Create(const ASpec: TCADViewSpec);
+    { : The identifier and the view, the view nested whole as a sheet
+      viewport carries one. The caller owns it. }
+    function SaveToJSON: TJSONObject;
+    { : Reads one written by SaveToJSON, identifier included. An object
+      with no identifier keeps the fresh one Create made. }
+    procedure LoadFromJSON(const AJSON: TJSONObject);
+
+    property Id: String read fId;
+    { : The view's own Name - one name, not two to keep in step. }
+    property Name: String read GetName write SetName;
+    { : What it frames. Assigning it changes what every viewport linked
+      to it shows, on every sheet, which is what the link is for. A copy
+      comes back, as with every TCADViewSpec property in the library:
+      assign the whole record to change it. }
+    property Spec: TCADViewSpec read fSpec write fSpec;
+  end;
+
+  { : The named views of one drawing, in order. Owned by
+    <See Property=TFNCCADCmp@Views> and by nothing else. }
+  TCADViews = class(TObject)
+  private
+    fOwnerCAD: TFNCCADCmp;
+    fItems: TList;
+    function GetItem(const AIndex: Integer): TCADNamedView;
+    function GetCount: Integer;
+    { : Ends every sheet viewport's link to AView, leaving each showing
+      what it showed. }
+    procedure UnlinkViewports(const AView: TCADNamedView);
+  public
+    constructor Create(const AOwnerCAD: TFNCCADCmp);
+    destructor Destroy; override;
+    { : A new view at the end of the list, named AName whatever ASpec's
+      own Name said. Names need not be unique - the identifier is what
+      tells views apart - but an application that finds views by name
+      will want them to be. }
+    function Add(const AName: String; const ASpec: TCADViewSpec)
+      : TCADNamedView;
+    { : Deletes the view. Every viewport that was linked to it is
+      unlinked first and keeps showing exactly what it showed, from a
+      copy of its own: deleting a detail from the list does not blank
+      the sheets it is on. }
+    procedure Delete(const AIndex: Integer);
+    { : Deletes them all, on the same terms as Delete. }
+    procedure Clear;
+    { : The index of the first view with that name, or -1. Case does
+      not matter. }
+    function IndexOfName(const AName: String): Integer;
+    { : The index of the view with that identifier, or -1. }
+    function IndexOfId(const AId: String): Integer;
+    { : The view with that identifier, or nil. }
+    function FindById(const AId: String): TCADNamedView;
+    { : The first view with that name, or nil. }
+    function FindByName(const AName: String): TCADNamedView;
+
+    { : The views as a JSON array. The caller owns it. }
+    function SaveToJSON: TJSONArray;
+    { : Appends the views in AJSON. One whose identifier is already here
+      is skipped rather than added twice: a drawing merged into itself
+      keeps one of each, and every link still has one view to find. A
+      nil array is nothing to do, which is what an older drawing with
+      no views member hands in. }
+    procedure LoadFromJSON(const AJSON: TJSONArray);
+
+    property Count: Integer read GetCount;
+    property Items[const AIndex: Integer]: TCADNamedView
+      read GetItem; default;
+  end;
+
   { : One viewport on a sheet: a rectangle of paper that shows part of
     the model.
 
@@ -5444,11 +5544,13 @@ type
     fName: String;
     fRectMM: TRect2D;
     fView: TCADViewSpec;
+    fViewLink: String;
     fUnitsPerMM: TRealType;
     fShowBorder: Boolean;
     { : The view's window, or the drawing's whole extension when the
       view frames nothing yet. }
     function EffectiveWindow(const ACAD: TFNCCADCmp2D): TRect2D;
+    procedure SetView(const AValue: TCADViewSpec);
   public
     constructor Create;
     procedure Assign(const ASource: TCADSheetViewport);
@@ -5456,6 +5558,28 @@ type
     { : The rectangle's size on the paper, in millimetres. }
     function WidthMM: TRealType;
     function HeightMM: TRealType;
+
+    { : True when it has a link, whether or not the link finds anything. }
+    function IsLinked: Boolean;
+    { : The named view it shows, or nil: not linked, or linked to a view
+      ACAD does not have. }
+    function LinkedView(const ACAD: TFNCCADCmp): TCADNamedView;
+    { : What it actually shows: the linked view when the link finds one,
+      its own view otherwise. ACAD may be nil, which is the viewport's
+      own view. Everything that draws, frames or hit-tests a sheet
+      viewport asks this. }
+    function EffectiveView(const ACAD: TFNCCADCmp): TCADViewSpec;
+    { : Links it to AView, and takes a copy of what AView frames as its
+      own view - so that the link can be broken, or lost, without the
+      viewport going blank. }
+    procedure LinkTo(const AView: TCADNamedView);
+    { : Ends the link, keeping what it showed as its own view. }
+    procedure Unlink(const ACAD: TFNCCADCmp);
+    { : Brings the viewport's own copy up to date with the linked view.
+      TCADSheet calls it before saving, so the copy written to the file
+      is the view as it is - which is what a reader that knows nothing
+      of links, or a link that finds nothing, will show. }
+    procedure SyncLinkedCopy(const ACAD: TFNCCADCmp);
 
     { : Drawing units to a millimetre of paper, resolved: UnitsPerMM
       when it is set, otherwise what it takes to fit the view into the
@@ -5524,9 +5648,33 @@ type
     { : Where it sits on the paper, in millimetres, origin at the
       bottom-left corner of the sheet and Y upwards. }
     property RectMM: TRect2D read fRectMM write fRectMM;
-    { : What it looks at. A copy comes back - assign the whole record
-      to change it. }
-    property View: TCADViewSpec read fView write fView;
+    { : The viewport's own view - what it shows when it is not linked
+      to a named view, and the copy it keeps of the named view when it
+      is. A copy comes back; assign the whole record to change it.
+
+      Assigning it ends any link. Giving a viewport a view is a decision
+      to show that, and the alternative - writing it through to the
+      named view, and so to every other viewport showing it - would be
+      a surprise nobody asked for. Pan the viewport instead when the
+      shared view is what should move.
+
+      What it actually shows is <See Method=TCADSheetViewport@EffectiveView>. }
+    property View: TCADViewSpec read fView write SetView;
+    { : The identifier of the named view this viewport shows, or empty
+      for none. See <See Class=TCADNamedView>.
+
+      Linked, the viewport shows the named view: change that and every
+      viewport linked to it follows, on every sheet. Panning a linked
+      viewport moves the named view, and so the others with it; the
+      scale stays the viewport's own, so a detail can be shown at 1:5
+      in one place and 1:20 in another and still be the same detail.
+
+      A link that finds nothing - a sheet copied in from another
+      drawing, say - falls back to the viewport's own copy rather than
+      to an empty window, so a drawing with a broken link still prints
+      what it printed. Assign it to link by identifier; LinkTo also
+      takes a copy, which is the better door. }
+    property ViewLink: String read fViewLink write fViewLink;
     { : Drawing units to one millimetre of paper. 0 fits the view to
       the rectangle. }
     property UnitsPerMM: TRealType read fUnitsPerMM write fUnitsPerMM;
@@ -9064,6 +9212,23 @@ procedure CADSpaceRemoveObject(const ASpace: TCADSpace2D;
   immediately before AIDDestination, which is behind it. }
 procedure CADSpaceMoveObject(const ASpace: TCADSpace2D;
   const AIDOrigin, AIDDestination: LongInt);
+
+{ : A view framing AArea of the model, grown on every side by
+  AMarginFraction of its larger side - 0.05 is five per cent.
+
+  For a named view made by dragging a rectangle round a detail. Raises
+  ECADPageError if the area is a single point, which is the one thing
+  a margin cannot rescue. }
+function CADViewFromArea(const AArea: TRect2D;
+  const AMarginFraction: TRealType = 0.05): TCADViewSpec;
+{ : A view framing every object in AObjects - the union of their boxes -
+  with the same margin.
+
+  For a named view made by selecting what it should show. Raises
+  ECADPageError for an empty list, rather than return an empty window
+  that a viewport would read as "the whole drawing". }
+function CADViewFromObjects(const AObjects: TGraphicObjList;
+  const AMarginFraction: TRealType = 0.05): TCADViewSpec;
 
 { 2D functions. }
 
@@ -16072,6 +16237,7 @@ begin
   fName := ASource.fName;
   fRectMM := ASource.fRectMM;
   fView := ASource.fView;
+  fViewLink := ASource.fViewLink;
   fUnitsPerMM := ASource.fUnitsPerMM;
   fShowBorder := ASource.fShowBorder;
 end;
@@ -16086,9 +16252,69 @@ begin
   Result := fRectMM.Top - fRectMM.Bottom;
 end;
 
+procedure TCADSheetViewport.SetView(const AValue: TCADViewSpec);
+begin
+  fView := AValue;
+  { A view given to a viewport is a decision to show that one. }
+  fViewLink := '';
+end;
+
+function TCADSheetViewport.IsLinked: Boolean;
+begin
+  Result := fViewLink <> '';
+end;
+
+function TCADSheetViewport.LinkedView(const ACAD: TFNCCADCmp): TCADNamedView;
+begin
+  Result := nil;
+  if (fViewLink = '') or (ACAD = nil) then
+    Exit;
+  Result := ACAD.Views.FindById(fViewLink);
+end;
+
+function TCADSheetViewport.EffectiveView(const ACAD: TFNCCADCmp)
+  : TCADViewSpec;
+var
+  TmpLinked: TCADNamedView;
+begin
+  TmpLinked := LinkedView(ACAD);
+  if TmpLinked <> nil then
+    Result := TmpLinked.Spec
+  else
+    { Not linked, or linked to nothing: the viewport's own copy, which
+      is the view as it was when the link last found something. }
+    Result := fView;
+end;
+
+procedure TCADSheetViewport.LinkTo(const AView: TCADNamedView);
+begin
+  if AView = nil then
+  begin
+    fViewLink := '';
+    Exit;
+  end;
+  fViewLink := AView.Id;
+  fView := AView.Spec;
+end;
+
+procedure TCADSheetViewport.Unlink(const ACAD: TFNCCADCmp);
+begin
+  SyncLinkedCopy(ACAD);
+  fViewLink := '';
+end;
+
+procedure TCADSheetViewport.SyncLinkedCopy(const ACAD: TFNCCADCmp);
+var
+  TmpLinked: TCADNamedView;
+begin
+  TmpLinked := LinkedView(ACAD);
+  if TmpLinked <> nil then
+    fView := TmpLinked.Spec;
+end;
+
 function TCADSheetViewport.EffectiveWindow(const ACAD: TFNCCADCmp2D): TRect2D;
 begin
-  Result := fView.Window;
+  Result := EffectiveView(ACAD).Window;
   if (Result.Right - Result.Left <= 0) or (Result.Top - Result.Bottom <= 0) then
   begin
     if ACAD = nil then
@@ -16152,13 +16378,28 @@ procedure TCADSheetViewport.SetModelCentre(const ACAD: TFNCCADCmp2D;
 var
   TmpWin: TRect2D;
   TmpHalfW, TmpHalfH: TRealType;
+  TmpLinked: TCADNamedView;
+  TmpSpec: TCADViewSpec;
 begin
   TmpWin := ReorderRect2D(EffectiveWindow(ACAD));
   TmpHalfW := (TmpWin.Right - TmpWin.Left) / 2;
   TmpHalfH := (TmpWin.Top - TmpWin.Bottom) / 2;
-  fView.Window := Rect2D(AModelCentre.X - TmpHalfW,
-    AModelCentre.Y - TmpHalfH, AModelCentre.X + TmpHalfW,
-    AModelCentre.Y + TmpHalfH);
+  TmpWin := Rect2D(AModelCentre.X - TmpHalfW, AModelCentre.Y - TmpHalfH,
+    AModelCentre.X + TmpHalfW, AModelCentre.Y + TmpHalfH);
+  { Linked, it is the named view that moves - and so every viewport
+    showing it, on every sheet. That is what linking means: what is
+    looked at is shared. The scale is not; ZoomBy changes UnitsPerMM,
+    which is the viewport's own. }
+  TmpLinked := LinkedView(ACAD);
+  if TmpLinked <> nil then
+  begin
+    TmpSpec := TmpLinked.Spec;
+    TmpSpec.Window := TmpWin;
+    TmpLinked.Spec := TmpSpec;
+  end;
+  { The own copy follows either way, so that unlinking afterwards keeps
+    what the viewport was showing. }
+  fView.Window := TmpWin;
 end;
 
 procedure TCADSheetViewport.PanModelBy(const ACAD: TFNCCADCmp2D;
@@ -16240,6 +16481,11 @@ begin
       that copied out the window and the layer set would be a second
       place for them to be wrong. }
     JSetValue(Result, 'view', fView.SaveToJSON);
+    { Only when linked. The view above is written either way, and kept
+      up to date by TCADSheet before it saves, so a reader that knows
+      nothing of links shows what this one does. }
+    if fViewLink <> '' then
+      JSetStr(Result, 'viewLink', fViewLink);
   except
     Result.Free;
     Raise;
@@ -16266,6 +16512,9 @@ begin
   TmpView := JGetObject(AJSON, 'view');
   if TmpView <> nil then
     fView.LoadFromJSON(TmpView);
+  { Absent in every file written before links existed, which is the
+    unlinked viewport those files describe. }
+  fViewLink := JGetStr(AJSON, 'viewLink');
 end;
 
 { ==================================================================
@@ -16581,7 +16830,13 @@ begin
     TmpViewports := TJSONArray.Create;
     JSetValue(Result, 'viewports', TmpViewports);
     for Cont := 0 to fViewports.Count - 1 do
+    begin
+      { The copy a linked viewport keeps is brought up to date first, so
+        the file says what the sheet shows even to a reader that knows
+        nothing of links. }
+      TCADSheetViewport(fViewports[Cont]).SyncLinkedCopy(fOwnerCAD);
       JAddItem(TmpViewports, TCADSheetViewport(fViewports[Cont]).SaveToJSON);
+    end;
 
     { The annotation, written exactly as the drawing's own objects are.
       All of it: a sheet's objects are not on the drawing's layers in
@@ -16754,6 +17009,303 @@ begin
     Exit;
   for Cont := 0 to AJSON.Count - 1 do
     Add.LoadFromJSON(JItemObject(AJSON, Cont));
+end;
+
+{ ==================================================================
+  TCADNamedView
+  ================================================================== }
+
+constructor TCADNamedView.Create(const ASpec: TCADViewSpec);
+var
+  TmpGUID: TGUID;
+begin
+  inherited Create;
+  fSpec := ASpec;
+  { CreateGUID and GUIDToString rather than TGUID.NewGuid: both
+    compilers have these two. }
+  CreateGUID(TmpGUID);
+  fId := GUIDToString(TmpGUID);
+end;
+
+function TCADNamedView.GetName: String;
+begin
+  Result := fSpec.Name;
+end;
+
+procedure TCADNamedView.SetName(const AValue: String);
+begin
+  { The field, not the property: Spec hands back a copy. }
+  fSpec.Name := AValue;
+end;
+
+function TCADNamedView.SaveToJSON: TJSONObject;
+begin
+  Result := TJSONObject.Create;
+  try
+    JSetStr(Result, 'id', fId);
+    JSetValue(Result, 'view', fSpec.SaveToJSON);
+  except
+    Result.Free;
+    Raise;
+  end;
+end;
+
+procedure TCADNamedView.LoadFromJSON(const AJSON: TJSONObject);
+var
+  TmpView: TJSONObject;
+  TmpId: String;
+begin
+  if AJSON = nil then
+    Exit;
+  TmpId := JGetStr(AJSON, 'id');
+  if TmpId <> '' then
+    fId := TmpId;
+  TmpView := JGetObject(AJSON, 'view');
+  if TmpView <> nil then
+    fSpec.LoadFromJSON(TmpView);
+end;
+
+{ ==================================================================
+  TCADViews
+  ================================================================== }
+
+constructor TCADViews.Create(const AOwnerCAD: TFNCCADCmp);
+begin
+  inherited Create;
+  fOwnerCAD := AOwnerCAD;
+  fItems := TList.Create;
+end;
+
+destructor TCADViews.Destroy;
+var
+  Cont: Integer;
+begin
+  { Not Clear: that walks the drawing's sheets to unlink their
+    viewports, and when the drawing itself is being destroyed the sheets
+    may already be gone. Nothing will look at a link again. }
+  for Cont := 0 to fItems.Count - 1 do
+    TCADNamedView(fItems[Cont]).Free;
+  fItems.Free;
+  inherited Destroy;
+end;
+
+procedure TCADViews.UnlinkViewports(const AView: TCADNamedView);
+var
+  TmpSheet: TCADSheet;
+  TmpViewport: TCADSheetViewport;
+  ContSheet, ContVP: Integer;
+begin
+  if (fOwnerCAD = nil) or (AView = nil) then
+    Exit;
+  { No 'with' here: TCADSheet has an fOwnerCAD of its own, and inside a
+    with-block that is the one the name would find. }
+  for ContSheet := 0 to fOwnerCAD.Sheets.Count - 1 do
+  begin
+    TmpSheet := fOwnerCAD.Sheets[ContSheet];
+    for ContVP := 0 to TmpSheet.ViewportCount - 1 do
+    begin
+      TmpViewport := TmpSheet.Viewports[ContVP];
+      if TmpViewport.ViewLink = AView.Id then
+        TmpViewport.Unlink(fOwnerCAD);
+    end;
+  end;
+end;
+
+function TCADViews.Add(const AName: String; const ASpec: TCADViewSpec)
+  : TCADNamedView;
+begin
+  Result := TCADNamedView.Create(ASpec);
+  Result.Name := AName;
+  fItems.Add(Result);
+end;
+
+procedure TCADViews.Delete(const AIndex: Integer);
+begin
+  if (AIndex < 0) or (AIndex >= fItems.Count) then
+    Exit;
+  { Unlinked while the view is still there to copy from: every viewport
+    that showed it goes on showing the same thing, from its own copy. }
+  UnlinkViewports(TCADNamedView(fItems[AIndex]));
+  TCADNamedView(fItems[AIndex]).Free;
+  fItems.Delete(AIndex);
+end;
+
+procedure TCADViews.Clear;
+begin
+  while fItems.Count > 0 do
+    Delete(fItems.Count - 1);
+end;
+
+function TCADViews.IndexOfName(const AName: String): Integer;
+var
+  Cont: Integer;
+begin
+  Result := -1;
+  for Cont := 0 to fItems.Count - 1 do
+    if SameText(TCADNamedView(fItems[Cont]).Name, AName) then
+    begin
+      Result := Cont;
+      Exit;
+    end;
+end;
+
+function TCADViews.IndexOfId(const AId: String): Integer;
+var
+  Cont: Integer;
+begin
+  Result := -1;
+  if AId = '' then
+    Exit;
+  for Cont := 0 to fItems.Count - 1 do
+    if TCADNamedView(fItems[Cont]).Id = AId then
+    begin
+      Result := Cont;
+      Exit;
+    end;
+end;
+
+function TCADViews.FindById(const AId: String): TCADNamedView;
+var
+  TmpIndex: Integer;
+begin
+  TmpIndex := IndexOfId(AId);
+  if TmpIndex < 0 then
+    Result := nil
+  else
+    Result := TCADNamedView(fItems[TmpIndex]);
+end;
+
+function TCADViews.FindByName(const AName: String): TCADNamedView;
+var
+  TmpIndex: Integer;
+begin
+  TmpIndex := IndexOfName(AName);
+  if TmpIndex < 0 then
+    Result := nil
+  else
+    Result := TCADNamedView(fItems[TmpIndex]);
+end;
+
+function TCADViews.GetItem(const AIndex: Integer): TCADNamedView;
+begin
+  if (AIndex < 0) or (AIndex >= fItems.Count) then
+    Raise ECADOutOfBound.CreateFmt('TCADViews: view %d', [AIndex]);
+  Result := TCADNamedView(fItems[AIndex]);
+end;
+
+function TCADViews.GetCount: Integer;
+begin
+  Result := fItems.Count;
+end;
+
+function TCADViews.SaveToJSON: TJSONArray;
+var
+  Cont: Integer;
+begin
+  Result := TJSONArray.Create;
+  try
+    for Cont := 0 to fItems.Count - 1 do
+      JAddItem(Result, TCADNamedView(fItems[Cont]).SaveToJSON);
+  except
+    Result.Free;
+    Raise;
+  end;
+end;
+
+procedure TCADViews.LoadFromJSON(const AJSON: TJSONArray);
+var
+  Cont: Integer;
+  TmpView: TCADNamedView;
+begin
+  if AJSON = nil then
+    Exit;
+  for Cont := 0 to AJSON.Count - 1 do
+  begin
+    TmpView := TCADNamedView.Create(TCADViewSpec.Default);
+    try
+      TmpView.LoadFromJSON(JItemObject(AJSON, Cont));
+    except
+      TmpView.Free;
+      Raise;
+    end;
+    if IndexOfId(TmpView.Id) >= 0 then
+      { Already here - the same view, from the same drawing merged in
+        again. Keeping both would give a link two views to choose
+        between. }
+      TmpView.Free
+    else
+      fItems.Add(TmpView);
+  end;
+end;
+
+{ ==================================================================
+  Views from a part of the drawing
+  ================================================================== }
+
+function CADViewFromArea(const AArea: TRect2D;
+  const AMarginFraction: TRealType): TCADViewSpec;
+var
+  TmpArea: TRect2D;
+  TmpMargin: TRealType;
+begin
+  TmpArea := ReorderRect2D(AArea);
+  { From the larger side, on every side. That is what keeps a flat
+    selection - one horizontal line, a row of text - from framing a
+    rectangle with no height, which a viewport would read as "frames
+    nothing" and fill with the whole drawing instead. }
+  TmpMargin := MaxValue([TmpArea.Right - TmpArea.Left,
+    TmpArea.Top - TmpArea.Bottom]) * AMarginFraction;
+  TmpArea := Rect2D(TmpArea.Left - TmpMargin, TmpArea.Bottom - TmpMargin,
+    TmpArea.Right + TmpMargin, TmpArea.Top + TmpMargin);
+  if (TmpArea.Right - TmpArea.Left <= 0) or (TmpArea.Top - TmpArea.Bottom <= 0)
+  then
+    Raise ECADPageError.Create
+      ('A view needs an area to frame - this one is a point');
+  Result := TCADViewSpec.Default;
+  Result.Window := TmpArea;
+end;
+
+function CADViewFromObjects(const AObjects: TGraphicObjList;
+  const AMarginFraction: TRealType): TCADViewSpec;
+var
+  TmpIter: TGraphicObjIterator;
+  TmpObj: TGraphicObject;
+  TmpBox, TmpUnion: TRect2D;
+  TmpAny: Boolean;
+begin
+  TmpAny := False;
+  TmpUnion := Rect2D(0, 0, 0, 0);
+  if AObjects <> nil then
+  begin
+    TmpIter := AObjects.GetIterator;
+    try
+      TmpObj := TmpIter.First;
+      while TmpObj <> nil do
+      begin
+        if TmpObj is TObject2D then
+        begin
+          TmpBox := ReorderRect2D(TObject2D(TmpObj).Box);
+          if not TmpAny then
+            TmpUnion := TmpBox
+          else
+            TmpUnion := Rect2D(MinValue([TmpUnion.Left, TmpBox.Left]),
+              MinValue([TmpUnion.Bottom, TmpBox.Bottom]),
+              MaxValue([TmpUnion.Right, TmpBox.Right]),
+              MaxValue([TmpUnion.Top, TmpBox.Top]));
+          TmpAny := True;
+        end;
+        TmpObj := TmpIter.Next;
+      end;
+    finally
+      TmpIter.Free;
+    end;
+  end;
+  { An empty selection is refused rather than turned into an empty
+    window, because an empty window means "the whole drawing" to a
+    viewport - a detail of nothing would quietly become the plan. }
+  if not TmpAny then
+    Raise ECADPageError.Create('There is nothing selected to make a view of');
+  Result := CADViewFromArea(TmpUnion, AMarginFraction);
 end;
 
 { ==================================================================
@@ -17028,7 +17580,12 @@ var
   TmpDest: TRect;
   TmpIter: TGraphicObjIterator;
   TmpObj: TObject2D;
+  TmpView: TCADViewSpec;
 begin
+  { What the viewport shows - its linked view, or its own - asked once.
+    The layer override is the view's, so a named detail that hides the
+    dimension layer hides it on every sheet it is placed on. }
+  TmpView := AViewport.EffectiveView(ACAD);
   { Worked out here rather than handed in, so that the rectangle drawn,
     the rectangle clipped to and the rectangle an application hit-tests
     against are one expression with one place to be wrong. }
@@ -17066,8 +17623,8 @@ begin
       while TmpObj <> nil do
       begin
         if TmpObj.IsVisible(TmpWindow, ADrawMode) and
-          (not AViewport.View.UseLayerOverride or
-          not(TmpObj.Layer in AViewport.View.HiddenLayers)) then
+          (not TmpView.UseLayerOverride or
+          not(TmpObj.Layer in TmpView.HiddenLayers)) then
         begin
           ACAD.Layers.SetCanvas(ACanvas, TmpObj.Layer);
           TmpObj.Draw(TmpTransf, ACanvas, TmpClip, ADrawMode);
@@ -17163,6 +17720,7 @@ begin
   fListOfViewport := TList.Create;
   fLayers := TLayers.Create;
   fSheets := TCADSheets.Create(Self);
+  fViews := TCADViews.Create(Self);
   fCurrentLayer := 0;
   fRepaintAfterTransform := True;
   fDrawOnAdd := False;
@@ -17227,6 +17785,10 @@ begin
   fListOfViewport.Free;
   fLayers.Free;
   fSheets.Free;
+  { After the sheets, and that is safe: TCADViews.Destroy frees its
+    views without walking the sheets to unlink them - the whole drawing
+    is going, and the sheets with it. }
+  fViews.Free;
   inherited Destroy;
 end;
 
@@ -17251,6 +17813,9 @@ begin
       more than the symmetry of an empty array. }
     if fSheets.Count > 0 then
       JSetValue(Result, 'sheets', fSheets.SaveToJSON);
+    { The same rule for named views: none, no member. }
+    if fViews.Count > 0 then
+      JSetValue(Result, 'views', fViews.SaveToJSON);
   except
     Result.Free;
     Raise;
@@ -17343,6 +17908,9 @@ begin
     with both their sheets. A document with no sheets member hands in
     nil and nothing happens. }
   fSheets.LoadFromJSON(JGetArray(AJSON, 'sheets'));
+  { Order does not matter: a link is looked up when the viewport is
+    drawn, not when it is read. }
+  fViews.LoadFromJSON(JGetArray(AJSON, 'views'));
 end;
 
 procedure TFNCCADCmp.MergeFromStream(const Stream: TStream);
@@ -17366,6 +17934,9 @@ begin
     sheet is not one of the drawing's objects, it is a thing with
     objects of its own. Loading a drawing replaces both. }
   fSheets.Clear;
+  { And the named views, after the sheets so that clearing them has no
+    viewports left to unlink. }
+  fViews.Clear;
   MergeFromJSON(AJSON);
 end;
 

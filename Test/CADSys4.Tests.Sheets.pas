@@ -307,6 +307,89 @@ type
     procedure ADegenerateViewportAnswersWithThePointItWasGiven;
   end;
 
+  { : Named views: parts of the drawing kept in the drawing, with an
+    identity of their own for sheet viewports to link to. }
+  [TestFixture]
+  TCADNamedViewTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    function Framing(const AL, AB, AR, AT: TRealType): TCADViewSpec;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    [Test]
+    procedure EachViewHasAnIdentifierOfItsOwn;
+    [Test]
+    procedure RenamingAViewKeepsItsIdentifier;
+    [Test]
+    procedure AViewIsFoundByIdentifierAndByName;
+    [Test]
+    procedure ADrawingWithoutViewsWritesNoViewsMember;
+    [Test]
+    procedure ViewsComeBackWithTheirIdentifiers;
+    [Test]
+    procedure LoadingTheSameViewsTwiceKeepsOneOfEach;
+  end;
+
+  { : A sheet viewport linked to a named view: shared framing, its own
+    scale. }
+  [TestFixture]
+  TCADViewLinkTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FSheet: TCADSheet;
+    FDetail: TCADNamedView;
+    FFirst, FSecond: TCADSheetViewport;
+    function Framing(const AL, AB, AR, AT: TRealType): TCADViewSpec;
+    function Device: TCADPageDevice;
+    function LinesDrawn: Integer;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    [Test]
+    procedure ALinkedViewportShowsTheNamedView;
+    [Test]
+    procedure ChangingTheNamedViewMovesEveryViewportLinkedToIt;
+    [Test]
+    procedure PanningOneLinkedViewportMovesTheOthers;
+    [Test]
+    procedure TheScaleStaysWithTheViewport;
+    [Test]
+    procedure AssigningAViewEndsTheLink;
+    [Test]
+    procedure DeletingTheNamedViewLeavesItsViewportsShowingWhatTheyShowed;
+    [Test]
+    procedure ALinkSurvivesSaveAndLoad;
+    [Test]
+    procedure TheFileCarriesAnUpToDateCopyForReadersWithoutLinks;
+    [Test]
+    procedure ALinkThatFindsNothingFallsBackToTheOwnCopy;
+    [Test]
+    procedure TheLinkedViewsHiddenLayersAreHiddenOnTheSheet;
+  end;
+
+  { : Making a view from what the user selected. }
+  [TestFixture]
+  TCADViewFromSelectionTests = class(TObject)
+  public
+    [Test]
+    procedure AnAreaBecomesAWindowWithAMargin;
+    [Test]
+    procedure ObjectsBecomeTheUnionOfTheirBoxes;
+    [Test]
+    procedure AFlatSelectionStillFramesSomething;
+    [Test]
+    procedure NothingSelectedIsRefused;
+    [Test]
+    procedure APointIsRefused;
+  end;
+
   [TestFixture]
   TCADSheetDrawingTests = class(TObject)
   private
@@ -1246,6 +1329,400 @@ begin
 end;
 
 { ==================================================================
+  TCADNamedViewTests
+  ================================================================== }
+
+function TCADNamedViewTests.Framing(const AL, AB, AR, AT: TRealType)
+  : TCADViewSpec;
+begin
+  Result := TCADViewSpec.Default;
+  Result.Window := Rect2D(AL, AB, AR, AT);
+end;
+
+procedure TCADNamedViewTests.Setup;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+end;
+
+procedure TCADNamedViewTests.TearDown;
+begin
+  FCAD.Free;
+end;
+
+procedure TCADNamedViewTests.EachViewHasAnIdentifierOfItsOwn;
+var
+  TmpA, TmpB: TCADNamedView;
+begin
+  TmpA := FCAD.Views.Add('Detail A', Framing(0, 0, 10, 10));
+  TmpB := FCAD.Views.Add('Detail A', Framing(0, 0, 10, 10));
+  { The same name and the same window, and still two views: names are
+    for people, and the identifier is what a link holds on to. }
+  Assert.IsTrue(TmpA.Id <> '', 'it has one');
+  Assert.IsTrue(TmpA.Id <> TmpB.Id, 'and it is its own');
+end;
+
+procedure TCADNamedViewTests.RenamingAViewKeepsItsIdentifier;
+var
+  TmpView: TCADNamedView;
+  TmpId: String;
+begin
+  TmpView := FCAD.Views.Add('Detial A', Framing(0, 0, 10, 10));
+  TmpId := TmpView.Id;
+  TmpView.Name := 'Detail A';
+  { The reason links are by identifier: correcting a typo must not break
+    every sheet the detail is on. }
+  Assert.AreEqual(TmpId, TmpView.Id, 'the same view');
+  Assert.AreEqual('Detail A', TmpView.Spec.Name, 'one name, not two');
+end;
+
+procedure TCADNamedViewTests.AViewIsFoundByIdentifierAndByName;
+var
+  TmpView: TCADNamedView;
+begin
+  FCAD.Views.Add('Plan', Framing(0, 0, 100, 100));
+  TmpView := FCAD.Views.Add('Section B-B', Framing(0, 0, 10, 10));
+  Assert.AreSame(TObject(TmpView), TObject(FCAD.Views.FindById(TmpView.Id)),
+    'by identifier');
+  Assert.AreSame(TObject(TmpView),
+    TObject(FCAD.Views.FindByName('section b-b')), 'by name, any case');
+  Assert.IsNull(FCAD.Views.FindById('{not-a-view}'), 'nothing is nil');
+  Assert.IsNull(FCAD.Views.FindById(''), 'and no identifier is nothing');
+end;
+
+procedure TCADNamedViewTests.ADrawingWithoutViewsWritesNoViewsMember;
+begin
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(10, 10)));
+  { Exactly the file it wrote before named views existed. }
+  Assert.IsFalse(FCAD.SaveToJSONString.Contains('"views"'),
+    'no empty array for a drawing that has none');
+end;
+
+procedure TCADNamedViewTests.ViewsComeBackWithTheirIdentifiers;
+var
+  TmpView: TCADNamedView;
+  TmpBack: TFNCCADCmp2D;
+  TmpFound: TCADNamedView;
+begin
+  TmpView := FCAD.Views.Add('Detail A', Framing(10, 20, 30, 40));
+  TmpBack := TFNCCADCmp2D.Create(nil);
+  try
+    TmpBack.LoadFromJSONString(FCAD.SaveToJSONString);
+    Assert.AreEqual(1, TmpBack.Views.Count, 'one view');
+    TmpFound := TmpBack.Views.FindById(TmpView.Id);
+    Assert.IsNotNull(TmpFound, 'found by the identifier it was saved with');
+    Assert.AreEqual('Detail A', TmpFound.Name, 'with its name');
+    Assert.AreEqual(10.0, TmpFound.Spec.Window.Left, 1E-9, 'and its window');
+    Assert.AreEqual(40.0, TmpFound.Spec.Window.Top, 1E-9, 'all of it');
+  finally
+    TmpBack.Free;
+  end;
+end;
+
+procedure TCADNamedViewTests.LoadingTheSameViewsTwiceKeepsOneOfEach;
+var
+  TmpArray: TJSONArray;
+begin
+  FCAD.Views.Add('Detail A', Framing(0, 0, 10, 10));
+  TmpArray := FCAD.Views.SaveToJSON;
+  try
+    { What merging a drawing into itself does. Two views with one
+      identifier would leave a link two views to choose between. }
+    FCAD.Views.LoadFromJSON(TmpArray);
+    Assert.AreEqual(1, FCAD.Views.Count, 'still one');
+  finally
+    TmpArray.Free;
+  end;
+end;
+
+{ ==================================================================
+  TCADViewLinkTests
+  ================================================================== }
+
+function TCADViewLinkTests.Framing(const AL, AB, AR, AT: TRealType)
+  : TCADViewSpec;
+begin
+  Result := TCADViewSpec.Default;
+  Result.Window := Rect2D(AL, AB, AR, AT);
+end;
+
+function TCADViewLinkTests.Device: TCADPageDevice;
+begin
+  Result := TCADPageDevice.FromDPI(CADMMPerInch, CADMMPerInch);
+end;
+
+function TCADViewLinkTests.LinesDrawn: Integer;
+var
+  TmpRec: TRecordingGraphics;
+  TmpCanvas: TDecorativeCanvas;
+begin
+  TmpRec := TRecordingGraphics.Create(Rect(0, 0, 420, 297));
+  try
+    TmpCanvas := TDecorativeCanvas.Create(TmpRec, False);
+    try
+      CADDrawSheet(FCAD, FSheet, Device, TmpCanvas);
+    finally
+      TmpCanvas.Free;
+    end;
+    Result := TmpRec.CountOf('MoveTo');
+  finally
+    TmpRec.Free;
+  end;
+end;
+
+procedure TCADViewLinkTests.Setup;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+  { One line across a 300 by 150 model. }
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(300, 150)));
+  FSheet := FCAD.Sheets.Add('Plan');
+  { The detail: the bottom-left corner of the model. }
+  FDetail := FCAD.Views.Add('Detail A', Framing(0, 0, 100, 50));
+  { Two viewports on it, the same shape, one 100 mm wide and one 50. }
+  FFirst := FSheet.AddViewport;
+  FFirst.RectMM := Rect2D(10, 10, 110, 60);
+  FFirst.LinkTo(FDetail);
+  FSecond := FSheet.AddViewport;
+  FSecond.RectMM := Rect2D(150, 10, 200, 35);
+  FSecond.LinkTo(FDetail);
+end;
+
+procedure TCADViewLinkTests.TearDown;
+begin
+  FCAD.Free;
+end;
+
+procedure TCADViewLinkTests.ALinkedViewportShowsTheNamedView;
+var
+  TmpCentre: TPoint2D;
+begin
+  Assert.IsTrue(FFirst.IsLinked, 'linked');
+  Assert.AreSame(TObject(FDetail), TObject(FFirst.LinkedView(FCAD)),
+    'to the detail');
+  TmpCentre := FFirst.ModelCentre(FCAD);
+  Assert.AreEqual(50.0, TmpCentre.X, 1E-9, 'centred on the detail');
+  Assert.AreEqual(25.0, TmpCentre.Y, 1E-9, 'in both axes');
+end;
+
+procedure TCADViewLinkTests.ChangingTheNamedViewMovesEveryViewportLinkedToIt;
+var
+  TmpSpec: TCADViewSpec;
+begin
+  { The point of a link: redefine "Detail A" once and every sheet it is
+    on follows. }
+  TmpSpec := FDetail.Spec;
+  TmpSpec.Window := Rect2D(200, 100, 300, 150);
+  FDetail.Spec := TmpSpec;
+  Assert.AreEqual(250.0, FFirst.ModelCentre(FCAD).X, 1E-9, 'the first moved');
+  Assert.AreEqual(250.0, FSecond.ModelCentre(FCAD).X, 1E-9,
+    'and so did the second');
+end;
+
+procedure TCADViewLinkTests.PanningOneLinkedViewportMovesTheOthers;
+begin
+  FFirst.PanModelBy(FCAD, 20, 10);
+  { What is looked at is shared. }
+  Assert.AreEqual(70.0, FSecond.ModelCentre(FCAD).X, 1E-9,
+    'the other viewport moved with it');
+  Assert.AreEqual(35.0, FSecond.ModelCentre(FCAD).Y, 1E-9, 'both ways');
+  Assert.AreEqual(70.0, FDetail.Spec.Window.Left + 50, 1E-9,
+    'because the named view itself moved');
+end;
+
+procedure TCADViewLinkTests.TheScaleStaysWithTheViewport;
+var
+  TmpSecondScale: TRealType;
+begin
+  TmpSecondScale := FSecond.EffectiveUnitsPerMM(FCAD);
+  FFirst.ZoomBy(FCAD, 4);
+  { What is not shared: how big it is on the paper. A detail can be at
+    1:5 in one place and 1:20 in another and still be the same detail. }
+  Assert.AreEqual(TmpSecondScale, FSecond.EffectiveUnitsPerMM(FCAD), 1E-9,
+    'the other viewport kept its scale');
+  Assert.AreEqual(50.0, FSecond.ModelCentre(FCAD).X, 1E-9,
+    'and its centre, because a zoom does not move the window');
+end;
+
+procedure TCADViewLinkTests.AssigningAViewEndsTheLink;
+begin
+  FFirst.View := Framing(0, 100, 50, 150);
+  Assert.IsFalse(FFirst.IsLinked, 'unlinked');
+  Assert.AreEqual(25.0, FFirst.ModelCentre(FCAD).X, 1E-9,
+    'showing what it was given');
+  Assert.AreEqual(50.0, FSecond.ModelCentre(FCAD).X, 1E-9,
+    'and the other viewport, and the named view, are untouched');
+end;
+
+procedure TCADViewLinkTests.DeletingTheNamedViewLeavesItsViewportsShowingWhatTheyShowed;
+var
+  TmpSpec: TCADViewSpec;
+begin
+  { Moved after linking, so the viewports' own copies are stale until
+    the delete brings them up to date - which is the case that would
+    blank or jump a sheet if it did not. }
+  TmpSpec := FDetail.Spec;
+  TmpSpec.Window := Rect2D(200, 100, 300, 150);
+  FDetail.Spec := TmpSpec;
+  FCAD.Views.Delete(FCAD.Views.IndexOfId(FDetail.Id));
+  Assert.IsFalse(FFirst.IsLinked, 'unlinked');
+  Assert.AreEqual(250.0, FFirst.ModelCentre(FCAD).X, 1E-9,
+    'and still showing where the detail was');
+  Assert.AreEqual(250.0, FSecond.ModelCentre(FCAD).X, 1E-9, 'both of them');
+end;
+
+procedure TCADViewLinkTests.ALinkSurvivesSaveAndLoad;
+var
+  TmpBack: TFNCCADCmp2D;
+  TmpSpec: TCADViewSpec;
+begin
+  TmpBack := TFNCCADCmp2D.Create(nil);
+  try
+    TmpBack.LoadFromJSONString(FCAD.SaveToJSONString);
+    Assert.AreEqual(FDetail.Id, TmpBack.Sheets[0].Viewports[0].ViewLink,
+      'the link came back');
+    { And still a link, not a copy: change the reloaded named view and
+      the reloaded viewport follows. }
+    TmpSpec := TmpBack.Views[0].Spec;
+    TmpSpec.Window := Rect2D(200, 100, 300, 150);
+    TmpBack.Views[0].Spec := TmpSpec;
+    Assert.AreEqual(250.0,
+      TmpBack.Sheets[0].Viewports[0].ModelCentre(TmpBack).X, 1E-9,
+      'a live link');
+  finally
+    TmpBack.Free;
+  end;
+end;
+
+procedure TCADViewLinkTests.TheFileCarriesAnUpToDateCopyForReadersWithoutLinks;
+var
+  TmpSpec: TCADViewSpec;
+  TmpBack: TFNCCADCmp2D;
+begin
+  TmpSpec := FDetail.Spec;
+  TmpSpec.Window := Rect2D(200, 100, 300, 150);
+  FDetail.Spec := TmpSpec;
+  TmpBack := TFNCCADCmp2D.Create(nil);
+  try
+    TmpBack.LoadFromJSONString(FCAD.SaveToJSONString);
+    { The viewport's own view, as written - what a reader that knows
+      nothing of links shows. It has to be the detail as it is now, not
+      as it was when the viewport was linked. }
+    Assert.AreEqual(200.0, TmpBack.Sheets[0].Viewports[0].View.Window.Left,
+      1E-9, 'the copy was brought up to date before saving');
+  finally
+    TmpBack.Free;
+  end;
+end;
+
+procedure TCADViewLinkTests.ALinkThatFindsNothingFallsBackToTheOwnCopy;
+begin
+  { A sheet copied in from another drawing: the identifier is there and
+    the view is not. }
+  FFirst.ViewLink := '{00000000-0000-0000-0000-000000000000}';
+  Assert.IsTrue(FFirst.IsLinked, 'it still says it is linked');
+  Assert.IsNull(FFirst.LinkedView(FCAD), 'to nothing');
+  Assert.AreEqual(50.0, FFirst.ModelCentre(FCAD).X, 1E-9,
+    'and shows its own copy rather than the whole drawing');
+end;
+
+procedure TCADViewLinkTests.TheLinkedViewsHiddenLayersAreHiddenOnTheSheet;
+var
+  TmpSpec: TCADViewSpec;
+begin
+  { One viewport is enough for this. }
+  FSheet.DeleteViewport(1);
+  Assert.AreEqual(1, LinesDrawn, 'the model line, through the viewport');
+  TmpSpec := FDetail.Spec;
+  TmpSpec.UseLayerOverride := True;
+  TmpSpec.HiddenLayers := [0];
+  FDetail.Spec := TmpSpec;
+  { Changed on the named view, not on the viewport: a detail that hides
+    a layer hides it on every sheet it is placed on. }
+  Assert.AreEqual(0, LinesDrawn, 'hidden by the linked view');
+end;
+
+{ ==================================================================
+  TCADViewFromSelectionTests
+  ================================================================== }
+
+procedure TCADViewFromSelectionTests.AnAreaBecomesAWindowWithAMargin;
+var
+  TmpView: TCADViewSpec;
+begin
+  { Dragged from the top-right to the bottom-left, as people do. }
+  TmpView := CADViewFromArea(Rect2D(100, 50, 0, 0), 0.1);
+  Assert.AreEqual(-10.0, TmpView.Window.Left, 1E-9, 'a tenth of 100 left');
+  Assert.AreEqual(-10.0, TmpView.Window.Bottom, 1E-9,
+    'and the same below - the margin comes from the larger side');
+  Assert.AreEqual(110.0, TmpView.Window.Right, 1E-9, 'right');
+  Assert.AreEqual(60.0, TmpView.Window.Top, 1E-9, 'top');
+  Assert.IsFalse(TmpView.UseLayerOverride,
+    'and it leaves the layers alone');
+end;
+
+procedure TCADViewFromSelectionTests.ObjectsBecomeTheUnionOfTheirBoxes;
+var
+  TmpList: TGraphicObjList;
+  TmpView: TCADViewSpec;
+begin
+  TmpList := TGraphicObjList.Create;
+  try
+    TmpList.FreeOnClear := True;
+    TmpList.Add(TLine2D.Create(1, Point2D(10, 10), Point2D(20, 20)));
+    TmpList.Add(TLine2D.Create(2, Point2D(50, 0), Point2D(60, 30)));
+    TmpView := CADViewFromObjects(TmpList, 0);
+    Assert.AreEqual(10.0, TmpView.Window.Left, 1E-9, 'left of the first');
+    Assert.AreEqual(0.0, TmpView.Window.Bottom, 1E-9, 'bottom of the second');
+    Assert.AreEqual(60.0, TmpView.Window.Right, 1E-9, 'right of the second');
+    Assert.AreEqual(30.0, TmpView.Window.Top, 1E-9, 'top of the second');
+  finally
+    TmpList.Free;
+  end;
+end;
+
+procedure TCADViewFromSelectionTests.AFlatSelectionStillFramesSomething;
+var
+  TmpView: TCADViewSpec;
+begin
+  { One horizontal line: a box with no height, which a viewport would
+    read as "frames nothing" and fill with the whole drawing. }
+  TmpView := CADViewFromArea(Rect2D(0, 5, 100, 5), 0.05);
+  Assert.IsTrue(TmpView.Window.Top - TmpView.Window.Bottom > 0,
+    'it has a height');
+  Assert.AreEqual(10.0, TmpView.Window.Top - TmpView.Window.Bottom, 1E-9,
+    'twice the margin of the long side');
+end;
+
+procedure TCADViewFromSelectionTests.NothingSelectedIsRefused;
+begin
+  Assert.WillRaise(
+    procedure
+    var
+      TmpList: TGraphicObjList;
+      TmpView: TCADViewSpec;
+    begin
+      TmpList := TGraphicObjList.Create;
+      try
+        TmpView := CADViewFromObjects(TmpList, 0.05);
+        Assert.Fail('unreachable: ' + TmpView.Name);
+      finally
+        TmpList.Free;
+      end;
+    end, ECADPageError, 'a detail of nothing');
+end;
+
+procedure TCADViewFromSelectionTests.APointIsRefused;
+begin
+  Assert.WillRaise(
+    procedure
+    var
+      TmpView: TCADViewSpec;
+    begin
+      TmpView := CADViewFromArea(Rect2D(5, 5, 5, 5), 0.05);
+      Assert.Fail('unreachable: ' + TmpView.Name);
+    end, ECADPageError, 'no margin rescues a point');
+end;
+
+{ ==================================================================
   TCADSheetDrawingTests
   ================================================================== }
 
@@ -2094,6 +2571,9 @@ TDUnitX.RegisterTestFixture(TCADExplodeTests);
 TDUnitX.RegisterTestFixture(TCADSheetCustomClassTests);
 TDUnitX.RegisterTestFixture(TCADSheetViewportProxyTests);
 TDUnitX.RegisterTestFixture(TCADSheetViewportViewTests);
+TDUnitX.RegisterTestFixture(TCADNamedViewTests);
+TDUnitX.RegisterTestFixture(TCADViewLinkTests);
+TDUnitX.RegisterTestFixture(TCADViewFromSelectionTests);
 TDUnitX.RegisterTestFixture(TCADSheetDrawingTests);
 
 end.
