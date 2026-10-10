@@ -161,6 +161,13 @@ type
     procedure EditClick(Sender: TObject);
     procedure DefBlockClick(Sender: TObject);
     procedure DeleteSelectionClick(Sender: TObject);
+    procedure DefineViewFromAreaClick(Sender: TObject);
+    procedure DefineViewFromSelectionClick(Sender: TObject);
+    procedure PlaceViewClick(Sender: TObject);
+    procedure ListViewsClick(Sender: TObject);
+    procedure DefineView(const ASpec: TCADViewSpec; const AHow: string);
+    function LinkedViewportCount(const AView: TCADNamedView): Integer;
+    function ViewNames: string;
     procedure ViewportHandlesClick(Sender: TObject);
     procedure MarkViewportHandles;
     procedure PickReportClick(Sender: TObject);
@@ -228,6 +235,22 @@ type
   { : The state that deletes a selection from whichever space the
     viewport is showing - the model, or the sheet on the screen. }
   TMyCADDeleteSelection = class(TCADState)
+  public
+    constructor Create(const CADPrg: TFNCCADPrg;
+      const StateParam: TCADPrgParam;
+      var NextState: TCADStateClass); override;
+  end;
+
+  { : The states that turn an area, or a selection, into a named view.
+    Both end in TMainForm.DefineView, which asks for the name. }
+  TMyCADDefineViewFromArea = class(TCADState)
+  public
+    constructor Create(const CADPrg: TFNCCADPrg;
+      const StateParam: TCADPrgParam;
+      var NextState: TCADStateClass); override;
+  end;
+
+  TMyCADDefineViewFromSelection = class(TCADState)
   public
     constructor Create(const CADPrg: TFNCCADPrg;
       const StateParam: TCADPrgParam;
@@ -499,7 +522,7 @@ end;
 
 procedure TMainForm.BuildMenu;
 var
-  TmpFile, TmpEdit, TmpView, TmpJust, TmpPrint: TMenuItem;
+  TmpFile, TmpEdit, TmpView, TmpJust, TmpPrint, TmpNamed: TMenuItem;
 begin
   Log('BuildMenu');
   fMenu := TMainMenu.Create(Self);
@@ -565,6 +588,15 @@ begin
     True);
   fUseSnapItem := AddCheckItem(TmpView, 'Use snap', UseSnapClick, True);
   fUseOrtoItem := AddCheckItem(TmpView, 'Use orto', UseOrtoClick, False);
+  AddSeparator(TmpView);
+  { Named views: parts of the model with a name, kept in the drawing,
+    that sheet viewports link to rather than copy. Define in the model,
+    place on a sheet - as often as you like, at different scales. }
+  TmpNamed := AddMenu(TmpView, 'Named views');
+  AddItem(TmpNamed, 'Define from an area', DefineViewFromAreaClick);
+  AddItem(TmpNamed, 'Define from a selection', DefineViewFromSelectionClick);
+  AddItem(TmpNamed, 'Place on sheet...', PlaceViewClick);
+  AddItem(TmpNamed, 'List (log)', ListViewsClick);
   AddSeparator(TmpView);
   AddItem(TmpView, 'Time a repaint', TimeRepaintClick);
 end;
@@ -1242,6 +1274,298 @@ begin
   { The same command in both spaces, on purpose: what gets picked and
     what gets deleted is whatever the viewport is showing. }
   StartSelection(TMyCADDeleteSelection);
+end;
+
+{ ===================== named views ===================== }
+
+constructor TMyCADDefineViewFromArea.Create(const CADPrg: TFNCCADPrg;
+  const StateParam: TCADPrgParam; var NextState: TCADStateClass);
+var
+  TmpArea: TRect2D;
+begin
+  inherited;
+  if Param is TCADPrgSelectAreaParam then
+  begin
+    TmpArea := TCADPrgSelectAreaParam(Param).Area;
+    try
+      MainForm.DefineView(CADViewFromArea(TmpArea), 'from an area');
+    except
+      { Two clicks on the same spot: a point frames nothing, and the
+        library says so rather than making a view of it. }
+      on E: Exception do
+        Say(E.Message);
+    end;
+    CADPrg.RepaintAfterOperation;
+  end;
+  NextState := CADPrg.DefaultState;
+  Param.Free;
+  Param := nil;
+end;
+
+constructor TMyCADDefineViewFromSelection.Create(const CADPrg: TFNCCADPrg;
+  const StateParam: TCADPrgParam; var NextState: TCADStateClass);
+begin
+  inherited;
+  if Param is TCAD2DSelectObjectsParam then
+  begin
+    try
+      MainForm.DefineView(CADViewFromObjects(TCAD2DSelectObjectsParam(Param)
+        .SelectedObjects), 'from a selection');
+    except
+      { Accept with nothing selected. }
+      on E: Exception do
+        Say(E.Message);
+    end;
+    CADPrg.RepaintAfterOperation;
+  end;
+  NextState := CADPrg.DefaultState;
+  Param.Free;
+  Param := nil;
+end;
+
+procedure TMainForm.DefineViewFromAreaClick(Sender: TObject);
+begin
+  if fView.Sheet <> nil then
+  begin
+    Say('A named view frames part of the model. File - Show sheet / model '
+      + 'back to the model first.');
+    Exit;
+  end;
+  if fPrg.IsBusy then
+    fPrg.StopOperation;
+  { Two clicks, opposite corners - the same task Zoom area uses, with
+    our own state at the end of it instead of a zoom. }
+  fPrg.StartOperation(TCADPrgSelectArea,
+    TCADPrgSelectAreaParam.Create(TMyCADDefineViewFromArea, nil));
+end;
+
+procedure TMainForm.DefineViewFromSelectionClick(Sender: TObject);
+begin
+  if fView.Sheet <> nil then
+  begin
+    Say('A named view frames part of the model. File - Show sheet / model '
+      + 'back to the model first.');
+    Exit;
+  end;
+  { Pick the objects, then Accept (F2): the view frames them all, with
+    a margin. }
+  StartSelection(TMyCADDefineViewFromSelection);
+end;
+
+{ Names the view and keeps it in the drawing. A name that is already in
+  the list redefines that view instead of adding a second one: the
+  identifier stays, so every viewport linked to it, on every sheet,
+  shows the new framing the next time it is drawn. That is the link
+  doing its job - redefine a detail that is placed twice and watch both
+  follow. Only the framing changes; whatever else the view carries
+  stays as it was. }
+procedure TMainForm.DefineView(const ASpec: TCADViewSpec; const AHow: string);
+var
+  TmpName: string;
+  TmpSpec: TCADViewSpec;
+  TmpNamed: TCADNamedView;
+  TmpWin: TRect2D;
+begin
+  TmpName := Format('Detail %d', [fCAD.Views.Count + 1]);
+  if not AskString('Named view', 'Name (an existing name redefines it)',
+    TmpName) then
+    Exit;
+  TmpName := Trim(TmpName);
+  if TmpName = '' then
+    Exit;
+  TmpWin := ASpec.Window;
+  TmpNamed := fCAD.Views.FindByName(TmpName);
+  if TmpNamed <> nil then
+  begin
+    TmpSpec := TmpNamed.Spec;
+    TmpSpec.Window := ASpec.Window;
+    TmpNamed.Spec := TmpSpec;
+    Log(Format('named view redefined %s: %s, %.2f, %.2f .. %.2f, %.2f, '
+      + '%d viewport(s) linked', [AHow, TmpNamed.Name, TmpWin.Left,
+      TmpWin.Bottom, TmpWin.Right, TmpWin.Top,
+      LinkedViewportCount(TmpNamed)]));
+    Say(Format('"%s" redefined %s. The %d viewport(s) linked to it follow '
+      + '- show a sheet to see.', [TmpNamed.Name, AHow,
+      LinkedViewportCount(TmpNamed)]));
+  end
+  else
+  begin
+    TmpNamed := fCAD.Views.Add(TmpName, ASpec);
+    Log(Format('named view defined %s: %s, %.2f, %.2f .. %.2f, %.2f, id %s',
+      [AHow, TmpNamed.Name, TmpWin.Left, TmpWin.Bottom, TmpWin.Right,
+      TmpWin.Top, TmpNamed.Id]));
+    Say(Format('"%s" defined %s. Show a sheet, then View - Named views - '
+      + 'Place on sheet.', [TmpNamed.Name, AHow]));
+  end;
+end;
+
+{ A new viewport on the sheet on the screen, linked to a named view.
+  The scale is drawing units to a millimetre of paper - 0 fits the view
+  into the viewport. With a scale the viewport is sized to show exactly
+  the view at that scale; fitted, it is 120 mm wide, or 100 mm tall if
+  that is the smaller. Each new one steps down and right from the
+  top-left corner, so that several placed in a row do not land on top
+  of each other. Move and resize them afterwards with the viewport
+  handles. }
+procedure TMainForm.PlaceViewClick(Sender: TObject);
+var
+  TmpName, TmpScaleStr: string;
+  TmpNamed: TCADNamedView;
+  TmpVP: TCADSheetViewport;
+  TmpWin: TRect2D;
+  TmpScale, TmpWinW, TmpWinH, TmpW, TmpH: TRealType;
+  TmpSheetW, TmpSheetH, TmpLeft, TmpTop: TRealType;
+  TmpStep: Integer;
+begin
+  if fView.Sheet = nil then
+  begin
+    Say('A view is placed on a sheet. File - Show sheet / model first.');
+    Exit;
+  end;
+  if fCAD.Views.Count = 0 then
+  begin
+    Say('No named views yet. In the model: View - Named views - Define '
+      + 'from an area, or from a selection.');
+    Exit;
+  end;
+  if fPrg.IsBusy then
+    fPrg.StopOperation;
+  TmpName := fCAD.Views[fCAD.Views.Count - 1].Name;
+  if not AskString('Place a named view', Format('View (%s)', [ViewNames]),
+    TmpName) then
+    Exit;
+  TmpNamed := fCAD.Views.FindByName(Trim(TmpName));
+  if TmpNamed = nil then
+  begin
+    Say(Format('No view named "%s". There are: %s.', [TmpName, ViewNames]));
+    Exit;
+  end;
+  TmpScaleStr := '0';
+  if not AskString('Place a named view',
+    'Drawing units per mm of paper (0 fits)', TmpScaleStr) then
+    Exit;
+  TmpScale := StrToFloatDef(Trim(TmpScaleStr), -1);
+  if TmpScale < 0 then
+  begin
+    Say(Format('"%s" is not a scale. 0 fits; 2 is two drawing units to '
+      + 'the millimetre.', [TmpScaleStr]));
+    Exit;
+  end;
+
+  TmpWin := ReorderRect2D(TmpNamed.Spec.Window);
+  TmpWinW := TmpWin.Right - TmpWin.Left;
+  TmpWinH := TmpWin.Top - TmpWin.Bottom;
+  if (TmpWinW <= 0) or (TmpWinH <= 0) then
+  begin
+    Say(Format('"%s" frames nothing - define it again.', [TmpNamed.Name]));
+    Exit;
+  end;
+  if TmpScale > 0 then
+  begin
+    TmpW := TmpWinW / TmpScale;
+    TmpH := TmpWinH / TmpScale;
+  end
+  else
+  begin
+    TmpW := 120;
+    TmpH := 120 * TmpWinH / TmpWinW;
+    if TmpH > 100 then
+    begin
+      TmpW := TmpW * 100 / TmpH;
+      TmpH := 100;
+    end;
+  end;
+
+  fView.Sheet.SizeMM(TmpSheetW, TmpSheetH);
+  if (TmpW > TmpSheetW - 20) or (TmpH > TmpSheetH - 20) then
+  begin
+    Say(Format('At that scale "%s" is %.0f x %.0f mm, which does not fit '
+      + 'on the paper. Try a larger number, or 0.', [TmpNamed.Name, TmpW,
+      TmpH]));
+    Exit;
+  end;
+  if (TmpW < 5) or (TmpH < 5) then
+  begin
+    Say(Format('At that scale "%s" is %.1f x %.1f mm - too small to see. '
+      + 'Try a smaller number, or 0.', [TmpNamed.Name, TmpW, TmpH]));
+    Exit;
+  end;
+  TmpStep := fView.Sheet.ViewportCount mod 6;
+  TmpLeft := 20 + TmpStep * 15;
+  TmpTop := TmpSheetH - 20 - TmpStep * 15;
+  if TmpLeft + TmpW > TmpSheetW - 10 then
+    TmpLeft := TmpSheetW - 10 - TmpW;
+  if TmpTop - TmpH < 10 then
+    TmpTop := 10 + TmpH;
+
+  TmpVP := fView.Sheet.AddViewport;
+  TmpVP.Name := TmpNamed.Name;
+  TmpVP.RectMM := Rect2D(TmpLeft, TmpTop - TmpH, TmpLeft + TmpW, TmpTop);
+  TmpVP.UnitsPerMM := TmpScale;
+  { The link, not a copy: the viewport shows whatever the named view
+    frames from now on. It also keeps a copy of its own, which is what
+    it falls back on if the view is deleted. }
+  TmpVP.LinkTo(TmpNamed);
+
+  if fHandlesItem.Checked then
+  begin
+    CADSheetShowViewportProxies(fView.Sheet);
+    MarkViewportHandles;
+  end;
+  Log(Format('placed "%s" on %s: %.1f x %.1f mm at %.1f, %.1f, '
+    + 'units per mm %.4g, %d viewport(s) linked to it',
+    [TmpNamed.Name, fView.Sheet.Name, TmpW, TmpH, TmpLeft, TmpTop - TmpH,
+    TmpScale, LinkedViewportCount(TmpNamed)]));
+  fView.Repaint;
+end;
+
+procedure TMainForm.ListViewsClick(Sender: TObject);
+var
+  Cont: Integer;
+  TmpWin: TRect2D;
+begin
+  if fCAD.Views.Count = 0 then
+  begin
+    Say('No named views yet. In the model: View - Named views - Define '
+      + 'from an area, or from a selection.');
+    Exit;
+  end;
+  Log(Format('named views: %d', [fCAD.Views.Count]));
+  for Cont := 0 to fCAD.Views.Count - 1 do
+  begin
+    TmpWin := fCAD.Views[Cont].Spec.Window;
+    Log(Format('  %s: %.2f, %.2f .. %.2f, %.2f, %d viewport(s) linked, '
+      + 'id %s', [fCAD.Views[Cont].Name, TmpWin.Left, TmpWin.Bottom,
+      TmpWin.Right, TmpWin.Top, LinkedViewportCount(fCAD.Views[Cont]),
+      fCAD.Views[Cont].Id]));
+  end;
+  Say(Format('%d named view(s): %s. The windows and links are in the log.',
+    [fCAD.Views.Count, ViewNames]));
+end;
+
+{ How many sheet viewports, on all the sheets, show AView. }
+function TMainForm.LinkedViewportCount(const AView: TCADNamedView): Integer;
+var
+  CSheet, CPort: Integer;
+begin
+  Result := 0;
+  for CSheet := 0 to fCAD.Sheets.Count - 1 do
+    for CPort := 0 to fCAD.Sheets[CSheet].ViewportCount - 1 do
+      if fCAD.Sheets[CSheet].Viewports[CPort].LinkedView(fCAD) = AView then
+        Inc(Result);
+end;
+
+function TMainForm.ViewNames: string;
+var
+  Cont: Integer;
+begin
+  Result := '';
+  for Cont := 0 to fCAD.Views.Count - 1 do
+  begin
+    if Result <> '' then
+      Result := Result + ', ';
+    Result := Result + fCAD.Views[Cont].Name;
+  end;
 end;
 
 procedure TMainForm.AddBlockClick(Sender: TObject);

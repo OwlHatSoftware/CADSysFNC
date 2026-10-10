@@ -52,6 +52,42 @@ A layer carries its pen and brush, whose styles are the drawing-layer names (`"s
 
 Reading is lenient: a missing member takes its default, an unknown enum name falls back to the default. A structurally wrong file (a member that must be an object or array and is not) raises `ECADJSONError`; a wrong `format`, `kind` or `version` raises `ECADFileNotValid`.
 
+## Sheets and named views
+
+A drawing with paper space carries two more top-level arrays, each written only
+when it has something in it:
+
+```jsonc
+{
+  "kind": "drawing",
+  ...
+  "sheets": [ {
+    "name": "Sheet 1",
+    "paper": "A3", "orientation": "landscape",
+    "marginLeftMM": 10, "marginTopMM": 10, "marginRightMM": 10, "marginBottomMM": 10,
+    "viewports": [ {
+      "name": "Detail 1",
+      "min": [20, 177], "max": [140, 277],   // the rectangle on the paper, mm
+      "unitsPerMM": 0,                       // 0 fits the view to the rectangle
+      "border": true,
+      "view": { "kind": "view", ... },       // always written - see below
+      "viewLink": "{8F1C...}"                // only when linked to a named view
+    } ],
+    "objects": [ ... ]                       // the sheet's own objects, in mm
+  } ],
+  "views": [ {
+    "id": "{8F1C...}",                       // GUID; what viewLink refers to
+    "view": { "kind": "view", "name": "Detail 1", "min": [..], "max": [..], ... }
+  } ]
+}
+```
+
+A linked viewport's `view` is a copy of the named view as it was when the file
+was written, so a reader that ignores `viewLink` and `views` shows the same
+thing. A `viewLink` that matches no `views` entry is not an error: the viewport
+falls back to its `view`. Reading a `views` entry whose `id` is already present
+(a drawing merged into itself) skips it.
+
 ## API
 
 | Was | Is |

@@ -272,9 +272,90 @@ exploding a title block on a sheet leaves the pieces on the paper.
 pieces keep the source's layer and get fresh identifiers from the space they
 land in; the original is neither changed nor removed.
 
-## 10. What the library does not decide
+## 10. Named views: one detail, several viewports
+
+A named view is a part of the model with a name, kept in the drawing. Sheet
+viewports **link** to it rather than copy it, so a detail placed on three sheets
+- or twice on one, at two scales - is defined once, and redefining it moves all
+of them.
+
+```pascal
+TFNCCADCmp.Views: TCADViews;                  { the drawing's named views }
+
+TCADViews.Add(const AName: String; const ASpec: TCADViewSpec): TCADNamedView;
+TCADViews.Delete(const AIndex: Integer);      { unlinks first - see below }
+TCADViews.Clear;
+TCADViews.FindByName / FindById / IndexOfName / IndexOfId;
+TCADViews.Count, Items[]                      { default }
+
+TCADNamedView.Id: String;                     { a GUID, made once, never changes }
+TCADNamedView.Name: String;                   { the spec's own Name }
+TCADNamedView.Spec: TCADViewSpec;             { assign it to redefine }
+
+{ making the spec from what somebody pointed at }
+function CADViewFromArea(const AArea: TRect2D;
+  const AMarginFraction: TRealType = 0.05): TCADViewSpec;
+function CADViewFromObjects(const AObjects: TGraphicObjList;
+  const AMarginFraction: TRealType = 0.05): TCADViewSpec;
+```
+
+`CADViewFromObjects` frames the union of the objects' boxes. Both add a margin
+of the larger side times the fraction on every side, so a single horizontal line
+still frames something with height; both raise `ECADPageError` for a point or an
+empty list rather than return a view that frames nothing (which a viewport would
+read as "fit the whole drawing").
+
+On the viewport:
+
+```pascal
+TCADSheetViewport.LinkTo(const AView: TCADNamedView);
+TCADSheetViewport.Unlink(const ACAD: TFNCCADCmp);    { keeps what it showed }
+TCADSheetViewport.IsLinked: Boolean;
+TCADSheetViewport.ViewLink: String;                  { the Id it links to }
+TCADSheetViewport.LinkedView(const ACAD: TFNCCADCmp): TCADNamedView;  { or nil }
+TCADSheetViewport.EffectiveView(const ACAD: TFNCCADCmp): TCADViewSpec;
+```
+
+What is shared and what is not:
+
+- **Shared** - the framing (`Window`) and everything else in the spec, layer
+  overrides included. That is what the link is for.
+- **Per viewport** - `RectMM`, `UnitsPerMM`, `ShowBorder`. The same detail at
+  1:5 and at 1:20 is two viewports linked to one view.
+
+`EffectiveView` is what everything that draws, frames or hit-tests a viewport
+asks: the linked view when the link finds one, the viewport's own `View`
+otherwise. Panning a linked viewport (`SetModelCentre`, `PanModelBy`) moves the
+named view, and so every viewport linked to it; zooming changes `UnitsPerMM`,
+which is the viewport's own.
+
+A linked viewport always keeps a copy of its own. `LinkTo` takes one, `TCADSheet`
+refreshes it before saving, and it is what the viewport falls back on when the
+link finds nothing. Hence:
+
+- **Deleting a view** unlinks its viewports first. Each keeps showing what it
+  showed; nothing on any sheet goes blank.
+- **Assigning `View`** on a linked viewport ends the link. Setting a view of its
+  own is a statement that it no longer follows the named one.
+- **A file read by something that does not know about links** shows exactly
+  what this library shows, from the copy.
+- **A link to a view the drawing does not have** - a sheet merged in from
+  another drawing - is not an error: the viewport shows its copy, and
+  `IsLinked` stays true while `LinkedView` answers nil.
+
+Merging a drawing into itself skips views whose `Id` is already there, so links
+still find one view each.
+
+The demo has it under **View - Named views**: *Define from an area* and *Define
+from a selection* in the model (an existing name redefines that view),
+*Place on sheet...* on a sheet (name, then drawing units per mm, 0 to fit), and
+*List (log)*.
+
+## 11. What the library does not decide
 
 - when the viewport handles are shown, and what they look like;
 - when the application switches space;
+- what a named view is called, or whether two may share a name - the `Id` is
+  what tells them apart;
 - undo. The library reports what happened on a sheet through
   `OnSheetObjectChange`; what an undo stack is made of is the application's.
