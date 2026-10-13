@@ -28,7 +28,7 @@ interface
 
 uses
   System.SysUtils, System.Classes, System.Types, System.UITypes, System.Math,
-  System.DateUtils,
+  System.DateUtils, System.Diagnostics,
   FMX.Types, FMX.Controls, FMX.Forms, FMX.StdCtrls, FMX.Menus, FMX.Dialogs,
   FMX.Layouts, FMX.Controls.Presentation,
   DemoLog, DemoDlg, LayersFrm, PrintPrvFrm,
@@ -215,6 +215,8 @@ type
     procedure NotOnFMX;
     procedure ExitClick(Sender: TObject);
     procedure TimeRepaintClick(Sender: TObject);
+    procedure GenerateTestDrawingClick(Sender: TObject);
+    procedure BenchmarkClick(Sender: TObject);
   end;
 
   { : The state the VCL demo uses to turn a selection into a source
@@ -547,6 +549,8 @@ begin
   AddItem(TmpNamed, 'List (log)', ListViewsClick);
   AddSeparator(TmpView);
   AddItem(TmpView, 'Time a repaint', TimeRepaintClick);
+  AddItem(TmpView, 'Generate test drawing...', GenerateTestDrawingClick);
+  AddItem(TmpView, 'Benchmark (log)', BenchmarkClick);
 end;
 
 procedure TMainForm.BuildPopup;
@@ -1995,6 +1999,147 @@ end;
 procedure TMainForm.ExitClick(Sender: TObject);
 begin
   Close;
+end;
+
+{ A drawing to measure with: the given number of small shapes - lines,
+  frames, filled ellipses, polylines and text - scattered over a square
+  10000 units wide, a few units to twenty across each. At zoom-all most
+  of them are a pixel or less, which is the case the drawing-speed work
+  is about; zoomed in, they are ordinary shapes. The same seed every
+  time, so two runs of the benchmark draw the same drawing. }
+procedure TMainForm.GenerateTestDrawingClick(Sender: TObject);
+var
+  TmpStr: string;
+  TmpCount, Cont: Integer;
+  TmpX, TmpY, TmpS: TRealType;
+  TmpObj: TObject2D;
+  TmpOldDraw: Boolean;
+  TmpWatch: TStopwatch;
+begin
+  if fView.Sheet <> nil then
+  begin
+    Say('The test drawing goes in the model. File - Show sheet / model '
+      + 'back to the model first.');
+    Exit;
+  end;
+  TmpStr := '100000';
+  if not AskString('Generate test drawing',
+    'Number of objects (replaces the drawing)', TmpStr) then
+    Exit;
+  TmpCount := StrToIntDef(Trim(TmpStr), 0);
+  if TmpCount <= 0 then
+    Exit;
+  if fPrg.IsBusy then
+    fPrg.StopOperation;
+  TmpWatch := TStopwatch.StartNew;
+  RandSeed := 42;
+  TmpOldDraw := fCAD.DrawOnAdd;
+  fCAD.DrawOnAdd := False;
+  try
+    fCAD.DeleteAllObjects;
+    for Cont := 0 to TmpCount - 1 do
+    begin
+      TmpX := Random * 10000;
+      TmpY := Random * 10000;
+      TmpS := 0.5 + Random * 20;
+      case Cont mod 5 of
+        0:
+          TmpObj := TLine2D.Create(-1, Point2D(TmpX, TmpY),
+            Point2D(TmpX + TmpS, TmpY + TmpS * 0.3));
+        1:
+          TmpObj := TFrame2D.Create(-1, Point2D(TmpX, TmpY),
+            Point2D(TmpX + TmpS, TmpY + TmpS * 0.6));
+        2:
+          TmpObj := TFilledEllipse2D.Create(-1, Point2D(TmpX, TmpY),
+            Point2D(TmpX + TmpS, TmpY + TmpS));
+        3:
+          TmpObj := TPolyline2D.Create(-1, [Point2D(TmpX, TmpY),
+            Point2D(TmpX + TmpS, TmpY), Point2D(TmpX + TmpS, TmpY + TmpS),
+            Point2D(TmpX + TmpS * 2, TmpY + TmpS)]);
+      else
+        TmpObj := TText2D.Create(-1, Rect2D(TmpX, TmpY, TmpX + TmpS * 3,
+          TmpY + TmpS), TmpS, AnsiString('T' + IntToStr(Cont mod 100)));
+      end;
+      fCAD.CurrentLayer := Cont mod 4;
+      fCAD.AddObject(-1, TmpObj);
+    end;
+  finally
+    fCAD.DrawOnAdd := TmpOldDraw;
+    fCAD.CurrentLayer := 0;
+  end;
+  Log(Format('test drawing: %d objects generated in %d ms',
+    [TmpCount, TmpWatch.ElapsedMilliseconds]));
+  fView.ZoomToExtension;
+end;
+
+{ Times what the drawing-speed work changes, into the log. Each line is
+  a number to compare before and after a change, on the same machine,
+  with the same generated drawing:
+
+  - a full repaint at zoom-all, where most objects are sub-pixel;
+  - a full repaint zoomed in to a twentieth of the drawing;
+  - one pan step, averaged over fifty, at zoom-all - each one a full
+    repaint until the cached pan exists;
+  - one zoom step, averaged over ten.
+
+  Repaint here means the back buffer: the screen gets it on the next
+  paint, which is not counted. The view is put back afterwards. }
+procedure TMainForm.BenchmarkClick(Sender: TObject);
+const
+  PAN_STEPS = 50;
+  ZOOM_STEPS = 10;
+var
+  TmpWatch: TStopwatch;
+  TmpOld, TmpAll: TRect2D;
+  TmpCX, TmpCY, TmpW, TmpH, TmpStep: TRealType;
+  TmpFull, TmpIn, TmpPan, TmpZoom: Int64;
+  Cont: Integer;
+begin
+  if fPrg.IsBusy then
+    fPrg.StopOperation;
+  TmpOld := fView.VisualRect;
+  fView.ZoomToExtension;
+  TmpAll := fView.VisualRect;
+
+  TmpWatch := TStopwatch.StartNew;
+  fView.Repaint;
+  TmpFull := TmpWatch.ElapsedMilliseconds;
+
+  TmpCX := (TmpAll.Left + TmpAll.Right) / 2;
+  TmpCY := (TmpAll.Bottom + TmpAll.Top) / 2;
+  TmpW := (TmpAll.Right - TmpAll.Left) / 40;
+  TmpH := (TmpAll.Top - TmpAll.Bottom) / 40;
+  fView.ZoomWindow(Rect2D(TmpCX - TmpW, TmpCY - TmpH, TmpCX + TmpW,
+    TmpCY + TmpH));
+  TmpWatch := TStopwatch.StartNew;
+  fView.Repaint;
+  TmpIn := TmpWatch.ElapsedMilliseconds;
+
+  fView.ZoomWindow(TmpAll);
+  TmpStep := (TmpAll.Right - TmpAll.Left) / 200;
+  TmpWatch := TStopwatch.StartNew;
+  for Cont := 1 to PAN_STEPS do
+    fView.PanWindow(TmpStep, 0);
+  TmpPan := TmpWatch.ElapsedMilliseconds;
+
+  fView.ZoomWindow(TmpAll);
+  TmpWatch := TStopwatch.StartNew;
+  for Cont := 1 to ZOOM_STEPS div 2 do
+  begin
+    fView.ZoomIn;
+    fView.ZoomOut;
+  end;
+  TmpZoom := TmpWatch.ElapsedMilliseconds;
+
+  fView.ZoomWindow(TmpOld);
+  Log(Format('benchmark: %d objects; repaint at zoom-all %d ms, zoomed in '
+    + '%d ms; pan step %.1f ms; zoom step %.1f ms',
+    [fCAD.ObjectsCount, TmpFull, TmpIn, TmpPan / PAN_STEPS,
+    TmpZoom / ZOOM_STEPS]));
+  Say(Format('%d objects. Repaint: %d ms at zoom-all, %d ms zoomed in. '
+    + 'Pan step %.1f ms, zoom step %.1f ms. Also in the log.',
+    [fCAD.ObjectsCount, TmpFull, TmpIn, TmpPan / PAN_STEPS,
+    TmpZoom / ZOOM_STEPS]));
 end;
 
 procedure TMainForm.TimeRepaintClick(Sender: TObject);
