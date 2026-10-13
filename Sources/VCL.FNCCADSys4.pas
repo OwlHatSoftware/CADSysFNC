@@ -21411,6 +21411,7 @@ procedure TFNCCADCmp2D.LoadBlockFromJSON(const AJSON: TJSONObject);
 var
   TmpObj: TGraphicObject;
   TmpBlocksIter: TGraphicObjIterator;
+  TmpLayer: Byte;
 begin
   try
     TmpObj := CADSysObjectFromJSON(AJSON);
@@ -21442,7 +21443,15 @@ begin
   finally
     TmpBlocksIter.Free;
   end;
+  { AddSourceBlock puts a block on the current layer, which is right
+    for a block being defined and wrong for one being read: it came back
+    on whatever layer happened to be current, not the one it was saved
+    on. Put back afterwards rather than by changing CurrentLayer, which
+    would leave the drawing's current layer wherever the last block
+    was. }
+  TmpLayer := TmpObj.Layer;
   AddSourceBlock(TSourceBlock2D(TmpObj));
+  TmpObj.Layer := TmpLayer;
 end;
 {$WARNINGS ON}
 
@@ -23162,6 +23171,7 @@ procedure TFNCCADCmp3D.LoadBlockFromJSON(const AJSON: TJSONObject);
 var
   TmpObj: TGraphicObject;
   TmpBlocksIter: TGraphicObjIterator;
+  TmpLayer: Byte;
 begin
   try
     TmpObj := CADSysObjectFromJSON(AJSON);
@@ -23193,7 +23203,15 @@ begin
   finally
     TmpBlocksIter.Free;
   end;
+  { AddSourceBlock puts a block on the current layer, which is right
+    for a block being defined and wrong for one being read: it came back
+    on whatever layer happened to be current, not the one it was saved
+    on. Put back afterwards rather than by changing CurrentLayer, which
+    would leave the drawing's current layer wherever the last block
+    was. }
+  TmpLayer := TmpObj.Layer;
   AddSourceBlock(TSourceBlock3D(TmpObj));
+  TmpObj.Layer := TmpLayer;
 end;
 {$WARNINGS ON}
 

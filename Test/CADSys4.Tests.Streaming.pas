@@ -62,6 +62,10 @@ type
     procedure TextThatLooksLikeADateStaysText;
     [Test]
     procedure MergingAppends;
+    [Test]
+    procedure ASourceBlockKeepsItsLayer;
+    [Test]
+    procedure TheWholeDocumentComesBackUnchanged;
   end;
 
   [TestFixture]
@@ -179,10 +183,9 @@ begin
 end;
 
 { AText loaded through the tree and saved again - what the streaming
-  reader has to match. Not the text itself: the tree path does not give
-  back everything it was given either (a source block comes back on the
-  layer that is current when it is added, not the one it was saved on),
-  and the reader's promise is to load what the tree loads. }
+  reader has to match. The reader's promise is to load what the tree
+  loads; that both give back the document they were given is a separate
+  test, TheWholeDocumentComesBackUnchanged. }
 function TreeReloaded(const AText: string): string;
 var
   TmpCAD: TFNCCADCmp2D;
@@ -625,6 +628,57 @@ begin
   end;
   Assert.AreEqual(2, FCAD.ObjectsCount, 'both drawings'' objects');
   Assert.AreEqual(1, FCAD.Sheets.Count, 'and the merged sheet');
+end;
+
+procedure TJSONStreamingTests.ASourceBlockKeepsItsLayer;
+var
+  TmpText: string;
+  TmpBack: TFNCCADCmp2D;
+begin
+  FCAD.CurrentLayer := 6;
+  FCAD.AddSourceBlock(TSourceBlock2D.Create(-1, StringToBlockName('DOOR'),
+    [TLine2D.Create(0, Point2D(0, 0), Point2D(0, 2))]));
+  FCAD.CurrentLayer := 0;
+  TmpText := FCAD.SaveToJSONString(False);
+  TmpBack := TFNCCADCmp2D.Create(nil);
+  try
+    TmpBack.CurrentLayer := 2;
+    TmpBack.LoadFromJSONString(TmpText);
+    { It used to come back on layer 2, the one current when it was
+      re-added. }
+    Assert.AreEqual(6, Integer(TSourceBlock2D(TmpBack.FindSourceBlock(
+      StringToBlockName('DOOR'))).Layer), 'through the tree');
+    TmpBack.CurrentLayer := 2;
+    LoadStreamed(TmpBack, TmpText);
+    Assert.AreEqual(6, Integer(TSourceBlock2D(TmpBack.FindSourceBlock(
+      StringToBlockName('DOOR'))).Layer), 'and through the stream');
+    Assert.AreEqual(2, Integer(TmpBack.CurrentLayer),
+      'without moving the drawing''s current layer');
+  finally
+    TmpBack.Free;
+  end;
+end;
+
+procedure TJSONStreamingTests.TheWholeDocumentComesBackUnchanged;
+var
+  TmpText: string;
+  TmpBack: TFNCCADCmp2D;
+begin
+  { With the block's layer kept, nothing in the richest drawing the
+    tests build is lost on the way: loaded either way and saved again,
+    it is the document it was. }
+  BuildRichDrawing(FCAD);
+  TmpText := FCAD.SaveToJSONString(False);
+  Assert.AreEqual(Canonical(TmpText), Canonical(TreeReloaded(TmpText)),
+    'through the tree');
+  TmpBack := TFNCCADCmp2D.Create(nil);
+  try
+    LoadStreamed(TmpBack, TmpText);
+    Assert.AreEqual(Canonical(TmpText),
+      Canonical(TmpBack.SaveToJSONString(False)), 'and through the stream');
+  finally
+    TmpBack.Free;
+  end;
 end;
 
 { ==================================================================
