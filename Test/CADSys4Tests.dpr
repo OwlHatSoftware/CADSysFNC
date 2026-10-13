@@ -49,6 +49,7 @@ uses
   CADSys4.Tests.Views in 'CADSys4.Tests.Views.pas',
   CADSys4.Tests.Print in 'CADSys4.Tests.Print.pas',
   CADSys4.Tests.Sheets in 'CADSys4.Tests.Sheets.pas',
+  CADSys4.Tests.Streaming in 'CADSys4.Tests.Streaming.pas',
   VCL.FNCCS4ExportVCL;
 
 {$IFNDEF TESTINSIGHT}

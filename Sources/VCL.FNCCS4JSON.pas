@@ -43,6 +43,11 @@ uses
     three times per build as H2443 - noise that makes a real diagnostic
     easy to miss. }
   System.SysUtils, System.Classes, System.JSON, System.Generics.Collections,
+  { The streaming classes - a writer that emits a document token by
+    token and a reader that walks one the same way, so that a drawing of
+    a hundred thousand objects never has to exist as one tree. Delphi
+    only: fpjson has no equivalent, and the LCL tree is parked. }
+  System.JSON.Types, System.JSON.Readers, System.JSON.Writers,
   VCL.FNCCS4BaseTypes;
 {$ENDIF}
 
@@ -174,7 +179,44 @@ procedure JSONToFile(const O: TCADJSONValue; const FileName: string;
   const Pretty: Boolean = True);
 function JSONFromFile(const FileName: string): TJSONObject;
 
+{$IFNDEF CADSYS_LCL}
+{ ---------------- streaming ---------------- }
+
+{: Writes AValue to AWriter token by token: the bridge between the tree
+   a single object saves itself into and a writer that never holds the
+   whole document. Member order is kept. A number is written as the
+   text the tree already holds for it, so the streamed file says exactly
+   what the tree would have said. nil writes null. }
+procedure JWriteValue(const AWriter: TJsonWriter; const AValue: TCADJSONValue);
+{: Builds a tree from the value AReader is on - an object or an array
+   with everything inside it, or a single string, number, boolean or
+   null - and leaves the reader on that value's last token. The caller
+   owns the result. Raises ECADJSONError on a token that is not a value.
+
+   A TJsonTextReader should have DateParseHandling at None, its default,
+   or a string that looks like a date comes back as something else; the
+   drawing loaders see to that themselves for as long as they read. }
+function JReadValue(const AReader: TJsonReader): TCADJSONValue;
+{: Moves AReader to the next token that is not a comment. False at the
+   end of the input. }
+function JReadToken(const AReader: TJsonReader): Boolean;
+{: The current token as text: a property name or a string value. Empty
+   for anything else. }
+function JReaderText(const AReader: TJsonReader): string;
+{: The current token as an integer, or ADefault when it is not a
+   number. A float is rounded. }
+function JReaderInt(const AReader: TJsonReader;
+  const ADefault: Int64 = 0): Int64;
+{$ENDIF}
+
 implementation
+
+{$IFNDEF CADSYS_LCL}
+uses
+  { TValue, which is what a reader hands its values back in. Here and
+    not in the interface: nothing outside this unit should need it. }
+  System.Rtti;
+{$ENDIF}
 
 { ---------------- writing ---------------- }
 
@@ -619,5 +661,145 @@ begin
     Strm.Free;
   end;
 end;
+
+{$IFNDEF CADSYS_LCL}
+{ ---------------- streaming ---------------- }
+
+procedure JWriteValue(const AWriter: TJsonWriter; const AValue: TCADJSONValue);
+var
+  Cont: Integer;
+  TmpPair: TJSONPair;
+begin
+  if AValue = nil then
+  begin
+    AWriter.WriteNull;
+    Exit;
+  end;
+  if AValue is TJSONObject then
+  begin
+    AWriter.WriteStartObject;
+    for Cont := 0 to TJSONObject(AValue).Count - 1 do
+    begin
+      TmpPair := TJSONObject(AValue).Pairs[Cont];
+      AWriter.WritePropertyName(TmpPair.JsonString.Value);
+      JWriteValue(AWriter, TmpPair.JsonValue);
+    end;
+    AWriter.WriteEndObject;
+  end
+  else if AValue is TJSONArray then
+  begin
+    AWriter.WriteStartArray;
+    for Cont := 0 to TJSONArray(AValue).Count - 1 do
+      JWriteValue(AWriter, TJSONArray(AValue).Items[Cont]);
+    AWriter.WriteEndArray;
+  end
+  { Before TJSONString, which it descends from. Raw, because the tree
+    holds a number as the text it will be written as: handing the writer
+    a Double instead would let it pick its own digits, and a streamed
+    file would then differ from the tree's in the last place of every
+    coordinate. }
+  else if AValue is TJSONNumber then
+    AWriter.WriteRawValue(AValue.ToJSON)
+  else if AValue is TJSONString then
+    AWriter.WriteValue(TJSONString(AValue).Value)
+  else if AValue is TJSONBool then
+    AWriter.WriteValue(TJSONBool(AValue).AsBoolean)
+  else if AValue is TJSONNull then
+    AWriter.WriteNull
+  else
+    AWriter.WriteRawValue(AValue.ToJSON);
+end;
+
+function JReadToken(const AReader: TJsonReader): Boolean;
+begin
+  repeat
+    Result := AReader.Read;
+  until (not Result) or (AReader.TokenType <> TJsonToken.Comment);
+end;
+
+function JReaderText(const AReader: TJsonReader): string;
+begin
+  if AReader.TokenType in [TJsonToken.PropertyName, TJsonToken.&String] then
+    Result := AReader.Value.AsString
+  else
+    Result := '';
+end;
+
+function JReaderInt(const AReader: TJsonReader; const ADefault: Int64): Int64;
+begin
+  case AReader.TokenType of
+    TJsonToken.Integer:
+      Result := AReader.Value.AsInt64;
+    TJsonToken.Float:
+      Result := Round(AReader.Value.AsExtended);
+  else
+    Result := ADefault;
+  end;
+end;
+
+function JReadValue(const AReader: TJsonReader): TCADJSONValue;
+var
+  TmpObj: TJSONObject;
+  TmpArr: TJSONArray;
+  TmpName: string;
+begin
+  case AReader.TokenType of
+    TJsonToken.StartObject:
+      begin
+        TmpObj := TJSONObject.Create;
+        try
+          while JReadToken(AReader) and
+            (AReader.TokenType <> TJsonToken.EndObject) do
+          begin
+            if AReader.TokenType <> TJsonToken.PropertyName then
+              Raise ECADJSONError.Create('Invalid JSON: a member name was ' +
+                'expected at ' + AReader.Path);
+            TmpName := AReader.Value.AsString;
+            if not JReadToken(AReader) then
+              Raise ECADJSONError.Create('Invalid JSON: the document ends ' +
+                'inside an object');
+            TmpObj.AddPair(TmpName, JReadValue(AReader));
+          end;
+          if AReader.TokenType <> TJsonToken.EndObject then
+            Raise ECADJSONError.Create('Invalid JSON: the document ends ' +
+              'inside an object');
+        except
+          TmpObj.Free;
+          Raise;
+        end;
+        Result := TmpObj;
+      end;
+    TJsonToken.StartArray:
+      begin
+        TmpArr := TJSONArray.Create;
+        try
+          while JReadToken(AReader) and
+            (AReader.TokenType <> TJsonToken.EndArray) do
+            TmpArr.AddElement(JReadValue(AReader));
+          if AReader.TokenType <> TJsonToken.EndArray then
+            Raise ECADJSONError.Create('Invalid JSON: the document ends ' +
+              'inside an array');
+        except
+          TmpArr.Free;
+          Raise;
+        end;
+        Result := TmpArr;
+      end;
+    TJsonToken.&String:
+      Result := TJSONString.Create(AReader.Value.AsString);
+    TJsonToken.Integer:
+      Result := TJSONNumber.Create(AReader.Value.AsInt64);
+    TJsonToken.Float:
+      Result := TJSONNumber.Create(Double(AReader.Value.AsExtended));
+    TJsonToken.Boolean:
+      Result := TJSONBool.Create(AReader.Value.AsBoolean);
+    TJsonToken.Null, TJsonToken.Undefined:
+      Result := TJSONNull.Create;
+  else
+    Raise ECADJSONError.Create('Invalid JSON: a value was expected at ' +
+      AReader.Path);
+  end;
+end;
+{$ENDIF}
 
 end.

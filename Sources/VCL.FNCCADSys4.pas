@@ -523,6 +523,9 @@ uses
 {$ELSE}
   System.Math, System.SysUtils, System.Classes, System.SyncObjs,
   System.Types, System.UITypes, System.JSON,
+  { The streaming reader and writer, for the drawing's own load and save
+    without a whole document tree - see TFNCCADCmp.SaveToJSONWriter. }
+  System.JSON.Readers, System.JSON.Writers,
 {$ENDIF}
 {$IFDEF CADSYS_FMX}
   { System.Math.Vectors for TMatrix: the overlay is drawn in device
@@ -1970,6 +1973,31 @@ type
 
   TGraphicObjectClass = class of TGraphicObject;
 
+  { : Chooses the class an object stored in a document is created as.
+
+    <I=ATypeName> is the "type" the document gives. <I=AClass> arrives
+    as the registered class of that name, or nil when no class of that
+    name is registered, and the handler may replace it - which is how an
+    application has a TLine2D in the file come back as its own
+    descendant of TLine2D, while it is being read, instead of reading
+    the drawing and converting it afterwards. Leaving <I=AClass> nil
+    means "not loadable", exactly as an unregistered name always has.
+
+    The class is created through its CreateFromJSON, so a replacement
+    must be able to read what the stored class wrote: in practice, a
+    descendant of it.
+
+    See <See Property=TFNCCADCmp@OnMapObjectClass>. }
+  TCADMapObjectClassEvent = procedure(Sender: TObject; const ATypeName: String;
+    var AClass: TGraphicObjectClass) of object;
+
+  { : What <See Function=CADSysPushObjectClassMap> hands back, for
+    <See Function=CADSysPopObjectClassMap> to restore. }
+  TCADObjectClassMapState = record
+    Event: TCADMapObjectClassEvent;
+    Sender: TObject;
+  end;
+
   { Syncronization object to prevent linking of Delphi's packages. }
   { : For Internal use of CADSys library.
   }
@@ -2711,6 +2739,7 @@ type
     fOnVerError: TBadVersionEvent;
     fOnLoadProgress: TOnLoadProgress;
     fOnSaveProgress: TOnSaveProgress;
+    fOnMapObjectClass: TCADMapObjectClassEvent;
     { Checks the document header and fires OnInvalidFileVersion. }
     procedure CheckJSONDocument(const AJSON: TJSONObject; const Kind: String;
       const AStreamType: TStreamType);
@@ -2764,7 +2793,13 @@ type
 
       See also <See=Object's Persistance@PERSISTANCE>.
     }
-    procedure LoadBlocksFromJSON(const AJSON: TJSONArray); virtual; abstract;
+    procedure LoadBlocksFromJSON(const AJSON: TJSONArray); virtual;
+    { : Loads one source block, as one element of the "blocks" array,
+      and adds it. A block that cannot be loaded is reported through
+      CADSysWarn and skipped. LoadBlocksFromJSON and the streaming
+      reader both come through here, which is what keeps the two
+      paths loading the same drawing. }
+    procedure LoadBlockFromJSON(const AJSON: TJSONObject); virtual; abstract;
     { : This method saves the blocks definitions (see <See Class=TSourceBlock2D> and
       <See Class=TSourceBlock3D>) to a drawing.
       This is an abstract method that must be implemented in a concrete control.
@@ -2800,7 +2835,22 @@ type
 
       See also <See=Object's Persistance@PERSISTANCE>.
     }
-    procedure LoadObjectsFromJSON(const AJSON: TJSONArray); virtual; abstract;
+    procedure LoadObjectsFromJSON(const AJSON: TJSONArray); virtual;
+    { : Loads one object, as one element of the "objects" array, and
+      adds it. ABlocks is an exclusive iterator on the source blocks,
+      held by the caller for the whole array, against which a block
+      instance finds its source. An object that cannot be loaded is
+      reported through CADSysWarn and skipped. }
+    procedure LoadObjectFromJSON(const AJSON: TJSONObject;
+      const ABlocks: TExclusiveGraphicObjIterator); virtual; abstract;
+    { : True when AObj belongs in a saved drawing: on a streamable
+      layer and not marked otherwise. One test for every save path. }
+    function IsObjectToSave(const AObj: TGraphicObject): Boolean;
+    { : How many objects a save will write - the "objectCount" member. }
+    function CountObjectsToSave: Integer;
+    { : Fires OnLoadProgress when the percentage changes. }
+    procedure ReportLoadProgress(const ADone, ATotal: Int64;
+      var ALastPercent: Integer);
     { : This method saves the objects in the display list to a drawing stream.
       This is an abstract method that must be implemented in a concrete control.
 
@@ -3088,6 +3138,48 @@ type
     { : This method loads a drawing from JSON text.
     }
     procedure LoadFromJSONString(const AText: String);
+{$IFNDEF CADSYS_LCL}
+    { : Writes the drawing to AWriter as one JSON object - the same
+      members, in the same order and with the same values, as
+      <See Method=TFNCCADCmp@SaveToJSON> - without ever holding the
+      whole document. Each object is turned into its own small tree,
+      written and freed before the next, so what the save costs in
+      memory is one object rather than the drawing.
+
+      The writer is the caller's, and so is everything around the
+      drawing: this writes one value, where a value is expected, which
+      is what lets an application put the drawing inside a document of
+      its own:
+
+      <Code=
+      TmpWriter.WriteStartObject;
+      TmpWriter.WritePropertyName('drawing');
+      CAD.SaveToJSONWriter(TmpWriter);
+      TmpWriter.WritePropertyName('mine');
+      ...
+      > }
+    procedure SaveToJSONWriter(const AWriter: TJsonWriter);
+    { : Reads a drawing written by SaveToJSON or SaveToJSONWriter,
+      discarding the current one. AReader is on the drawing's
+      StartObject, or has not read anything yet; it is left on the
+      matching EndObject, so the caller can carry on reading whatever
+      follows.
+
+      One object at a time, as the writer wrote them. Two things the
+      tree path does not ask and this one does, because a stream cannot
+      be read twice: the header (format, version, kind) must come
+      before the content, and "blocks" before "objects". Every document
+      this library writes is in that order. Members it does not know
+      are skipped.
+
+      For as long as it reads, a TJsonTextReader's DateParseHandling is
+      set to None, or a text that looks like a date would not come back
+      as text; it is put back afterwards. }
+    procedure LoadFromJSONReader(const AReader: TJsonReader);
+    { : As <See Method=TFNCCADCmp@LoadFromJSONReader>, appending to the
+      current drawing as <See Method=TFNCCADCmp@MergeFromJSON> does. }
+    procedure MergeFromJSONReader(const AReader: TJsonReader);
+{$ENDIF}
     { : This method deletes the source block with the specified ID.
 
       <I=ID> is the identification number of the source block. If no such
@@ -3371,6 +3463,14 @@ type
     }
     property OnSaveProgress: TOnSaveProgress read fOnSaveProgress
       write fOnSaveProgress;
+    { : Chooses the class each object is created as while this drawing
+      loads: the model's objects, the source blocks and what is inside
+      them, and every sheet's own objects - through any of the load
+      methods, the tree and the streaming ones alike.
+
+      See also <See Type=TCADMapObjectClassEvent>. }
+    property OnMapObjectClass: TCADMapObjectClassEvent read fOnMapObjectClass
+      write fOnMapObjectClass;
     { : This property may contain an event handler that is
       called when an object is added to the control.
 
@@ -5881,7 +5981,9 @@ type
   private
     function GetExtension: TRect2D;
   protected
-    procedure LoadObjectsFromJSON(const AJSON: TJSONArray); override;
+    procedure LoadObjectFromJSON(const AJSON: TJSONObject;
+      const ABlocks: TExclusiveGraphicObjIterator); override;
+    procedure LoadBlockFromJSON(const AJSON: TJSONObject); override;
     procedure SaveObjectsToJSON(const AJSON: TJSONArray); override;
   public
     { : This method loads the blocks definitions (see <See Class=TSourceBlock2D>) from a drawing.
@@ -6946,7 +7048,9 @@ type
   private
     function GetExtension: TRect3D;
   protected
-    procedure LoadObjectsFromJSON(const AJSON: TJSONArray); override;
+    procedure LoadObjectFromJSON(const AJSON: TJSONObject;
+      const ABlocks: TExclusiveGraphicObjIterator); override;
+    procedure LoadBlockFromJSON(const AJSON: TJSONObject); override;
     procedure SaveObjectsToJSON(const AJSON: TJSONArray); override;
   public
     { : This method loads the blocks definitions (see <See Class=TSourceBlock3D>) from a drawing.
@@ -11047,6 +11151,31 @@ function CADSysObjectToJSON(const Obj: TGraphicObject): TJSONObject;
   See also <See=Object's Persistance@PERSISTANCE>.
 }
 function CADSysObjectFromJSON(const AJSON: TJSONObject): TGraphicObject;
+{ : The registered class of that name, or nil. CADSysFindClassByName
+  raises instead. }
+function CADSysTryFindClassByName(const Name: String): TGraphicObjectClass;
+{ : Makes AEvent the class map for every <See Function=CADSysObjectFromJSON>
+  on this thread until the matching <See Function=CADSysPopObjectClassMap>
+  - including the ones inside a container, a block or a sheet, which
+  are created by their parent's CreateFromJSON and never see the
+  drawing. A nil AEvent means no mapping, and that is deliberate: a
+  load nested inside another must not inherit the outer one's map.
+
+  TFNCCADCmp does this itself around every load it makes; an
+  application needs it only to read objects on its own. Always in a
+  try/finally:
+
+  <Code=
+  TmpState := CADSysPushObjectClassMap(Self, MyMap);
+  try
+    TmpObj := CADSysObjectFromJSON(TmpJSON);
+  finally
+    CADSysPopObjectClassMap(TmpState);
+  end;
+  > }
+function CADSysPushObjectClassMap(const ASender: TObject;
+  const AEvent: TCADMapObjectClassEvent): TCADObjectClassMapState;
+procedure CADSysPopObjectClassMap(const AState: TCADObjectClassMapState);
 { : This procedure registers a new graphic object class in the
   library PERSISTANCE system.
 
@@ -11200,7 +11329,12 @@ const
 
 Implementation
 
-uses VCL.FNCCS4Shapes;
+uses
+{$IFNDEF CADSYS_LCL}
+  { TJsonToken, for walking a streamed drawing. }
+  System.JSON.Types,
+{$ENDIF}
+  VCL.FNCCS4Shapes;
 
 type
   // TGraphicClassRegistered = ;
@@ -15135,6 +15269,43 @@ begin
   Result := GraphicObjectsRegistered[CADSysFindClassIndex(Name)];
 end;
 
+function CADSysTryFindClassByName(const Name: String): TGraphicObjectClass;
+var
+  Cont: Integer;
+begin
+  for Cont := 0 to MAX_REGISTERED_CLASSES - 1 do
+    if Assigned(GraphicObjectsRegistered[Cont]) and
+      (GraphicObjectsRegistered[Cont].ClassName = Name) then
+    begin
+      Result := GraphicObjectsRegistered[Cont];
+      Exit;
+    end;
+  Result := nil;
+end;
+
+threadvar
+  { The class map in force for CADSysObjectFromJSON on this thread. Per
+    thread, not per drawing, because the objects that most need mapping
+    - the ones inside a block or a container - are created by their
+    parent's CreateFromJSON, which has no drawing to ask. }
+  GObjectClassMapEvent: TCADMapObjectClassEvent;
+  GObjectClassMapSender: TObject;
+
+function CADSysPushObjectClassMap(const ASender: TObject;
+  const AEvent: TCADMapObjectClassEvent): TCADObjectClassMapState;
+begin
+  Result.Event := GObjectClassMapEvent;
+  Result.Sender := GObjectClassMapSender;
+  GObjectClassMapEvent := AEvent;
+  GObjectClassMapSender := ASender;
+end;
+
+procedure CADSysPopObjectClassMap(const AState: TCADObjectClassMapState);
+begin
+  GObjectClassMapEvent := AState.Event;
+  GObjectClassMapSender := AState.Sender;
+end;
+
 function CADSysObjectToJSON(const Obj: TGraphicObject): TJSONObject;
 begin
   Result := TJSONObject.Create;
@@ -15149,12 +15320,21 @@ end;
 function CADSysObjectFromJSON(const AJSON: TJSONObject): TGraphicObject;
 var
   TmpName: String;
+  TmpClass: TGraphicObjectClass;
+  TmpMap: TCADMapObjectClassEvent;
 begin
   TmpName := JGetStr(AJSON, 'type');
   if TmpName = '' then
     Raise ECADObjClassNotFound.Create
       ('CADSysObjectFromJSON: the object has no "type" member');
-  Result := CADSysFindClassByName(TmpName).CreateFromJSON(AJSON);
+  TmpClass := CADSysTryFindClassByName(TmpName);
+  TmpMap := GObjectClassMapEvent;
+  if Assigned(TmpMap) then
+    TmpMap(GObjectClassMapSender, TmpName, TmpClass);
+  if TmpClass = nil then
+    Raise ECADObjClassNotFound.Create('CADSysFindClassIndex: ' + TmpName +
+      ' graphic class not found');
+  Result := TmpClass.CreateFromJSON(AJSON);
   { The constructors read the geometry and the model transform, but none
     of them can compute the bounding box on the way past: _UpdateExtension
     is virtual, so calling it from a base constructor would reach a
@@ -17809,6 +17989,10 @@ begin
     TmpBlocks := TJSONArray.Create;
     JSetValue(Result, 'blocks', TmpBlocks);
     SaveBlocksToJSON(TmpBlocks, False);
+    { Before the objects, so that a reader going through them one at a
+      time can say how far it has got. A reader of the whole tree has
+      no use for it and ignores it. }
+    JSetInt(Result, 'objectCount', CountObjectsToSave);
     TmpObjects := TJSONArray.Create;
     JSetValue(Result, 'objects', TmpObjects);
     SaveObjectsToJSON(TmpObjects);
@@ -17903,19 +18087,426 @@ begin
 end;
 
 procedure TFNCCADCmp.MergeFromJSON(const AJSON: TJSONObject);
+var
+  TmpMap: TCADObjectClassMapState;
 begin
   CheckJSONDocument(AJSON, 'drawing', stDrawing);
-  fLayers.LoadFromJSON(JGetArray(AJSON, 'layers'));
-  LoadBlocksFromJSON(JGetArray(AJSON, 'blocks'));
-  LoadObjectsFromJSON(JGetArray(AJSON, 'objects'));
-  { Appended, like the objects: merging two drawings gives a drawing
-    with both their sheets. A document with no sheets member hands in
-    nil and nothing happens. }
-  fSheets.LoadFromJSON(JGetArray(AJSON, 'sheets'));
-  { Order does not matter: a link is looked up when the viewport is
-    drawn, not when it is read. }
-  fViews.LoadFromJSON(JGetArray(AJSON, 'views'));
+  TmpMap := CADSysPushObjectClassMap(Self, fOnMapObjectClass);
+  try
+    fLayers.LoadFromJSON(JGetArray(AJSON, 'layers'));
+    LoadBlocksFromJSON(JGetArray(AJSON, 'blocks'));
+    LoadObjectsFromJSON(JGetArray(AJSON, 'objects'));
+    { Appended, like the objects: merging two drawings gives a drawing
+      with both their sheets. A document with no sheets member hands in
+      nil and nothing happens. }
+    fSheets.LoadFromJSON(JGetArray(AJSON, 'sheets'));
+    { Order does not matter: a link is looked up when the viewport is
+      drawn, not when it is read. }
+    fViews.LoadFromJSON(JGetArray(AJSON, 'views'));
+  finally
+    CADSysPopObjectClassMap(TmpMap);
+  end;
 end;
+
+procedure TFNCCADCmp.LoadBlocksFromJSON(const AJSON: TJSONArray);
+var
+  Cont: Integer;
+begin
+  if AJSON = nil then
+    Exit;
+  for Cont := 0 to AJSON.Count - 1 do
+    LoadBlockFromJSON(JItemObject(AJSON, Cont));
+end;
+
+procedure TFNCCADCmp.LoadObjectsFromJSON(const AJSON: TJSONArray);
+var
+  Cont, TmpLastPerc: Integer;
+  TmpBlocksIter: TExclusiveGraphicObjIterator;
+begin
+  { Zero rather than minus one - see TCADLegacyReader.Create. }
+  TmpLastPerc := 0;
+  if AJSON = nil then
+    Exit;
+  TmpBlocksIter := SourceBlocksExclusiveIterator;
+  try
+    for Cont := 0 to AJSON.Count - 1 do
+    begin
+      LoadObjectFromJSON(JItemObject(AJSON, Cont), TmpBlocksIter);
+      ReportLoadProgress(Cont + 1, AJSON.Count, TmpLastPerc);
+    end;
+  finally
+    TmpBlocksIter.Free;
+  end;
+end;
+
+procedure TFNCCADCmp.ReportLoadProgress(const ADone, ATotal: Int64;
+  var ALastPercent: Integer);
+var
+  TmpPerc: Integer;
+begin
+  { A real percentage, and only when it changes. This used to send
+    100 div Count on every object - a constant, and integer division, so
+    any drawing with more than a hundred objects reported 0 forever.
+    Firing only on a change also keeps a large drawing to at most a
+    hundred events. }
+  if not Assigned(fOnLoadProgress) or (ATotal <= 0) then
+    Exit;
+  TmpPerc := Round(Min(ADone, ATotal) / ATotal * 100);
+  if TmpPerc <> ALastPercent then
+  begin
+    ALastPercent := TmpPerc;
+    fOnLoadProgress(Self, TmpPerc);
+  end;
+end;
+
+function TFNCCADCmp.IsObjectToSave(const AObj: TGraphicObject): Boolean;
+begin
+  Result := Layers[AObj.Layer].Streamable and AObj.fToBeSaved;
+end;
+
+function TFNCCADCmp.CountObjectsToSave: Integer;
+var
+  TmpIter: TExclusiveGraphicObjIterator;
+  TmpObj: TGraphicObject;
+begin
+  Result := 0;
+  TmpIter := fListOfObjects.GetPrivilegedIterator;
+  try
+    TmpObj := TmpIter.First;
+    while TmpObj <> nil do
+    begin
+      if IsObjectToSave(TmpObj) then
+        Inc(Result);
+      TmpObj := TmpIter.Next;
+    end;
+  finally
+    TmpIter.Free;
+  end;
+end;
+
+{$IFNDEF CADSYS_LCL}
+procedure TFNCCADCmp.SaveToJSONWriter(const AWriter: TJsonWriter);
+var
+  TmpValue: TCADJSONValue;
+  TmpBlocks: TJSONArray;
+  TmpIter: TExclusiveGraphicObjIterator;
+  TmpObj: TGraphicObject;
+  TmpTotal, TmpDone, TmpPerc, TmpLastPerc: Integer;
+begin
+  { Member for member what SaveToJSON builds, in the same order. }
+  AWriter.WriteStartObject;
+  AWriter.WritePropertyName('format');
+  AWriter.WriteValue(CADSysJSONFormat);
+  AWriter.WritePropertyName('version');
+  AWriter.WriteValue(CADSysJSONVersion);
+  AWriter.WritePropertyName('kind');
+  AWriter.WriteValue('drawing');
+
+  { The layers and the source blocks as trees: there are at most 256 of
+    the first, and the second are definitions rather than the drawing.
+    It is the objects that run to a hundred thousand. }
+  AWriter.WritePropertyName('layers');
+  TmpValue := fLayers.SaveToJSON;
+  try
+    JWriteValue(AWriter, TmpValue);
+  finally
+    TmpValue.Free;
+  end;
+  AWriter.WritePropertyName('blocks');
+  TmpBlocks := TJSONArray.Create;
+  try
+    SaveBlocksToJSON(TmpBlocks, False);
+    JWriteValue(AWriter, TmpBlocks);
+  finally
+    TmpBlocks.Free;
+  end;
+
+  TmpTotal := CountObjectsToSave;
+  AWriter.WritePropertyName('objectCount');
+  AWriter.WriteValue(TmpTotal);
+  AWriter.WritePropertyName('objects');
+  AWriter.WriteStartArray;
+  TmpDone := 0;
+  TmpLastPerc := 0;
+  TmpIter := fListOfObjects.GetPrivilegedIterator;
+  try
+    TmpObj := TmpIter.First;
+    while TmpObj <> nil do
+    begin
+      if IsObjectToSave(TmpObj) then
+      begin
+        { One object's tree at a time, through the object's own
+          SaveToJSON - so a class of the application's saves itself here
+          exactly as it does in the tree, with nothing written for it. }
+        TmpValue := CADSysObjectToJSON(TmpObj);
+        try
+          JWriteValue(AWriter, TmpValue);
+        finally
+          TmpValue.Free;
+        end;
+        Inc(TmpDone);
+        if Assigned(fOnSaveProgress) and (TmpTotal > 0) then
+        begin
+          TmpPerc := Round(TmpDone / TmpTotal * 100);
+          if TmpPerc <> TmpLastPerc then
+          begin
+            TmpLastPerc := TmpPerc;
+            fOnSaveProgress(Self, TmpPerc);
+          end;
+        end;
+      end;
+      TmpObj := TmpIter.Next;
+    end;
+  finally
+    TmpIter.Free;
+  end;
+  AWriter.WriteEndArray;
+
+  { The same rule as the tree: no paper space, no member. }
+  if fSheets.Count > 0 then
+  begin
+    AWriter.WritePropertyName('sheets');
+    TmpValue := fSheets.SaveToJSON;
+    try
+      JWriteValue(AWriter, TmpValue);
+    finally
+      TmpValue.Free;
+    end;
+  end;
+  if fViews.Count > 0 then
+  begin
+    AWriter.WritePropertyName('views');
+    TmpValue := fViews.SaveToJSON;
+    try
+      JWriteValue(AWriter, TmpValue);
+    finally
+      TmpValue.Free;
+    end;
+  end;
+  AWriter.WriteEndObject;
+end;
+
+procedure TFNCCADCmp.LoadFromJSONReader(const AReader: TJsonReader);
+begin
+  { Exactly what LoadFromJSON clears, and for the same reasons. }
+  DeleteAllObjects;
+  DeleteSavedSourceBlocks;
+  fSheets.Clear;
+  fViews.Clear;
+  MergeFromJSONReader(AReader);
+end;
+
+procedure TFNCCADCmp.MergeFromJSONReader(const AReader: TJsonReader);
+var
+  TmpHeader: TJSONObject;
+  TmpName: String;
+  TmpChecked, TmpObjectsRead: Boolean;
+  TmpCount: Int64;
+  TmpOldDates: TJsonDateParseHandling;
+  TmpMap: TCADObjectClassMapState;
+
+  procedure CheckHeader;
+  begin
+    if TmpChecked then
+      Exit;
+    if not(JHas(TmpHeader, 'format') and JHas(TmpHeader, 'version') and
+      JHas(TmpHeader, 'kind')) then
+      Raise ECADFileNotValid.Create('TFNCCADCmp: a streamed drawing must ' +
+        'start with its format, version and kind');
+    CheckJSONDocument(TmpHeader, 'drawing', stDrawing);
+    TmpChecked := True;
+  end;
+
+  { The current value as a small tree, which must be an array - as
+    JGetArray insists on the tree path. The caller frees it. }
+  function ReadArray: TJSONArray;
+  var
+    TmpValue: TCADJSONValue;
+  begin
+    TmpValue := JReadValue(AReader);
+    if not(TmpValue is TJSONArray) then
+    begin
+      TmpValue.Free;
+      Raise ECADJSONError.CreateFmt('member "%s" must be an array',
+        [TmpName]);
+    end;
+    Result := TJSONArray(TmpValue);
+  end;
+
+  { The current value as a small tree, which must be an object. }
+  function ReadElement: TJSONObject;
+  var
+    TmpValue: TCADJSONValue;
+  begin
+    TmpValue := JReadValue(AReader);
+    if not(TmpValue is TJSONObject) then
+    begin
+      TmpValue.Free;
+      Raise ECADJSONError.CreateFmt('an element of "%s" must be an object',
+        [TmpName]);
+    end;
+    Result := TJSONObject(TmpValue);
+  end;
+
+  procedure StartArray;
+  begin
+    if AReader.TokenType <> TJsonToken.StartArray then
+      Raise ECADJSONError.CreateFmt('member "%s" must be an array',
+        [TmpName]);
+  end;
+
+  procedure ReadBlocks;
+  var
+    TmpItem: TJSONObject;
+  begin
+    StartArray;
+    while JReadToken(AReader) and (AReader.TokenType <> TJsonToken.EndArray) do
+    begin
+      TmpItem := ReadElement;
+      try
+        LoadBlockFromJSON(TmpItem);
+      finally
+        TmpItem.Free;
+      end;
+    end;
+  end;
+
+  procedure ReadObjects;
+  var
+    TmpItem: TJSONObject;
+    TmpBlocksIter: TExclusiveGraphicObjIterator;
+    TmpDone: Int64;
+    TmpLastPerc: Integer;
+  begin
+    StartArray;
+    TmpDone := 0;
+    TmpLastPerc := 0;
+    TmpBlocksIter := SourceBlocksExclusiveIterator;
+    try
+      while JReadToken(AReader) and
+        (AReader.TokenType <> TJsonToken.EndArray) do
+      begin
+        TmpItem := ReadElement;
+        try
+          LoadObjectFromJSON(TmpItem, TmpBlocksIter);
+        finally
+          TmpItem.Free;
+        end;
+        Inc(TmpDone);
+        ReportLoadProgress(TmpDone, TmpCount, TmpLastPerc);
+      end;
+    finally
+      TmpBlocksIter.Free;
+    end;
+    { A document from before objectCount has nothing to measure by, so
+      it says only that it has finished. }
+    if (TmpCount <= 0) and (TmpDone > 0) then
+      ReportLoadProgress(1, 1, TmpLastPerc);
+  end;
+
+  procedure ReadArrayInto(const ALoad: TProc<TJSONArray>);
+  var
+    TmpArray: TJSONArray;
+  begin
+    TmpArray := ReadArray;
+    try
+      ALoad(TmpArray);
+    finally
+      TmpArray.Free;
+    end;
+  end;
+
+begin
+  if AReader.TokenType = TJsonToken.None then
+    JReadToken(AReader);
+  if AReader.TokenType <> TJsonToken.StartObject then
+    Raise ECADFileNotValid.Create
+      ('TFNCCADCmp: the reader is not on a drawing');
+  { Only the text reader parses dates at all, and only when asked to; a
+    caller that asked would get a sheet called 2026-10-12 back as a
+    number. Off for as long as this reads, and put back after. }
+  TmpOldDates := TJsonDateParseHandling.None;
+  if AReader is TJsonTextReader then
+  begin
+    TmpOldDates := TJsonTextReader(AReader).DateParseHandling;
+    TJsonTextReader(AReader).DateParseHandling := TJsonDateParseHandling.None;
+  end;
+  TmpMap := CADSysPushObjectClassMap(Self, fOnMapObjectClass);
+  TmpHeader := TJSONObject.Create;
+  try
+    TmpChecked := False;
+    TmpObjectsRead := False;
+    TmpCount := -1;
+    while JReadToken(AReader) and (AReader.TokenType <> TJsonToken.EndObject) do
+    begin
+      TmpName := JReaderText(AReader);
+      if not JReadToken(AReader) then
+        Break;
+      if (TmpName = 'format') or (TmpName = 'version') or (TmpName = 'kind')
+      then
+      begin
+        TmpHeader.AddPair(TmpName, JReadValue(AReader));
+        Continue;
+      end;
+      { The drawing's own content needs the header behind it. A member
+        that is not ours is skipped wherever it is. }
+      if (TmpName = 'layers') or (TmpName = 'blocks') or
+        (TmpName = 'objectCount') or (TmpName = 'objects') or
+        (TmpName = 'sheets') or (TmpName = 'views') then
+        CheckHeader;
+      if TmpName = 'layers' then
+        ReadArrayInto(
+          procedure(A: TJSONArray)
+          begin
+            fLayers.LoadFromJSON(A);
+          end)
+      else if TmpName = 'blocks' then
+      begin
+        { The tree path can read the blocks after the objects that use
+          them; a stream cannot go back. Nothing this library writes is
+          in that order, so it is an error rather than a guess. }
+        if TmpObjectsRead then
+          Raise ECADFileNotValid.Create('TFNCCADCmp: in a streamed drawing ' +
+            '"blocks" must come before "objects"');
+        ReadBlocks;
+      end
+      else if TmpName = 'objectCount' then
+        TmpCount := JReaderInt(AReader, -1)
+      else if TmpName = 'objects' then
+      begin
+        ReadObjects;
+        TmpObjectsRead := True;
+      end
+      else if TmpName = 'sheets' then
+        ReadArrayInto(
+          procedure(A: TJSONArray)
+          begin
+            fSheets.LoadFromJSON(A);
+          end)
+      else if TmpName = 'views' then
+        ReadArrayInto(
+          procedure(A: TJSONArray)
+          begin
+            fViews.LoadFromJSON(A);
+          end)
+      else
+        { Somebody else's member: an object or an array is skipped
+          whole, a plain value is already behind us. }
+        AReader.Skip;
+    end;
+    if AReader.TokenType <> TJsonToken.EndObject then
+      Raise ECADJSONError.Create('Invalid JSON: the document ends inside ' +
+        'the drawing');
+    { A drawing with nothing in it but its header is still checked. }
+    CheckHeader;
+  finally
+    TmpHeader.Free;
+    CADSysPopObjectClassMap(TmpMap);
+    if AReader is TJsonTextReader then
+      TJsonTextReader(AReader).DateParseHandling := TmpOldDates;
+  end;
+end;
+{$ENDIF}
 
 procedure TFNCCADCmp.MergeFromStream(const Stream: TStream);
 var
@@ -17957,9 +18548,16 @@ begin
 end;
 
 procedure TFNCCADCmp.LoadLibraryFromJSON(const AJSON: TJSONObject);
+var
+  TmpMap: TCADObjectClassMapState;
 begin
   CheckJSONDocument(AJSON, 'library', stLibrary);
-  LoadBlocksFromJSON(JGetArray(AJSON, 'blocks'));
+  TmpMap := CADSysPushObjectClassMap(Self, fOnMapObjectClass);
+  try
+    LoadBlocksFromJSON(JGetArray(AJSON, 'blocks'));
+  finally
+    CADSysPopObjectClassMap(TmpMap);
+  end;
 end;
 
 procedure TFNCCADCmp.LoadLibrary(const Stream: TStream);
@@ -20735,85 +21333,50 @@ begin
   end;
 end;
 
-procedure TFNCCADCmp2D.LoadObjectsFromJSON(const AJSON: TJSONArray);
+procedure TFNCCADCmp2D.LoadObjectFromJSON(const AJSON: TJSONObject;
+  const ABlocks: TExclusiveGraphicObjIterator);
 var
   TmpObj: TGraphicObject;
-  Cont, TmpObjPerc, TmpLastPerc: Integer;
-  TmpBlocksIter: TExclusiveGraphicObjIterator;
 begin
-  { Zero rather than minus one - see TCADLegacyReader.Create. }
-  TmpLastPerc := 0;
-  if AJSON = nil then
-    Exit;
-  TmpBlocksIter := SourceBlocksExclusiveIterator;
   try
-    if AJSON.Count > 0 then
-      TmpObjPerc := 100 div AJSON.Count
-    else
-      TmpObjPerc := 0;
-    for Cont := 0 to AJSON.Count - 1 do
+    TmpObj := CADSysObjectFromJSON(AJSON);
+  except
+    on ECADObjClassNotFound do
     begin
-      TmpObj := nil;
-      try
-        TmpObj := CADSysObjectFromJSON(JItemObject(AJSON, Cont));
-      except
-        on ECADObjClassNotFound do
-        begin
-          CADSysWarn('Object class not found. Object not load');
-          Continue;
-        end;
-      end;
-      { A real percentage, and only when it changes.
-
-        This used to send 100 div Count on every object - a constant,
-        and integer division, so any drawing with more than a hundred
-        objects reported 0 forever while its own documentation promised
-        'percentual of the drawing loaded so far'. Firing only on a
-        change also keeps a 7554 object drawing to at most a hundred
-        events instead of 7554. }
-      if Assigned(OnLoadProgress) and (AJSON.Count > 0) then
-      begin
-        TmpObjPerc := Round((Cont + 1) / AJSON.Count * 100);
-        if TmpObjPerc <> TmpLastPerc then
-        begin
-          TmpLastPerc := TmpObjPerc;
-          OnLoadProgress(Self, TmpObjPerc);
-        end;
-      end;
-      if not(TmpObj is TObject2D) then
-      begin
-        CADSysWarn('Not 2D Object. Object discarded.');
-        TmpObj.Free;
-        Continue;
-      end;
-      if TmpObj is TContainer2D then
-        try
-          TContainer2D(TmpObj).UpdateSourceReferences(TmpBlocksIter);
-        except
-          on ECADListObjNotFound do
-          begin
-            CADSysWarn('Source block not found. The block will not be loaded');
-            TmpObj.Free;
-            Continue;
-          end;
-        end
-      else if TmpObj is TBlock2D then
-        try
-          TBlock2D(TmpObj).UpdateReference(TmpBlocksIter);
-        except
-          on ECADListObjNotFound do
-          begin
-            CADSysWarn('Source block not found. The block will not be loaded');
-            TmpObj.Free;
-            Continue;
-          end;
-        end;
-      CurrentLayer := TmpObj.Layer;
-      inherited AddObject(-1, TGraphicObject(TmpObj));
+      CADSysWarn('Object class not found. Object not load');
+      Exit;
     end;
-  finally
-    TmpBlocksIter.Free;
   end;
+  if not(TmpObj is TObject2D) then
+  begin
+    CADSysWarn('Not 2D Object. Object discarded.');
+    TmpObj.Free;
+    Exit;
+  end;
+  if TmpObj is TContainer2D then
+    try
+      TContainer2D(TmpObj).UpdateSourceReferences(ABlocks);
+    except
+      on ECADListObjNotFound do
+      begin
+        CADSysWarn('Source block not found. The block will not be loaded');
+        TmpObj.Free;
+        Exit;
+      end;
+    end
+  else if TmpObj is TBlock2D then
+    try
+      TBlock2D(TmpObj).UpdateReference(ABlocks);
+    except
+      on ECADListObjNotFound do
+      begin
+        CADSysWarn('Source block not found. The block will not be loaded');
+        TmpObj.Free;
+        Exit;
+      end;
+    end;
+  CurrentLayer := TmpObj.Layer;
+  inherited AddObject(-1, TmpObj);
 end;
 {$WARNINGS ON}
 
@@ -20840,26 +21403,32 @@ end;
 {$WARNINGS OFF}
 
 procedure TFNCCADCmp2D.LoadBlocksFromJSON(const AJSON: TJSONArray);
+begin
+  inherited LoadBlocksFromJSON(AJSON);
+end;
+
+procedure TFNCCADCmp2D.LoadBlockFromJSON(const AJSON: TJSONObject);
 var
   TmpObj: TGraphicObject;
-  Cont: Integer;
   TmpBlocksIter: TGraphicObjIterator;
 begin
-  if AJSON = nil then
-    Exit;
-  for Cont := 0 to AJSON.Count - 1 do
-  begin
-    TmpObj := nil;
-    try
-      TmpObj := CADSysObjectFromJSON(JItemObject(AJSON, Cont));
-    except
-      on ECADObjClassNotFound do
-      begin
-        CADSysWarn('Object class not found. Object not load');
-        Continue;
-      end;
+  try
+    TmpObj := CADSysObjectFromJSON(AJSON);
+  except
+    on ECADObjClassNotFound do
+    begin
+      CADSysWarn('Object class not found. Object not load');
+      Exit;
     end;
-    TmpBlocksIter := SourceBlocksIterator;
+  end;
+  if not(TmpObj is TSourceBlock2D) then
+  begin
+    CADSysWarn('Not a source block. Block discarded.');
+    TmpObj.Free;
+    Exit;
+  end;
+  TmpBlocksIter := SourceBlocksIterator;
+  try
     try
       TSourceBlock2D(TmpObj).UpdateSourceReferences(TmpBlocksIter);
     except
@@ -20867,13 +21436,13 @@ begin
       begin
         CADSysWarn('Source block not found. The block will not be loaded');
         TmpObj.Free;
-        TmpBlocksIter.Free;
-        Continue;
+        Exit;
       end;
     end;
+  finally
     TmpBlocksIter.Free;
-    AddSourceBlock(TSourceBlock2D(TmpObj));
   end;
+  AddSourceBlock(TSourceBlock2D(TmpObj));
 end;
 {$WARNINGS ON}
 
@@ -22515,78 +23084,50 @@ end;
 
 {$WARNINGS OFF}
 
-procedure TFNCCADCmp3D.LoadObjectsFromJSON(const AJSON: TJSONArray);
+procedure TFNCCADCmp3D.LoadObjectFromJSON(const AJSON: TJSONObject;
+  const ABlocks: TExclusiveGraphicObjIterator);
 var
   TmpObj: TGraphicObject;
-  Cont, TmpObjPerc, TmpLastPerc: Integer;
-  TmpBlocksIter: TExclusiveGraphicObjIterator;
 begin
-  { Zero rather than minus one - see TCADLegacyReader.Create. }
-  TmpLastPerc := 0;
-  if AJSON = nil then
-    Exit;
-  TmpBlocksIter := SourceBlocksExclusiveIterator;
   try
-    if AJSON.Count > 0 then
-      TmpObjPerc := 100 div AJSON.Count
-    else
-      TmpObjPerc := 0;
-    for Cont := 0 to AJSON.Count - 1 do
+    TmpObj := CADSysObjectFromJSON(AJSON);
+  except
+    on ECADObjClassNotFound do
     begin
-      TmpObj := nil;
-      try
-        TmpObj := CADSysObjectFromJSON(JItemObject(AJSON, Cont));
-      except
-        on ECADObjClassNotFound do
-        begin
-          CADSysWarn('Object class not found. Object not load');
-          Continue;
-        end;
-      end;
-      { See the note in TFNCCADCmp2D.LoadObjectsFromJSON. }
-      if Assigned(OnLoadProgress) and (AJSON.Count > 0) then
-      begin
-        TmpObjPerc := Round((Cont + 1) / AJSON.Count * 100);
-        if TmpObjPerc <> TmpLastPerc then
-        begin
-          TmpLastPerc := TmpObjPerc;
-          OnLoadProgress(Self, TmpObjPerc);
-        end;
-      end;
-      if not(TmpObj is TObject3D) then
-      begin
-        CADSysWarn('Not 3D Object. Object discarded.');
-        TmpObj.Free;
-        Continue;
-      end;
-      if TmpObj is TContainer3D then
-        try
-          TContainer3D(TmpObj).UpdateSourceReferences(TmpBlocksIter);
-        except
-          on ECADListObjNotFound do
-          begin
-            CADSysWarn('Source block not found. The block will not be loaded');
-            TmpObj.Free;
-            Continue;
-          end;
-        end
-      else if TmpObj is TBlock3D then
-        try
-          TBlock3D(TmpObj).UpdateReference(TmpBlocksIter);
-        except
-          on ECADListObjNotFound do
-          begin
-            CADSysWarn('Source block not found. The block will not be loaded');
-            TmpObj.Free;
-            Continue;
-          end;
-        end;
-      CurrentLayer := TmpObj.Layer;
-      inherited AddObject(-1, TGraphicObject(TmpObj));
+      CADSysWarn('Object class not found. Object not load');
+      Exit;
     end;
-  finally
-    TmpBlocksIter.Free;
   end;
+  if not(TmpObj is TObject3D) then
+  begin
+    CADSysWarn('Not 3D Object. Object discarded.');
+    TmpObj.Free;
+    Exit;
+  end;
+  if TmpObj is TContainer3D then
+    try
+      TContainer3D(TmpObj).UpdateSourceReferences(ABlocks);
+    except
+      on ECADListObjNotFound do
+      begin
+        CADSysWarn('Source block not found. The block will not be loaded');
+        TmpObj.Free;
+        Exit;
+      end;
+    end
+  else if TmpObj is TBlock3D then
+    try
+      TBlock3D(TmpObj).UpdateReference(ABlocks);
+    except
+      on ECADListObjNotFound do
+      begin
+        CADSysWarn('Source block not found. The block will not be loaded');
+        TmpObj.Free;
+        Exit;
+      end;
+    end;
+  CurrentLayer := TmpObj.Layer;
+  inherited AddObject(-1, TmpObj);
 end;
 {$WARNINGS ON}
 
@@ -22613,26 +23154,32 @@ end;
 {$WARNINGS OFF}
 
 procedure TFNCCADCmp3D.LoadBlocksFromJSON(const AJSON: TJSONArray);
+begin
+  inherited LoadBlocksFromJSON(AJSON);
+end;
+
+procedure TFNCCADCmp3D.LoadBlockFromJSON(const AJSON: TJSONObject);
 var
   TmpObj: TGraphicObject;
-  Cont: Integer;
   TmpBlocksIter: TGraphicObjIterator;
 begin
-  if AJSON = nil then
-    Exit;
-  for Cont := 0 to AJSON.Count - 1 do
-  begin
-    TmpObj := nil;
-    try
-      TmpObj := CADSysObjectFromJSON(JItemObject(AJSON, Cont));
-    except
-      on ECADObjClassNotFound do
-      begin
-        CADSysWarn('Object class not found. Object not load');
-        Continue;
-      end;
+  try
+    TmpObj := CADSysObjectFromJSON(AJSON);
+  except
+    on ECADObjClassNotFound do
+    begin
+      CADSysWarn('Object class not found. Object not load');
+      Exit;
     end;
-    TmpBlocksIter := SourceBlocksIterator;
+  end;
+  if not(TmpObj is TSourceBlock3D) then
+  begin
+    CADSysWarn('Not a source block. Block discarded.');
+    TmpObj.Free;
+    Exit;
+  end;
+  TmpBlocksIter := SourceBlocksIterator;
+  try
     try
       TSourceBlock3D(TmpObj).UpdateSourceReferences(TmpBlocksIter);
     except
@@ -22640,13 +23187,13 @@ begin
       begin
         CADSysWarn('Source block not found. The block will not be loaded');
         TmpObj.Free;
-        TmpBlocksIter.Free;
-        Continue;
+        Exit;
       end;
     end;
+  finally
     TmpBlocksIter.Free;
-    AddSourceBlock(TSourceBlock3D(TmpObj));
   end;
+  AddSourceBlock(TSourceBlock3D(TmpObj));
 end;
 {$WARNINGS ON}
 
