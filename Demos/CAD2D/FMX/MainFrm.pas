@@ -217,6 +217,8 @@ type
     procedure TimeRepaintClick(Sender: TObject);
     procedure GenerateTestDrawingClick(Sender: TObject);
     procedure BenchmarkClick(Sender: TObject);
+    procedure SmallObjectsClick(Sender: TObject);
+    function SmallObjectModeName: string;
   end;
 
   { : The state the VCL demo uses to turn a selection into a source
@@ -551,6 +553,7 @@ begin
   AddItem(TmpView, 'Time a repaint', TimeRepaintClick);
   AddItem(TmpView, 'Generate test drawing...', GenerateTestDrawingClick);
   AddItem(TmpView, 'Benchmark (log)', BenchmarkClick);
+  AddItem(TmpView, 'Small objects: dot', SmallObjectsClick);
 end;
 
 procedure TMainForm.BuildPopup;
@@ -2132,14 +2135,44 @@ begin
   TmpZoom := TmpWatch.ElapsedMilliseconds;
 
   fView.ZoomWindow(TmpOld);
-  Log(Format('benchmark: %d objects; repaint at zoom-all %d ms, zoomed in '
-    + '%d ms; pan step %.1f ms; zoom step %.1f ms',
-    [fCAD.ObjectsCount, TmpFull, TmpIn, TmpPan / PAN_STEPS,
-    TmpZoom / ZOOM_STEPS]));
+  Log(Format('benchmark: %d objects, small objects %s; repaint at zoom-all '
+    + '%d ms, zoomed in %d ms; pan step %.1f ms; zoom step %.1f ms',
+    [fCAD.ObjectsCount, SmallObjectModeName, TmpFull, TmpIn,
+    TmpPan / PAN_STEPS, TmpZoom / ZOOM_STEPS]));
   Say(Format('%d objects. Repaint: %d ms at zoom-all, %d ms zoomed in. '
     + 'Pan step %.1f ms, zoom step %.1f ms. Also in the log.',
     [fCAD.ObjectsCount, TmpFull, TmpIn, TmpPan / PAN_STEPS,
     TmpZoom / ZOOM_STEPS]));
+end;
+
+{ Cycles what the screen does with an object smaller than a pixel:
+  a dot (the default), nothing, or the whole object as before. For
+  comparing the three with the benchmark, and by eye. }
+procedure TMainForm.SmallObjectsClick(Sender: TObject);
+begin
+  case fView.SmallObjectMode of
+    somDot:
+      fView.SmallObjectMode := somSkip;
+    somSkip:
+      fView.SmallObjectMode := somDraw;
+  else
+    fView.SmallObjectMode := somDot;
+  end;
+  (Sender as TMenuItem).Text := 'Small objects: ' + SmallObjectModeName;
+  Log('small objects: ' + SmallObjectModeName);
+  fView.Repaint;
+end;
+
+function TMainForm.SmallObjectModeName: string;
+begin
+  case fView.SmallObjectMode of
+    somDot:
+      Result := 'dot';
+    somSkip:
+      Result := 'skip';
+  else
+    Result := 'draw';
+  end;
 end;
 
 procedure TMainForm.TimeRepaintClick(Sender: TObject);

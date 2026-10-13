@@ -792,6 +792,19 @@ type
     transformed or edited - the object is the one that changed, and the
     library does not say how. }
   TCADSheetChange = (scoAdded, scoRemoved, scoChanged);
+
+  { : What the screen does with an object smaller than
+    <See Property=TFNCCADViewport2D@SmallObjectPixels> on both axes.
+
+    <LI=<I=somDraw> draws it as it always has.>
+    <LI=<I=somSkip> draws nothing. The fastest, and a dense cluster of
+    tiny shapes vanishes at zoom-all, which is what people notice.>
+    <LI=<I=somDot> draws one pixel in the layer's pen colour where it
+    is. Nearly as fast as skipping it, and the cluster stays visible.>
+
+    Screen only: a print, a PDF, the clipboard and every other copy
+    draw everything, because a pixel there is a different size. }
+  TCADSmallObjectMode = (somDraw, somSkip, somDot);
   { : Fired when a sheet's own objects change.
 
     Paper space is saved with the drawing, so an application that marks
@@ -5181,6 +5194,15 @@ type
     }
     function IsVisible(const Clip: TRect2D; const
 {%H-}DrawMode: Integer): Boolean; virtual;
+    { : Whether the screen may draw this as a dot, or not at all, when
+      its box is smaller than a pixel - see
+      <See Property=TFNCCADViewport2D@SmallObjectMode>.
+
+      True: for a shape drawn in drawing units the box is what it
+      covers. Override it to answer False for one whose box does not
+      say how big it looks - a marker drawn the same number of pixels
+      across at every zoom, or a handle that must stay reachable. }
+    function CullWhenSmall: Boolean; virtual;
     { : This method draws only the control points of the object.
 
       An 2D object may have a set of points that are called
@@ -6168,6 +6190,8 @@ type
       millimetres. }
     fSavedWindow: TRect2D;
     fSheetPaperColor: TColor;
+    fSmallObjectPixels: TRealType;
+    fSmallObjectMode: TCADSmallObjectMode;
     { Event handlers }
     fOnMouseDown2D, fOnMouseUp2D: TMouseEvent2D;
     fOnMouseMove2D: TMouseMoveEvent2D;
@@ -6424,6 +6448,20 @@ type
       the drawing would be as misleading as a preview that did. }
     property SheetPaperColor: TColor read fSheetPaperColor
       write SetSheetPaperColor;
+    { : How small, in pixels on both axes, an object has to be before
+      <See Property=TFNCCADViewport2D@SmallObjectMode> applies to it.
+      1 by default: smaller than one pixel. }
+    property SmallObjectPixels: TRealType read fSmallObjectPixels
+      write fSmallObjectPixels;
+    { : What the screen does with an object smaller than
+      <See Property=TFNCCADViewport2D@SmallObjectPixels>: a dot by
+      default. At zoom-all on a large drawing most objects are that
+      small, and drawing each one in full is most of the cost of a
+      repaint. Picking is not affected - an object too small to draw
+      can still be picked by aiming at it. See
+      <See Type=TCADSmallObjectMode>. }
+    property SmallObjectMode: TCADSmallObjectMode read fSmallObjectMode
+      write fSmallObjectMode default somDot;
     { : EVENTS }
     { : This property may contain an event-handler that will be
       called when the mouse in moved on the control.
@@ -9325,6 +9363,14 @@ procedure CADSpaceMoveObject(const ASpace: TCADSpace2D;
   a margin cannot rescue. }
 function CADViewFromArea(const AArea: TRect2D;
   const AMarginFraction: TRealType = 0.05): TCADViewSpec;
+{ : True when ABox, at APxPerUnitX by APxPerUnitY pixels to a drawing
+  unit, is smaller than AThreshold pixels on both axes. Both: a long
+  thin line is less than a pixel wide and still worth drawing.
+
+  What <See Property=TFNCCADViewport2D@SmallObjectMode> asks of every
+  object it draws, pulled out so it can be tested without a window. }
+function CADIsSubPixel(const ABox: TRect2D;
+  const APxPerUnitX, APxPerUnitY, AThreshold: TRealType): Boolean;
 { : A view framing every object in AObjects - the union of their boxes -
   with the same margin.
 
@@ -20744,6 +20790,18 @@ begin
   SaveTransform(ModelTransform);
 end;
 
+function TObject2D.CullWhenSmall: Boolean;
+begin
+  Result := True;
+end;
+
+function CADIsSubPixel(const ABox: TRect2D;
+  const APxPerUnitX, APxPerUnitY, AThreshold: TRealType): Boolean;
+begin
+  Result := (Abs(ABox.Right - ABox.Left) * APxPerUnitX < AThreshold) and
+    (Abs(ABox.Top - ABox.Bottom) * APxPerUnitY < AThreshold);
+end;
+
 function TObject2D.IsVisible(const Clip: TRect2D;
   const DrawMode: Integer): Boolean;
 begin
@@ -21710,6 +21768,8 @@ begin
   fPickFilter := TObject2D;
   fSheet := nil;
   fSheetPaperColor := cadtcWhite;
+  fSmallObjectPixels := 1.0;
+  fSmallObjectMode := somDot;
 end;
 
 procedure TFNCCADViewport2D.SetSheetPaperColor(const Value: TColor);
@@ -21942,9 +22002,38 @@ end;
 
 procedure TFNCCADViewport2D.DrawObject(const Obj: TGraphicObject;
   const Cnv: TDecorativeCanvas; const ClipRect2D: TRect2D);
+var
+  TmpCentre: TPoint2D;
+  TmpX, TmpY: Integer;
 begin
   if not TObject2D(Obj).IsVisible(VisualRect, DrawMode) then
     Exit;
+  { Smaller than a pixel: a dot, or nothing. Only into the back buffer
+    - that is the screen. CopyToCanvas and everything else that hands
+    its own canvas in draws everything, because a pixel there is a
+    different size and a print must not depend on the zoom of the
+    window it was started from. }
+  if (fSmallObjectMode <> somDraw) and (Cnv = OffScreenCanvas) and
+    TObject2D(Obj).CullWhenSmall and CADIsSubPixel(TObject2D(Obj).Box,
+    Abs(fViewportToScreen[1, 1]), Abs(fViewportToScreen[2, 2]),
+    fSmallObjectPixels) then
+  begin
+    if (fSmallObjectMode = somDot) and
+      CADCmp.Layers.SetCanvas(Cnv, TObject2D(Obj).Layer) then
+    begin
+      TmpCentre := CartesianPoint2D(TransformPoint2D(Point2D(
+        (TObject2D(Obj).Box.Left + TObject2D(Obj).Box.Right) / 2,
+        (TObject2D(Obj).Box.Bottom + TObject2D(Obj).Box.Top) / 2),
+        fViewportToScreen));
+      TmpX := Round(TmpCentre.X);
+      TmpY := Round(TmpCentre.Y);
+      { A line one pixel long, which every backend draws as one pixel -
+        a line of no length is drawn by some and not by others. }
+      Cnv.MoveTo(TmpX, TmpY);
+      Cnv.LineTo(TmpX + 1, TmpY);
+    end;
+    Exit;
+  end;
   with Obj as TObject2D do
     try
       if (CADCmp.Layers.SetCanvas(Cnv, Layer)) then

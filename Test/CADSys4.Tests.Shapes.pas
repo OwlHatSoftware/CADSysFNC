@@ -28,6 +28,28 @@ uses
 
 type
 
+  { : The test the screen makes before drawing an object at all - see
+    TFNCCADViewport2D.SmallObjectMode. The drawing itself needs a real
+    control and is checked with the demo's benchmark. }
+  [TestFixture]
+  TSmallObjectTests = class(TObject)
+  public
+    [Test]
+    procedure ABoxUnderAPixelBothWaysIsSubPixel;
+    [Test]
+    procedure ALongThinLineIsNot;
+    [Test]
+    procedure TheScaleOfEachAxisCounts;
+    [Test]
+    procedure TheThresholdIsInPixels;
+    [Test]
+    procedure APointIsSubPixel;
+    [Test]
+    procedure OrdinaryShapesMayBeCulled;
+    [Test]
+    procedure AViewportHandleIsNever;
+  end;
+
   { ================================================================= }
   { TLine2D }
   { ================================================================= }
@@ -1803,8 +1825,83 @@ begin
   Assert.AreEqual(PICK_NOOBJECT, Res);
 end;
 
+{ ================================================================= }
+{ TSmallObjectTests }
+{ ================================================================= }
+
+procedure TSmallObjectTests.ABoxUnderAPixelBothWaysIsSubPixel;
+begin
+  { 0.4 by 0.3 units at two pixels to the unit: 0.8 by 0.6 pixels. }
+  Assert.IsTrue(CADIsSubPixel(Rect2D(10, 10, 10.4, 10.3), 2, 2, 1));
+end;
+
+procedure TSmallObjectTests.ALongThinLineIsNot;
+begin
+  { No height at all, and forty pixels long: a line to be drawn. }
+  Assert.IsFalse(CADIsSubPixel(Rect2D(0, 5, 20, 5), 2, 2, 1));
+  Assert.IsFalse(CADIsSubPixel(Rect2D(5, 0, 5, 20), 2, 2, 1),
+    'standing up as well');
+end;
+
+procedure TSmallObjectTests.TheScaleOfEachAxisCounts;
+begin
+  { One unit square: under a pixel at 0.5 pixels to the unit across,
+    but three pixels tall at 3 to the unit up. }
+  Assert.IsFalse(CADIsSubPixel(Rect2D(0, 0, 1, 1), 0.5, 3, 1));
+  Assert.IsTrue(CADIsSubPixel(Rect2D(0, 0, 1, 1), 0.5, 0.5, 1));
+end;
+
+procedure TSmallObjectTests.TheThresholdIsInPixels;
+begin
+  { Two by two pixels: not under one pixel, but under three. }
+  Assert.IsFalse(CADIsSubPixel(Rect2D(0, 0, 2, 2), 1, 1, 1));
+  Assert.IsTrue(CADIsSubPixel(Rect2D(0, 0, 2, 2), 1, 1, 3));
+end;
+
+procedure TSmallObjectTests.APointIsSubPixel;
+begin
+  Assert.IsTrue(CADIsSubPixel(Rect2D(3, 3, 3, 3), 100, 100, 1),
+    'nothing at any zoom');
+  { A box given the other way round is still its size. }
+  Assert.IsTrue(CADIsSubPixel(Rect2D(10.3, 10.3, 10, 10), 2, 2, 1),
+    'corners swapped');
+end;
+
+procedure TSmallObjectTests.OrdinaryShapesMayBeCulled;
+var
+  TmpLine: TLine2D;
+begin
+  TmpLine := TLine2D.Create(0, Point2D(0, 0), Point2D(1, 1));
+  try
+    Assert.IsTrue(TmpLine.CullWhenSmall);
+  finally
+    TmpLine.Free;
+  end;
+end;
+
+procedure TSmallObjectTests.AViewportHandleIsNever;
+var
+  TmpPort: TCADSheetViewport;
+  TmpHandle: TCADSheetViewportProxy2D;
+begin
+  TmpPort := TCADSheetViewport.Create;
+  try
+    TmpPort.RectMM := Rect2D(10, 10, 20, 20);
+    TmpHandle := TCADSheetViewportProxy2D.CreateForViewport(0, TmpPort);
+    try
+      Assert.IsFalse(TmpHandle.CullWhenSmall,
+        'a handle stays drawn however far out the sheet is');
+    finally
+      TmpHandle.Free;
+    end;
+  finally
+    TmpPort.Free;
+  end;
+end;
+
 initialization
 
+TDUnitX.RegisterTestFixture(TSmallObjectTests);
 TDUnitX.RegisterTestFixture(TLine2DTests);
 TDUnitX.RegisterTestFixture(TPolyOutlineTests);
 TDUnitX.RegisterTestFixture(TFrameRectangleTests);

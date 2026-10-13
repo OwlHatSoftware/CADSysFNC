@@ -602,6 +602,9 @@ type
       const AViewport: TCADSheetViewport);
     { : The viewport this stands in for. }
     function StandsFor: TObject; override;
+    { : False: a handle is for taking hold of, so it is drawn in full
+      however far out the sheet is zoomed. }
+    function CullWhenSmall: Boolean; override;
     { : As the inherited one, and the four corners as well.
 
       The library measures a point against a line by projecting it onto
@@ -4225,6 +4228,11 @@ end;
 function TCADSheetViewportProxy2D.StandsFor: TObject;
 begin
   Result := fViewport;
+end;
+
+function TCADSheetViewportProxy2D.CullWhenSmall: Boolean;
+begin
+  Result := False;
 end;
 
 procedure TCADSheetViewportProxy2D._UpdateExtension;
