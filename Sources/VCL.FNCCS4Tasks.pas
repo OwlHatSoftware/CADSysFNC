@@ -309,12 +309,18 @@ type
     fInPanning: Boolean;
     fLastPoint: TPoint2D;
     fOriginalRect: TRect2D;
+    { Opens and closes the viewport's view change around a drag, so
+      that the drag moves the picture already drawn and the drawing is
+      redrawn once, when the button comes up. }
+    procedure StartDrag;
+    procedure EndDrag;
   public
     constructor Create(const CADPrg: TFNCCADPrg; const StateParam: TCADPrgParam;
       var NextState: TCADStateClass); override;
     function OnEvent(Event: TCADPrgEvent; MouseButton: TCS4MouseButton;
       Shift: TShiftState; Key: Word; var NextState: TCADStateClass)
       : Boolean; override;
+    procedure OnStop; override;
   end;
 
   { ******************* Useful states *********************** }
@@ -1942,6 +1948,7 @@ begin
           NextState := DefaultState;
           Result := True;
           Viewport.ZoomWindow(fOriginalRect);
+          EndDrag;
         end
         else if Key = CADPRG_ACCEPT then
         begin
@@ -1950,13 +1957,14 @@ begin
             NextState := TCADPrgParam(Param).AfterState
           else
             NextState := DefaultState;
+          EndDrag;
           RepaintAfterOperation;
           Result := True;
         end;
       ceMouseDown:
         if MouseButton = cmbLeft then
         begin
-          fInPanning := True;
+          StartDrag;
           fLastPoint := CurrentViewportPoint;
           if MouseButton = cmbRight then
           begin
@@ -1967,11 +1975,12 @@ begin
       ceMouseDblClick, ceMouseUp:
         if MouseButton = cmbLeft then
         begin
+          { The one redraw of the drag, if it moved anything. }
+          EndDrag;
           if Viewport.UsePaintingThread then
             Viewport.Repaint
           else
             Viewport.Refresh;
-          fInPanning := False;
         end;
       ceMouseMove:
         if fInPanning then
@@ -1992,6 +2001,30 @@ begin
           fLastPoint := Viewport.ScreenToViewport(ScrPt);
         end;
     end;
+end;
+
+procedure TCADPrgRealTimePan.StartDrag;
+begin
+  if fInPanning then
+    Exit;
+  fInPanning := True;
+  CADPrg.Viewport.BeginViewChange;
+end;
+
+procedure TCADPrgRealTimePan.EndDrag;
+begin
+  if not fInPanning then
+    Exit;
+  fInPanning := False;
+  CADPrg.Viewport.EndViewChange;
+end;
+
+procedure TCADPrgRealTimePan.OnStop;
+begin
+  { Stopped in the middle of a drag: the view change must not outlive
+    the task, or every later pan and zoom would stay unredrawn. }
+  EndDrag;
+  inherited;
 end;
 
 // -----===== Starting Cs4CADPrgTasks2D.pas =====-----

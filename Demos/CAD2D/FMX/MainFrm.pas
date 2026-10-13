@@ -2073,6 +2073,9 @@ begin
   Log(Format('test drawing: %d objects generated in %d ms',
     [TmpCount, TmpWatch.ElapsedMilliseconds]));
   fView.ZoomToExtension;
+  { The buffer still holds the drawing from before; a zoom would only
+    stretch that until the settle time is up. }
+  fView.FlushViewChange;
 end;
 
 { Times what the drawing-speed work changes, into the log. Each line is
@@ -2081,9 +2084,12 @@ end;
 
   - a full repaint at zoom-all, where most objects are sub-pixel;
   - a full repaint zoomed in to a twentieth of the drawing;
-  - one pan step, averaged over fifty, at zoom-all - each one a full
-    repaint until the cached pan exists;
-  - one zoom step, averaged over ten.
+  - one pan step, averaged over fifty, at zoom-all - redrawing the
+    drawing each time, as with ViewChangeSettleMS 0;
+  - one zoom step, averaged over ten, the same way;
+  - the same pan steps as a view change, which moves the picture
+    already drawn and redraws once at the end - that one redraw is
+    included.
 
   Repaint here means the back buffer: the screen gets it on the next
   paint, which is not counted. The view is put back afterwards. }
@@ -2095,11 +2101,15 @@ var
   TmpWatch: TStopwatch;
   TmpOld, TmpAll: TRect2D;
   TmpCX, TmpCY, TmpW, TmpH, TmpStep: TRealType;
-  TmpFull, TmpIn, TmpPan, TmpZoom: Int64;
+  TmpFull, TmpIn, TmpPan, TmpZoom, TmpCached: Int64;
+  TmpSettle: Integer;
   Cont: Integer;
 begin
   if fPrg.IsBusy then
     fPrg.StopOperation;
+  { Measured redrawing on every change first, the way it was. }
+  TmpSettle := fView.ViewChangeSettleMS;
+  fView.ViewChangeSettleMS := 0;
   TmpOld := fView.VisualRect;
   fView.ZoomToExtension;
   TmpAll := fView.VisualRect;
@@ -2134,11 +2144,26 @@ begin
   end;
   TmpZoom := TmpWatch.ElapsedMilliseconds;
 
+  { And the same pan as a gesture: what the real-time pan does. }
+  fView.ZoomWindow(TmpAll);
+  TmpWatch := TStopwatch.StartNew;
+  fView.BeginViewChange;
+  try
+    for Cont := 1 to PAN_STEPS do
+      fView.PanWindow(TmpStep, 0);
+  finally
+    fView.EndViewChange;
+  end;
+  TmpCached := TmpWatch.ElapsedMilliseconds;
+
+  fView.ViewChangeSettleMS := TmpSettle;
   fView.ZoomWindow(TmpOld);
+  fView.FlushViewChange;
   Log(Format('benchmark: %d objects, small objects %s; repaint at zoom-all '
-    + '%d ms, zoomed in %d ms; pan step %.1f ms; zoom step %.1f ms',
+    + '%d ms, zoomed in %d ms; pan step %.1f ms; zoom step %.1f ms; '
+    + '%d pan steps as one view change %d ms in all',
     [fCAD.ObjectsCount, SmallObjectModeName, TmpFull, TmpIn,
-    TmpPan / PAN_STEPS, TmpZoom / ZOOM_STEPS]));
+    TmpPan / PAN_STEPS, TmpZoom / ZOOM_STEPS, PAN_STEPS, TmpCached]));
   Say(Format('%d objects. Repaint: %d ms at zoom-all, %d ms zoomed in. '
     + 'Pan step %.1f ms, zoom step %.1f ms. Also in the log.',
     [fCAD.ObjectsCount, TmpFull, TmpIn, TmpPan / PAN_STEPS,

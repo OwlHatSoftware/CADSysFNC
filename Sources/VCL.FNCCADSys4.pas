@@ -542,6 +542,8 @@ uses
   { pf24bit for the back buffer; the rest of the framework arrives
     through LCLTMSFNCCustomControl. }
   Graphics,
+  { TTimer, for the redraw after a view change settles. }
+  ExtCtrls,
   LCLTMSFNCTypes, LCLTMSFNCGraphicsTypes, LCLTMSFNCGraphics,
   LCLTMSFNCCustomControl,
 {$ENDIF}
@@ -554,6 +556,9 @@ uses
     CADResolveSystemColor, without which every clBtnFace and clWindow in
     a drawing would come out opaque black. Do not "tidy" it away. }
   Vcl.Graphics,
+  { TTimer, for the redraw after a view change settles. FMX has its own
+    in FMX.Types, already above. }
+  Vcl.ExtCtrls,
   VCL.TMSFNCTypes, VCL.TMSFNCGraphicsTypes, VCL.TMSFNCGraphics,
   VCL.TMSFNCCustomControl,
   VCL.FNCCS4GraphicsVCL,
@@ -3654,6 +3659,17 @@ type
     { Nesting depth of BeginOverlay / EndOverlay. }
     fOverlayDepth: Integer;
     fOnPaintOverlay: TNotifyEvent;
+    { The cached pan and zoom - see BeginViewChange. fBufferValid: the
+      back buffer holds a complete rendering, which a resize or a
+      change of space takes away. fBufferStale: the view has moved
+      since, and Draw shows the buffer moved and stretched to match.
+      fBufferScreenToViewport is the mapping it was rendered with. }
+    fViewChangeDepth: Integer;
+    fSettleOpen: Boolean;
+    fSettleTimer: TTimer;
+    fViewChangeSettleMS: Integer;
+    fBufferValid, fBufferStale: Boolean;
+    fBufferScreenToViewport: TTransf2D;
     { Input hooks owned by the linked TFNCCADPrg, not published. }
     fCADMouseDown, fCADMouseUp: TCADViewportMouseHook;
     fCADMouseMove: TCADViewportMouseMoveHook;
@@ -3698,6 +3714,8 @@ type
     procedure SetDeltaY(const V: TRealType);
     procedure SetSubX(const V: TRealType);
     procedure SetSubY(const V: TRealType);
+    procedure SettleTimerFired(Sender: TObject);
+    procedure RestartSettleTimer;
   protected
     { Protected declarations }
     { : This method is called at the creation of the control to
@@ -4280,6 +4298,29 @@ type
       <See Method=TFNCCADViewport@EndOverlay>.
     }
     function InOverlay: Boolean;
+
+    { : Opens a view change: from here until the matching
+      <See Method=TFNCCADViewport@EndViewChange>, a pan or a zoom does
+      not redraw the drawing. The control shows the picture it already
+      has, moved and stretched to the new view, with the overlay -
+      selections, handles, the rubber band - drawn live on top, and the
+      edges that come into view filled with the background. The real
+      redraw comes once, at the end.
+
+      For a gesture: the real-time pan brackets its drag with these.
+      Nests. A change of size or of space, or anything that redraws the
+      drawing, still redraws it at once. }
+    procedure BeginViewChange;
+    { : Closes a view change, and at the outermost one redraws the
+      drawing if the view moved inside it. }
+    procedure EndViewChange;
+    { : True between BeginViewChange and EndViewChange, or while a view
+      change is waiting for <See Property=TFNCCADViewport@ViewChangeSettleMS>. }
+    function InViewChange: Boolean;
+    { : Redraws the drawing now if the view moved since it was last
+      drawn, without closing anything. For code that is about to read
+      the back buffer. }
+    procedure FlushViewChange;
     { : This method returns the 2D point in view plane coordinates that
       correspond to the specified point in Windows screen coordinates.
 
@@ -4665,6 +4706,15 @@ type
     }
     property OnViewMappingChanged: TNotifyEvent read fOnViewMappingChanged
       write fOnViewMappingChanged;
+    { : How long a pan or zoom made outside
+      <See Method=TFNCCADViewport@BeginViewChange> waits for the next
+      one before the drawing is redrawn, in milliseconds. Until then
+      the control shows what it has, moved and stretched - so a run of
+      wheel steps or zoom clicks costs one redraw, at the end, instead
+      of one each. 0 redraws at once on every change, as the library
+      always did. }
+    property ViewChangeSettleMS: Integer read fViewChangeSettleMS
+      write fViewChangeSettleMS default 150;
     property OnEnter;
     property OnExit;
     property OnMouseEnter: TNotifyEvent read fOnMouseEnter write fOnMouseEnter;
@@ -18859,6 +18909,14 @@ begin
   for Cont := 0 to fListOfViewport.Count - 1 do
     with TFNCCADViewport(fListOfViewport.Items[Cont]) do
     begin
+      { A buffer drawn for a view that has since moved cannot take one
+        more object at the new mapping without the two disagreeing on
+        screen. Redraw it whole instead - which draws this object too. }
+      if fBufferStale then
+      begin
+        Repaint;
+        Continue;
+      end;
       { Drawing into the back buffer needs a scene open on the
         frameworks that have them - see BeginOffScreenScene. This is
         the DrawOnAdd path: one object straight into the buffer rather
@@ -18969,6 +19027,8 @@ var
   TmpRebuild: Boolean;
 {$ENDIF}
 begin
+  { A buffer of a new size holds nothing worth stretching. }
+  fBufferValid := False;
   if fOffScreenBitmap = nil then
     Exit;
 {$IFNDEF CADSYS_VCL}
@@ -19267,6 +19327,9 @@ begin
   fViewGuard := TCADSysCriticalSection.Create;
   CopingFrequency := 0;
   fDrawMode := DRAWMODE_NORMAL;
+  fViewChangeSettleMS := 150;
+  fBufferValid := False;
+  fBufferStale := False;
   { A TTMSFNCBitmap is a TPicture on VCL and LCL and a TBitmap on FMX.
     Either way it has a Canvas the display list can be drawn into, and it
     is what TTMSFNCGraphics.DrawBitmap takes, so the buffer reaches the
@@ -19315,6 +19378,10 @@ end;
 
 destructor TFNCCADViewport.Destroy;
 begin
+  { Owned, and freed with the other components - but not allowed to
+    fire into a viewport that is half gone. }
+  if fSettleTimer <> nil then
+    fSettleTimer.Enabled := False;
   fRubberPen.Free;
   if Assigned(fCADCmp) and (not(csDesigning in ComponentState)) then
     fCADCmp.DelViewports(Self);
@@ -19463,7 +19530,10 @@ end;
 
 procedure TFNCCADViewport.Draw(AGraphics: TTMSFNCGraphics; ARect: TRectF);
 var
-  TmpRect: TRect;
+  TmpRect, TmpBuf: TRect;
+  TmpMap: TTransf2D;
+  TmpP0, TmpP1: TPoint2D;
+  TmpDest: TRectF;
 {$IFDEF CADSYS_FMX}
   TmpScale: Single;
   TmpMatrix: TMatrix;
@@ -19506,8 +19576,37 @@ begin
     running, or it will ask for another one from inside this one. }
   fInDraw := True;
   try
-    CopyBitmapOnCanvas(AGraphics, fOffScreenBitmap, TmpRect, fTransparent,
-      fBackGroundColor);
+    if fBufferStale and fBufferValid then
+    begin
+      { The view moved and the drawing has not been redrawn: the buffer
+        goes where its pixels now belong. Buffer pixel to world through
+        the mapping it was rendered with, world to screen through the
+        one in force - a pan comes out as an offset, a zoom as a
+        stretch. Device pixels on both sides, so on FMX the result is
+        scaled back to the logical rect the blit is given. }
+      TmpMap := MultiplyTransform2D(fBufferScreenToViewport,
+        fViewportToScreen);
+      TmpBuf := ControlRect;
+      TmpP0 := CartesianPoint2D(TransformPoint2D(Point2D(TmpBuf.Left,
+        TmpBuf.Top), TmpMap));
+      TmpP1 := CartesianPoint2D(TransformPoint2D(Point2D(TmpBuf.Right,
+        TmpBuf.Bottom), TmpMap));
+      TmpDest := RectF(Min(TmpP0.X, TmpP1.X) / ViewScaleOrOne + ARect.Left,
+        Min(TmpP0.Y, TmpP1.Y) / ViewScaleOrOne + ARect.Top,
+        Max(TmpP0.X, TmpP1.X) / ViewScaleOrOne + ARect.Left,
+        Max(TmpP0.Y, TmpP1.Y) / ViewScaleOrOne + ARect.Top);
+      { What comes into view at the edges is background until the real
+        redraw. }
+      AGraphics.Fill.Kind := gfkSolid;
+      AGraphics.Fill.Color := CADToFNCColor(TColorToCADColor(fBackGroundColor));
+      AGraphics.Stroke.Kind := gskNone;
+      AGraphics.DrawRectangle(ARect, gcrmNone);
+      AGraphics.DrawBitmap(TmpDest, fOffScreenBitmap, False, True, False,
+        False);
+    end
+    else
+      CopyBitmapOnCanvas(AGraphics, fOffScreenBitmap, TmpRect, fTransparent,
+        fBackGroundColor);
 
     if Assigned(fOnPaint) and (not fDisablePaintEvent) then
       try
@@ -19699,6 +19798,11 @@ begin
     end;
   finally
     fInRepainting := False;
+    { The buffer is now the drawing at this mapping, which is what Draw
+      measures a moved view against. }
+    fBufferScreenToViewport := fScreenToViewport;
+    fBufferValid := True;
+    fBufferStale := False;
     DoCopyCanvas(True);
     if Assigned(fOnEndRedraw) then
       fOnEndRedraw(Self);
@@ -19868,7 +19972,76 @@ begin
       fOnViewMappingChanged(Self);
   except
   end;
-  Repaint;
+  { Inside a view change, or when a settle time is set, the drawing is
+    not redrawn: Draw shows the buffer moved to the new view and the
+    redraw comes when the change ends. Only with a buffer worth
+    showing - after a resize there is nothing in it yet. }
+  if fBufferValid and not(csDesigning in ComponentState) and
+    ((fViewChangeDepth > 0) or (fViewChangeSettleMS > 0)) then
+  begin
+    if fViewChangeDepth = 0 then
+    begin
+      { A change nobody bracketed: open one, and let the timer close
+        it once the changes stop coming. }
+      Inc(fViewChangeDepth);
+      fSettleOpen := True;
+    end;
+    if fSettleOpen then
+      RestartSettleTimer;
+    fBufferStale := True;
+    Invalidate;
+  end
+  else
+    Repaint;
+end;
+
+procedure TFNCCADViewport.BeginViewChange;
+begin
+  Inc(fViewChangeDepth);
+end;
+
+procedure TFNCCADViewport.EndViewChange;
+begin
+  if fViewChangeDepth = 0 then
+    Exit;
+  Dec(fViewChangeDepth);
+  if fViewChangeDepth = 0 then
+    FlushViewChange;
+end;
+
+function TFNCCADViewport.InViewChange: Boolean;
+begin
+  Result := fViewChangeDepth > 0;
+end;
+
+procedure TFNCCADViewport.FlushViewChange;
+begin
+  if fBufferStale then
+    Repaint;
+end;
+
+procedure TFNCCADViewport.RestartSettleTimer;
+begin
+  if fSettleTimer = nil then
+  begin
+    fSettleTimer := TTimer.Create(Self);
+    fSettleTimer.Enabled := False;
+    fSettleTimer.OnTimer := SettleTimerFired;
+  end;
+  { Restarted on every change, so it fires once the changes stop. }
+  fSettleTimer.Enabled := False;
+  fSettleTimer.Interval := Max(1, fViewChangeSettleMS);
+  fSettleTimer.Enabled := True;
+end;
+
+procedure TFNCCADViewport.SettleTimerFired(Sender: TObject);
+begin
+  fSettleTimer.Enabled := False;
+  if fSettleOpen then
+  begin
+    fSettleOpen := False;
+    EndViewChange;
+  end;
 end;
 
 function TFNCCADViewport.BuildViewportTransform(var ViewWin: TRect2D;
@@ -21799,6 +21972,9 @@ begin
     rightly call that a bug. }
   if (fSheet = nil) and (Value <> nil) then
     fSavedWindow := fVisualWindow;
+  { The buffer holds the other space: nothing in it to stretch into
+    this one, so the change below is drawn at once. }
+  fBufferValid := False;
   fSheet := Value;
   if fSheet <> nil then
   begin
