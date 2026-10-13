@@ -17,6 +17,7 @@ may rely on the member names below.
   "kind": "drawing",           // "drawing" | "library" | "font"
   "layers":  [ ... ],          // only layers whose Modified flag is set
   "blocks":  [ ... ],          // source blocks (a library holds only these)
+  "objectCount": 12,           // how many objects follow; for progress while streaming
   "objects": [ ... ]           // the display list
 }
 ```
@@ -105,6 +106,76 @@ falls back to its `view`. Reading a `views` entry whose `id` is already present
 `FNCCS4JSON.pas` holds the conversion helpers (`JGetStr`, `JSetReal`, `Point2DToJSON`, `JGetTransf3D`, `JSONFromFile`, …). It uses `System.JSON` and no UI framework.
 
 `TCADVersion`, `CADSysVersion` and `TFNCCADCmp.Version` still exist but no longer drive file I/O; the JSON header carries the format version.
+
+## Streaming a drawing
+
+`SaveToJSON` and `LoadFromJSON` work on a complete `System.JSON` tree. For a
+large drawing that tree is most of the cost: a hundred thousand lines are
+millions of `TJSONValue` objects, held all at once. The streaming pair writes
+and reads the same document one object at a time (Delphi only; the LCL tree has
+no streaming reader):
+
+```pascal
+procedure TFNCCADCmp.SaveToJSONWriter(const AWriter: TJsonWriter);
+procedure TFNCCADCmp.LoadFromJSONReader(const AReader: TJsonReader);
+procedure TFNCCADCmp.MergeFromJSONReader(const AReader: TJsonReader);
+```
+
+- **Same document.** The writer produces the members `SaveToJSON` builds, in the
+  same order and with the same values. A number is written as the text the tree
+  holds for it, so not even the last digit differs. Each object still saves itself
+  through its own `SaveToJSON` into a small tree that is written and freed before
+  the next, so an application's own classes need nothing new.
+- **One value, inside anything.** The writer writes the drawing where a value is
+  expected, and the reader starts on the drawing's `StartObject` (or before the
+  first token) and stops on its `EndObject`. An application can put the drawing
+  inside a document of its own, with members before and after it.
+- **Order matters when reading.** A stream cannot go back, so the header
+  (`format`, `version`, `kind`) must come before the content, and `blocks` before
+  `objects`. Anything this library writes is in that order; anything else raises
+  `ECADFileNotValid`. Members the reader does not know are skipped.
+- **Progress** comes from `objectCount`. A document written before that member
+  existed still loads, and reports 100 once it has finished.
+- **Dates.** A `TJsonTextReader` with `DateParseHandling` set to `DateTime` would
+  turn a sheet called `2026-10-12` into a date. The loader sets it to `None` for
+  as long as it reads and puts it back afterwards.
+
+`FNCCS4JSON` has the two bridges, for anyone streaming documents of their own:
+`JWriteValue(Writer, Value)` writes a tree to a writer, and `JReadValue(Reader)`
+builds a tree from the value the reader is on.
+
+## Choosing the class an object is loaded as
+
+```pascal
+TCADMapObjectClassEvent = procedure(Sender: TObject; const ATypeName: String;
+  var AClass: TGraphicObjectClass) of object;
+
+property TFNCCADCmp.OnMapObjectClass: TCADMapObjectClassEvent;
+property TDXF2DImport.OnMapObjectClass: TCADMapObjectClassEvent;
+```
+
+Called for every object created while a drawing loads, by any of the load methods,
+tree or streaming. That includes source blocks and what is inside them, a
+container's children and every sheet's own objects. `AClass` arrives as the
+registered class of that name, or nil when none is registered. The handler may
+replace it, typically with a descendant of its own, so a `TLine2D` in the file
+comes back as the application's line without the drawing being converted
+afterwards. Left nil, the object is skipped as an unknown class, as it always was.
+
+The class is created through `CreateFromJSON`, so the replacement must read what
+the stored class wrote. A descendant does.
+
+The map lives on the thread for the duration of one load, because the objects
+inside a block or a container are created by their parent's `CreateFromJSON` and
+never see the drawing. `CADSysPushObjectClassMap` and `CADSysPopObjectClassMap`
+are public for an application that reads objects on its own. A load nested inside
+another does not inherit the outer map.
+
+On the DXF importer the same event is called for every entity read, block contents
+included. A different class has the entity recreated as that class through its
+JSON. Leaving `AClass` unchanged or nil keeps the entity as read. Block instances
+and containers are left alone: they hold references that a round trip would have
+to resolve again.
 
 ## Fonts
 

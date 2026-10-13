@@ -82,6 +82,18 @@ stream.
 Vector fonts are JSON too. The old `.fnt` files can no longer be read;
 `RomanC.json` and `Monotxt.json` in `Demos\CAD2D\data` are converted copies.
 
+For a large drawing, `SaveToJSONWriter` and `LoadFromJSONReader` write and read
+the same document one object at a time instead of as one tree. While a drawing
+loads, `OnMapObjectClass` can have its objects created as your own classes. Both
+are described in [json-format.md](json-format.md).
+
+**If you descend from `TFNCCADCmp` directly** rather than from `TFNCCADCmp2D` or
+`TFNCCADCmp3D`, it has two new abstract methods, `LoadObjectFromJSON` and
+`LoadBlockFromJSON`, one element each. `LoadObjectsFromJSON` and
+`LoadBlocksFromJSON` are no longer abstract: they loop over the array and call
+those two, which is how the tree path and the streaming path load the same
+drawing.
+
 ## 4. Colours carry alpha
 
 `TCADColor` is `$AARRGGBB` and is a distinct type from the VCL's `TColor`
