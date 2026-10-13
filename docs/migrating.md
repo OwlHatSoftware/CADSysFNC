@@ -174,6 +174,13 @@ An FMX program simply does not have these yet.
   longer set by the library.
 * **`CreateOffScreenCanvas` takes no parameter.** If you overrode it, read
   `OffScreenBitmap` instead.
+* **A pan or zoom no longer redraws at once.** Outside a gesture the redraw
+  waits `ViewChangeSettleMS` (150 ms) for the next change, and in the meantime
+  the screen shows the old picture moved and stretched. Code that reads the back
+  buffer straight after changing the view should call `FlushViewChange` first;
+  setting `ViewChangeSettleMS` to 0 restores the old behaviour. **Objects smaller
+  than a pixel are drawn as a dot** (`SmallObjectMode`). Both are described in
+  [drawing-speed.md](drawing-speed.md).
 * Casualty: the `TCADCmp3D developed by PV :)` easter egg on Alt+Shift+right-click.
 
 ## 8. The ruler

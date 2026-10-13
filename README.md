@@ -221,6 +221,9 @@ Documentations\ the original CADSys 4.2 help file and change log
   spaces, what an application calls to draw, select, delete and group on a
   sheet, and how a viewport is taken hold of.
 * [docs/json-format.md](docs/json-format.md) — the persisted document format.
+* [docs/drawing-speed.md](docs/drawing-speed.md) — what the viewport does to stay
+  quick with a large drawing: small objects as dots, and pan and zoom from the
+  picture already drawn.
 * [docs/port/](docs/port/) — the port history and the pre-port code review. These
   are a record of how the library got here, not a user guide, and they are kept
   because several of the traps in them are still traps.
