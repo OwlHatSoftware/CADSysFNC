@@ -121,8 +121,13 @@ type
     { Contain the name of the layers and the layer itself. }
     fBlockList: TStringList;
     { Contain the name of the blocks and the block itself. }
+    fOnMapObjectClass: TCADMapObjectClassEvent;
 
     procedure ReadEntitiesAsContainer(const Container: TContainer2D);
+    { Hands AObj to OnMapObjectClass and, when the handler chooses
+      another class, returns the object recreated as that class, freeing
+      AObj. }
+    function MapEntity(const AObj: TObject2D): TObject2D;
     { Read the DXF blocks. }
     procedure ReadBlocks;
     { Read the DXF entities. }
@@ -170,6 +175,25 @@ type
     property SetLayers: Boolean read fSetLayers write fSetLayers;
     property UnableToReadAllTheFile: Boolean read fUnableToReadAll;
     property Verbose: Boolean read fVerbose write fVerbose;
+    { : Chooses the class each entity is created as - the same event a
+      drawing has for loading (see <See Type=TCADMapObjectClassEvent>),
+      so that one handler can serve both, and an import gives the
+      application its own classes directly instead of a drawing to
+      convert afterwards.
+
+      <I=ATypeName> is the class the reader made, and <I=AClass>
+      arrives as that class. A different class gets the entity
+      recreated as that class, through the entity's own JSON - so a
+      replacement must read what the original writes, which in practice
+      means a descendant of it. Leaving it unchanged, or setting it to
+      nil, keeps the entity as it was read.
+
+      Applied to everything an import reads, block contents included,
+      except block instances and containers themselves: they hold
+      references to other objects that a round trip would have to
+      resolve again. }
+    property OnMapObjectClass: TCADMapObjectClassEvent read fOnMapObjectClass
+      write fOnMapObjectClass;
   end;
 
   TDXF2DExport = class(TObject)
@@ -276,9 +300,9 @@ Implementation
 
 uses
 {$IFDEF CADSYS_LCL}
-  Math, Variants;
+  Math, Variants, fpjson;
 {$ELSE}
-  System.Math, System.Variants;
+  System.Math, System.Variants, System.JSON;
 {$ENDIF}
 
 // function body
@@ -752,6 +776,43 @@ begin
     Result := ReadText2D(Entry)
   else if (not IgnoreBlock) and (Entry[0] = 'INSERT') then
     Result := ReadBlock(Entry);
+  { Here, where every entity passes - the drawing's, a block's and a
+    container's alike. }
+  Result := MapEntity(Result);
+end;
+
+function TDXF2DImport.MapEntity(const AObj: TObject2D): TObject2D;
+var
+  TmpClass: TGraphicObjectClass;
+  TmpJSON: TJSONObject;
+  TmpNew: TGraphicObject;
+begin
+  Result := AObj;
+  if (AObj = nil) or not Assigned(fOnMapObjectClass) then
+    Exit;
+  if (AObj is TBlock2D) or (AObj is TContainer2D) then
+    Exit;
+  TmpClass := TGraphicObjectClass(AObj.ClassType);
+  fOnMapObjectClass(Self, AObj.ClassName, TmpClass);
+  if (TmpClass = nil) or (TmpClass = AObj.ClassType) then
+    Exit;
+  if not TmpClass.InheritsFrom(TObject2D) then
+    Raise EDXFException.CreateFmt
+      ('OnMapObjectClass: %s is not a 2D object class', [TmpClass.ClassName]);
+  { Through the entity's JSON rather than Assign: CreateFromJSON is the
+    one constructor that is virtual, so it is the only way to have the
+    replacement class's own constructor run. Create(ID) is not virtual,
+    and an object made through it on a class reference has only the base
+    class's fields set up. }
+  TmpJSON := CADSysObjectToJSON(AObj);
+  try
+    TmpNew := TmpClass.CreateFromJSON(TmpJSON);
+  finally
+    TmpJSON.Free;
+  end;
+  TmpNew.UpdateExtension(TmpNew);
+  AObj.Free;
+  Result := TObject2D(TmpNew);
 end;
 
 function TDXF2DImport.ReadBlock(Entry: TGroupTable): TBlock2D;

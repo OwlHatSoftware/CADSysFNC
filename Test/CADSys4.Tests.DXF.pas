@@ -65,6 +65,8 @@ type
 
     [Test]
     procedure ImportedLineEntity_LandsInTheCADWithItsCoordinates;
+    [Test]
+    procedure ImportedLines_AreCreatedAsTheMappedClass;
   end;
 
 implementation
@@ -598,6 +600,78 @@ begin
     AssertReal(4.5, TmpLine.Points[1].Y, TOL_DXF, 'End Y');
   finally
     TmpCad.Free;
+  end;
+end;
+
+type
+  { An application's own line, as far as the importer can tell. }
+  TDXFMappedLine2D = class(TLine2D)
+  end;
+
+  TDXFLineMapper = class
+  public
+    Calls: Integer;
+    procedure Map(Sender: TObject; const ATypeName: String;
+      var AClass: TGraphicObjectClass);
+  end;
+
+procedure TDXFLineMapper.Map(Sender: TObject; const ATypeName: String;
+  var AClass: TGraphicObjectClass);
+begin
+  Inc(Calls);
+  if AClass = TLine2D then
+    AClass := TDXFMappedLine2D;
+end;
+
+procedure TDXFImportRoundTripTests.ImportedLines_AreCreatedAsTheMappedClass;
+var
+  TmpWrite: TDXFWrite;
+  TmpOut: TGroupTable;
+  TmpImport: TDXF2DImport;
+  TmpCad: TFNCCADCmp2D;
+  TmpMapper: TDXFLineMapper;
+  TmpLine: TLine2D;
+begin
+  TmpWrite := TDXFWrite.Create(FTempFile);
+  try
+    TmpOut[0] := 'LINE';
+    TmpOut[8] := '0';
+    TmpOut[10] := 1.5;
+    TmpOut[20] := 2.5;
+    TmpOut[11] := 3.5;
+    TmpOut[21] := 4.5;
+    TmpWrite.BeginSection(scEntities);
+    TmpWrite.WriteAnEntry({%H-}TmpOut);
+    TmpWrite.EndSection(scEntities);
+    WriteDXFTail(TmpWrite);
+  finally
+    TmpWrite.Free;
+  end;
+
+  TmpMapper := TDXFLineMapper.Create;
+  TmpCad := TFNCCADCmp2D.Create(nil);
+  try
+    TmpImport := TDXF2DImport.Create(FTempFile, TmpCad);
+    try
+      TmpImport.Scale := 1.0;
+      TmpImport.Verbose := False;
+      TmpImport.OnMapObjectClass := TmpMapper.Map;
+      TmpImport.ReadDXF;
+    finally
+      TmpImport.Free;
+    end;
+    AssertInt(1, TmpCad.ObjectsCount, 'the line was imported');
+    Assert.AreEqual(1, TmpMapper.Calls, 'the handler was asked once');
+    { Created as the application's class directly - no drawing to save,
+      rename and load again afterwards. }
+    Assert.AreEqual(TDXFMappedLine2D, TmpCad.GetObject(0).ClassType,
+      'as the mapped class');
+    TmpLine := TmpCad.GetObject(0) as TLine2D;
+    AssertReal(1.5, TmpLine.Points[0].X, TOL_DXF, 'Start X');
+    AssertReal(4.5, TmpLine.Points[1].Y, TOL_DXF, 'End Y');
+  finally
+    TmpCad.Free;
+    TmpMapper.Free;
   end;
 end;
 
