@@ -74,6 +74,14 @@ procedure CADSaveModelRectToPNGStream(const ACAD: TFNCCADCmp2D;
   const AStream: TStream; const ADPI: Integer = 300;
   const ATransparent: Boolean = False);
 
+{ : Draws ARect of the model onto ACanvas, filling ASizePx device
+  pixels from the origin: every object on a visible layer that reaches
+  into ARect, through the transform and per-layer setup a sheet
+  viewport uses. What the model-rectangle image is made of, public so
+  the other exports (EMF, the clipboard) draw the same picture. }
+procedure CADDrawModelRect(const ACAD: TFNCCADCmp2D; const ARect: TRect2D;
+  const ASizePx: TPoint; const ACanvas: TDecorativeCanvas);
+
 { : The pixel size the two would make, without making anything - for a
   dialog that shows it, or checks it against CADImageMaxPixels first. }
 function CADSheetImageSize(const ASheet: TCADSheet;
@@ -128,6 +136,42 @@ begin
   Result := Point(TmpDevice.MMToPxX((TmpRect.Right - TmpRect.Left) /
     AUnitsPerMM), TmpDevice.MMToPxY((TmpRect.Top - TmpRect.Bottom) /
     AUnitsPerMM));
+end;
+
+procedure CADDrawModelRect(const ACAD: TFNCCADCmp2D; const ARect: TRect2D;
+  const ASizePx: TPoint; const ACanvas: TDecorativeCanvas);
+var
+  TmpWindow, TmpWin: TRect2D;
+  TmpTransf: TTransf2D;
+  TmpClip: TRect2D;
+  TmpIter: TGraphicObjIterator;
+  TmpObj: TObject2D;
+begin
+  if (ACAD = nil) or (ACanvas = nil) or (ASizePx.X <= 0) or
+    (ASizePx.Y <= 0) then
+    Exit;
+  TmpWindow := ReorderRect2D(ARect);
+  { The window onto the image, as a sheet viewport puts the model on
+    paper - the same transform, the same visibility test, the same
+    per-layer setup. GetVisualTransform2D may adjust the window it is
+    given, so it gets a copy. }
+  TmpWin := TmpWindow;
+  TmpTransf := GetVisualTransform2D(TmpWin, Rect(0, 0, ASizePx.X,
+    ASizePx.Y), 0);
+  TmpClip := RectToRect2D(Rect(0, 0, ASizePx.X, ASizePx.Y));
+  TmpIter := ACAD.ObjectsIterator;
+  try
+    TmpObj := TObject2D(TmpIter.First);
+    while TmpObj <> nil do
+    begin
+      if TmpObj.IsVisible(TmpWindow, 0) and
+        ACAD.Layers.SetCanvas(ACanvas, TmpObj.Layer) then
+        TmpObj.Draw(TmpTransf, ACanvas, TmpClip, 0);
+      TmpObj := TObject2D(TmpIter.Next);
+    end;
+  finally
+    TmpIter.Free;
+  end;
 end;
 
 procedure CheckSize(const ASize: TPoint);
@@ -337,7 +381,6 @@ procedure CADSaveModelRectToPNGStream(const ACAD: TFNCCADCmp2D;
 {$IFNDEF CADSYS_LCL}
 var
   TmpSize: TPoint;
-  TmpWindow: TRect2D;
   TmpDevice: TCADPageDevice;
 {$ENDIF}
 begin
@@ -348,38 +391,11 @@ begin
     Exit;
   TmpSize := CADModelRectImageSize(ARect, AUnitsPerMM, ADPI);
   CheckSize(TmpSize);
-  TmpWindow := ReorderRect2D(ARect);
   TmpDevice := TCADPageDevice.FromDPI(ADPI, ADPI);
   SavePNG(TmpSize, TmpDevice.PixelsPerMM, ATransparent,
     procedure(const ACanvas: TDecorativeCanvas)
-    var
-      TmpWin: TRect2D;
-      TmpTransf: TTransf2D;
-      TmpClip: TRect2D;
-      TmpIter: TGraphicObjIterator;
-      TmpObj: TObject2D;
     begin
-      { The window onto the image, as a sheet viewport puts the model
-        on paper - the same transform, the same visibility test, the
-        same per-layer setup. GetVisualTransform2D may adjust the
-        window it is given, so it gets a copy. }
-      TmpWin := TmpWindow;
-      TmpTransf := GetVisualTransform2D(TmpWin, Rect(0, 0, TmpSize.X,
-        TmpSize.Y), 0);
-      TmpClip := RectToRect2D(Rect(0, 0, TmpSize.X, TmpSize.Y));
-      TmpIter := ACAD.ObjectsIterator;
-      try
-        TmpObj := TObject2D(TmpIter.First);
-        while TmpObj <> nil do
-        begin
-          if TmpObj.IsVisible(TmpWindow, 0) and
-            ACAD.Layers.SetCanvas(ACanvas, TmpObj.Layer) then
-            TmpObj.Draw(TmpTransf, ACanvas, TmpClip, 0);
-          TmpObj := TObject2D(TmpIter.Next);
-        end;
-      finally
-        TmpIter.Free;
-      end;
+      CADDrawModelRect(ACAD, ARect, TmpSize, ACanvas);
     end, AStream);
 {$ENDIF}
 end;

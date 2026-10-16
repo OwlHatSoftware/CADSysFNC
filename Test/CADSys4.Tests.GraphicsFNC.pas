@@ -12,14 +12,14 @@ unit CADSys4.Tests.GraphicsFNC;
 interface
 
 uses
-  System.SysUtils, System.Types, System.Classes, System.UITypes,
-  Vcl.Graphics,
+  Winapi.Windows, System.SysUtils, System.Types, System.Classes,
+  System.UITypes, Vcl.Graphics,
   DUnitX.TestFramework,
   VCL.TMSFNCGraphics, VCL.TMSFNCGraphicsTypes,
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsFNC,
   VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCadSysRegister,
   VCL.FNCCS4Paper, VCL.FNCCS4Image, Vcl.Imaging.pngimage, VCL.FNCCS4SVG,
-  System.IOUtils, Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom, Xml.omnixmldom;
+  VCL.FNCCS4GDI, System.IOUtils, Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom, Xml.omnixmldom;
 
 type
   { : CS-04: a sheet, or a rectangle of the model, as a PNG. Here rather
@@ -91,6 +91,49 @@ type
     procedure AnImageIsEmbeddedAsADataURI;
     [Test]
     procedure SeveralSheetsNeedAPattern;
+  end;
+
+  { : CS-06: the framework-free GDI backend, metafiles and the clipboard.
+    Drawn into a DIB section and read back pixel by pixel; metafiles
+    checked by their header and by playing them back. }
+  [TestFixture]
+  TCADGDIExportTests = class(TObject)
+  private
+    FDC: HDC;
+    FBmp: HBITMAP;
+    FOld: HGDIOBJ;
+    FG: TCADGDIGraphics;
+    function Px(const X, Y: Integer): COLORREF;
+    function SheetCAD(out ASheet: TCADSheet): TFNCCADCmp2D;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+    [Test]
+    procedure APenDrawsInItsColourAndWidth;
+    [Test]
+    procedure ARectangleIsFilledAndOutlined;
+    [Test]
+    procedure AGradientBlendsInsideTheShape;
+    [Test]
+    procedure AClipIsGivenBackWithThePenIntact;
+    [Test]
+    procedure TranslucentColoursAreFlattened;
+    [Test]
+    procedure TextIsMeasuredAndDrawn;
+    [Test]
+    procedure APictureIsDrawn;
+    [Test]
+    procedure ASheetMetafileIsThePaperSize;
+    [Test]
+    procedure ASheetMetafilePlaysBackTheSheet;
+    [Test]
+    procedure AModelRectMetafileIsTheRectAtTheScale;
+    [Test]
+    procedure AMetafileFileIsWritten;
+    [Test]
+    procedure TheClipboardGetsAllThreeFormats;
   end;
 
   [TestFixture]
@@ -1063,9 +1106,327 @@ begin
   end;
 end;
 
+{ ==================================================================
+  TCADGDIExportTests
+  ================================================================== }
+
+const
+  GDIW = 200;
+  GDIH = 100;
+
+procedure TCADGDIExportTests.Setup;
+var
+  TmpInfo: TBitmapInfo;
+  TmpBits: Pointer;
+begin
+  FDC := CreateCompatibleDC(0);
+  FillChar(TmpInfo, SizeOf(TmpInfo), 0);
+  TmpInfo.bmiHeader.biSize := SizeOf(TBitmapInfoHeader);
+  TmpInfo.bmiHeader.biWidth := GDIW;
+  TmpInfo.bmiHeader.biHeight := -GDIH;
+  TmpInfo.bmiHeader.biPlanes := 1;
+  TmpInfo.bmiHeader.biBitCount := 32;
+  TmpInfo.bmiHeader.biCompression := BI_RGB;
+  FBmp := CreateDIBSection(FDC, TmpInfo, DIB_RGB_COLORS, TmpBits, 0, 0);
+  FOld := SelectObject(FDC, FBmp);
+  PatBlt(FDC, 0, 0, GDIW, GDIH, WHITENESS);
+  FG := TCADGDIGraphics.Create(FDC, 0);
+end;
+
+procedure TCADGDIExportTests.TearDown;
+begin
+  FG.Free;
+  SelectObject(FDC, FOld);
+  DeleteObject(FBmp);
+  DeleteDC(FDC);
+end;
+
+function TCADGDIExportTests.Px(const X, Y: Integer): COLORREF;
+begin
+  GdiFlush;
+  Result := GetPixel(FDC, X, Y);
+end;
+
+function TCADGDIExportTests.SheetCAD(out ASheet: TCADSheet): TFNCCADCmp2D;
+begin
+  Result := TFNCCADCmp2D.Create(nil);
+  Result.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(100, 50)));
+  { A3 landscape, 420 x 297 mm, with a frame 10 mm in. }
+  ASheet := Result.Sheets.Add('Plate');
+  ASheet.AddObject(TFrame2D.Create(-1, Point2D(10, 10), Point2D(410, 287)));
+end;
+
+procedure TCADGDIExportTests.APenDrawsInItsColourAndWidth;
+begin
+  FG.Pen.Color := cadclRed;
+  FG.Pen.Width := 5;
+  FG.MoveTo(10, 50);
+  FG.LineTo(190, 50);
+  Assert.AreEqual(COLORREF($0000FF), Px(100, 50), 'red on the line');
+  Assert.AreEqual(COLORREF($0000FF), Px(100, 52), 'five pixels wide');
+  Assert.AreEqual(COLORREF($FFFFFF), Px(100, 56), 'and no wider');
+end;
+
+procedure TCADGDIExportTests.ARectangleIsFilledAndOutlined;
+begin
+  FG.Brush.Style := cbsSolid;
+  FG.Brush.Color := cadclBlue;
+  FG.Pen.Color := cadclBlack;
+  FG.Rectangle(10, 10, 60, 60);
+  Assert.AreEqual(COLORREF($FF0000), Px(35, 35), 'blue inside');
+  Assert.AreEqual(COLORREF($000000), Px(10, 35), 'black edge');
+  Assert.AreEqual(COLORREF($FFFFFF), Px(70, 35), 'white outside');
+end;
+
+procedure TCADGDIExportTests.AGradientBlendsInsideTheShape;
+var
+  TmpLeft, TmpRight: COLORREF;
+begin
+  FG.Pen.Style := cpsClear;
+  FG.Brush.Style := cbsGradient;
+  FG.Brush.Color := cadclRed;
+  FG.Brush.Color2 := cadclBlue;
+  FG.Rectangle(0, 0, 100, 100);
+  TmpLeft := Px(2, 50);
+  TmpRight := Px(97, 50);
+  Assert.IsTrue(GetRValue(TmpLeft) > 200, 'red at the left');
+  Assert.IsTrue(GetBValue(TmpRight) > 200, 'blue at the right');
+  FG.Ellipse(100, 0, 200, 100);
+  Assert.AreEqual(COLORREF($FFFFFF), Px(102, 2), 'the corner is outside');
+  Assert.AreNotEqual(COLORREF($FFFFFF), Px(150, 50), 'the middle is not');
+end;
+
+procedure TCADGDIExportTests.AClipIsGivenBackWithThePenIntact;
+begin
+  FG.Pen.Color := cadclRed;
+  FG.Pen.Width := 3;
+  FG.Brush.Style := cbsSolid;
+  FG.Brush.Color := cadclBlack;
+  FG.PushClip(Rect(0, 0, 100, 100));
+  FG.FillRect(Rect(0, 0, GDIW, GDIH));
+  FG.PopClip;
+  Assert.AreEqual(0, FG.ClipDepth, 'balanced');
+  Assert.AreEqual(COLORREF($000000), Px(50, 50), 'filled inside the clip');
+  Assert.AreEqual(COLORREF($FFFFFF), Px(150, 50), 'not outside it');
+  FG.MoveTo(110, 20);
+  FG.LineTo(190, 20);
+  Assert.AreEqual(COLORREF($0000FF), Px(150, 20),
+    'the pen is still the red one');
+end;
+
+procedure TCADGDIExportTests.TranslucentColoursAreFlattened;
+begin
+  FG.BlendBackground := cadclWhite;
+  FG.Brush.Style := cbsSolid;
+  FG.Brush.Color := CADColorSetAlpha(cadclBlack, 128);
+  FG.FillRect(Rect(0, 0, 50, 50));
+  Assert.IsTrue((GetRValue(Px(25, 25)) > 115) and
+    (GetRValue(Px(25, 25)) < 140), 'half black on white is grey');
+end;
+
+procedure TCADGDIExportTests.TextIsMeasuredAndDrawn;
+var
+  TmpSpec: TCADFontSpec;
+  TmpR: TRect;
+  TmpInk, X, Y: Integer;
+begin
+  TmpSpec := TCADFontSpec.Default;
+  TmpSpec.FaceName := 'Arial';
+  TmpSpec.Height := -20;
+  FG.SelectFont(TmpSpec);
+  TmpR := Rect(0, 0, 0, 0);
+  FG.DrawText('Hello', TmpR, CAD_DT_CALCRECT or CAD_DT_SINGLELINE);
+  Assert.IsTrue(TmpR.Right > 20, 'measured across');
+  Assert.IsTrue(TmpR.Bottom >= 18, 'and down');
+  FG.FontColor := cadclBlack;
+  TmpR := Rect(5, 5, 195, 95);
+  FG.DrawText('Hello', TmpR, CAD_DT_SINGLELINE);
+  FG.ResetFont;
+  TmpInk := 0;
+  for Y := 5 to 35 do
+    for X := 5 to 100 do
+      if Px(X, Y) <> $FFFFFF then
+        Inc(TmpInk);
+  Assert.IsTrue(TmpInk > 20, 'ink: ' + IntToStr(TmpInk));
+end;
+
+procedure TCADGDIExportTests.APictureIsDrawn;
+var
+  TmpPNG: TPngImage;
+  TmpStream: TBytesStream;
+  TmpImage: TCADImage;
+begin
+  TmpImage := TCADImage.Create;
+  TmpStream := TBytesStream.Create;
+  try
+    TmpPNG := TPngImage.CreateBlank(COLOR_RGB, 8, 4, 4);
+    try
+      TmpPNG.Canvas.Brush.Color := clRed;
+      TmpPNG.Canvas.FillRect(Rect(0, 0, 4, 4));
+      TmpPNG.SaveToStream(TmpStream);
+    finally
+      TmpPNG.Free;
+    end;
+    TmpImage.SetData(Copy(TmpStream.Bytes, 0, TmpStream.Size));
+    FG.DrawImage(Rect(20, 20, 60, 60), TmpImage, 0);
+    Assert.AreEqual(COLORREF($0000FF), Px(40, 40), 'the red picture');
+    Assert.AreEqual(COLORREF($FFFFFF), Px(70, 40), 'where it was put');
+  finally
+    TmpStream.Free;
+    TmpImage.Free;
+  end;
+end;
+
+procedure TCADGDIExportTests.ASheetMetafileIsThePaperSize;
+var
+  TmpCAD: TFNCCADCmp2D;
+  TmpSheet: TCADSheet;
+  TmpEMF: HENHMETAFILE;
+  TmpHeader: TEnhMetaHeader;
+begin
+  TmpCAD := SheetCAD(TmpSheet);
+  try
+    TmpEMF := CADSheetToEMF(TmpCAD, TmpSheet);
+    Assert.IsTrue(TmpEMF <> 0, 'a metafile');
+    try
+      GetEnhMetaFileHeader(TmpEMF, SizeOf(TmpHeader), @TmpHeader);
+      { Hundredths of a millimetre. }
+      Assert.IsTrue(Abs(TmpHeader.rclFrame.Right - 42000) <= 5,
+        'A3 across: ' + IntToStr(TmpHeader.rclFrame.Right));
+      Assert.IsTrue(Abs(TmpHeader.rclFrame.Bottom - 29700) <= 5,
+        'and down: ' + IntToStr(TmpHeader.rclFrame.Bottom));
+      Assert.IsTrue(TmpHeader.nRecords > 10, 'something was drawn');
+    finally
+      DeleteEnhMetaFile(TmpEMF);
+    end;
+  finally
+    TmpCAD.Free;
+  end;
+end;
+
+procedure TCADGDIExportTests.ASheetMetafilePlaysBackTheSheet;
+var
+  TmpCAD: TFNCCADCmp2D;
+  TmpSheet: TCADSheet;
+  TmpEMF: HENHMETAFILE;
+  TmpDC: HDC;
+  TmpBmp: HBITMAP;
+  TmpOld: HGDIOBJ;
+  TmpInfo: TBitmapInfo;
+  TmpBits: Pointer;
+  TmpR: TRect;
+  TmpInk, X, Y: Integer;
+begin
+  TmpCAD := SheetCAD(TmpSheet);
+  TmpEMF := CADSheetToEMF(TmpCAD, TmpSheet);
+  { Played back at one pixel to the millimetre. }
+  TmpDC := CreateCompatibleDC(0);
+  FillChar(TmpInfo, SizeOf(TmpInfo), 0);
+  TmpInfo.bmiHeader.biSize := SizeOf(TBitmapInfoHeader);
+  TmpInfo.bmiHeader.biWidth := 420;
+  TmpInfo.bmiHeader.biHeight := -297;
+  TmpInfo.bmiHeader.biPlanes := 1;
+  TmpInfo.bmiHeader.biBitCount := 32;
+  TmpInfo.bmiHeader.biCompression := BI_RGB;
+  TmpBmp := CreateDIBSection(TmpDC, TmpInfo, DIB_RGB_COLORS, TmpBits, 0, 0);
+  TmpOld := SelectObject(TmpDC, TmpBmp);
+  try
+    PatBlt(TmpDC, 0, 0, 420, 297, WHITENESS);
+    TmpR := Rect(0, 0, 420, 297);
+    Assert.IsTrue(PlayEnhMetaFile(TmpDC, TmpEMF, TmpR), 'played');
+    GdiFlush;
+    { The frame's left edge, 10 mm in. }
+    TmpInk := 0;
+    for Y := 74 to 148 do
+      for X := 7 to 13 do
+        if GetPixel(TmpDC, X, Y) <> $FFFFFF then
+          Inc(TmpInk);
+    Assert.IsTrue(TmpInk > 10, 'the frame is where it is on paper: ' +
+      IntToStr(TmpInk));
+    Assert.AreEqual(COLORREF($FFFFFF), GetPixel(TmpDC, 200, 150),
+      'white paper in the middle');
+  finally
+    SelectObject(TmpDC, TmpOld);
+    DeleteObject(TmpBmp);
+    DeleteDC(TmpDC);
+    DeleteEnhMetaFile(TmpEMF);
+    TmpCAD.Free;
+  end;
+end;
+
+procedure TCADGDIExportTests.AModelRectMetafileIsTheRectAtTheScale;
+var
+  TmpCAD: TFNCCADCmp2D;
+  TmpSheet: TCADSheet;
+  TmpEMF: HENHMETAFILE;
+  TmpHeader: TEnhMetaHeader;
+begin
+  TmpCAD := SheetCAD(TmpSheet);
+  try
+    { 100 x 50 drawing units at 2 units to the millimetre: 50 x 25 mm. }
+    TmpEMF := CADModelRectToEMF(TmpCAD, Rect2D(0, 0, 100, 50), 2);
+    Assert.IsTrue(TmpEMF <> 0, 'a metafile');
+    try
+      GetEnhMetaFileHeader(TmpEMF, SizeOf(TmpHeader), @TmpHeader);
+      Assert.IsTrue(Abs(TmpHeader.rclFrame.Right - 5000) <= 5,
+        'across: ' + IntToStr(TmpHeader.rclFrame.Right));
+      Assert.IsTrue(Abs(TmpHeader.rclFrame.Bottom - 2500) <= 5,
+        'down: ' + IntToStr(TmpHeader.rclFrame.Bottom));
+    finally
+      DeleteEnhMetaFile(TmpEMF);
+    end;
+  finally
+    TmpCAD.Free;
+  end;
+end;
+
+procedure TCADGDIExportTests.AMetafileFileIsWritten;
+var
+  TmpCAD: TFNCCADCmp2D;
+  TmpSheet: TCADSheet;
+  TmpName: string;
+  TmpBytes: TBytes;
+begin
+  TmpName := TPath.Combine(TPath.GetTempPath, 'CADSysGDITest.emf');
+  TmpCAD := SheetCAD(TmpSheet);
+  try
+    CADSaveSheetToEMF(TmpCAD, TmpSheet, TmpName);
+    Assert.IsTrue(TFile.Exists(TmpName), 'written');
+    TmpBytes := TFile.ReadAllBytes(TmpName);
+    Assert.IsTrue(Length(TmpBytes) > 88, 'more than a header');
+    Assert.AreEqual(1, Integer(PCardinal(@TmpBytes[0])^), 'EMR_HEADER first');
+    { ' EMF' in the header's signature field. }
+    Assert.AreEqual(Integer($464D4520), Integer(PCardinal(@TmpBytes[40])^),
+      'an enhanced metafile');
+  finally
+    TmpCAD.Free;
+    if TFile.Exists(TmpName) then
+      TFile.Delete(TmpName);
+  end;
+end;
+
+procedure TCADGDIExportTests.TheClipboardGetsAllThreeFormats;
+var
+  TmpCAD: TFNCCADCmp2D;
+  TmpSheet: TCADSheet;
+begin
+  { This replaces whatever was on the clipboard of whoever runs it. }
+  TmpCAD := SheetCAD(TmpSheet);
+  try
+    CADCopySheetToClipboardWin(TmpCAD, TmpSheet);
+    Assert.IsTrue(IsClipboardFormatAvailable(CF_ENHMETAFILE), 'the metafile');
+    Assert.IsTrue(IsClipboardFormatAvailable(RegisterClipboardFormat('PNG')),
+      'the PNG');
+    Assert.IsTrue(IsClipboardFormatAvailable(CF_DIB), 'the bitmap');
+  finally
+    TmpCAD.Free;
+  end;
+end;
+
 initialization
 
 TDUnitX.RegisterTestFixture(TCADImageExportTests);
+TDUnitX.RegisterTestFixture(TCADGDIExportTests);
 TDUnitX.RegisterTestFixture(TCADSVGExportTests);
 TDUnitX.RegisterTestFixture(TCADFNCGraphicsTests);
 

@@ -36,6 +36,7 @@ uses
   FMX.FNCCS4PDF,
   FMX.FNCCS4Image,
   FMX.FNCCS4SVG,
+  FMX.FNCCS4GDI,
   FMX.FNCCadSysRegister;
 
 begin
