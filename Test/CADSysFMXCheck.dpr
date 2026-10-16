@@ -34,6 +34,7 @@ uses
   FMX.FNCCS4Print,
   FMX.FNCCS4Preview,
   FMX.FNCCS4PDF,
+  FMX.FNCCS4Image,
   FMX.FNCCadSysRegister;
 
 begin

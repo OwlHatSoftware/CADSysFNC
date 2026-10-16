@@ -102,6 +102,7 @@
         <DCCReference Include="..\..\Generated\FMX\FMX.FNCCS4Print.pas"/>
         <DCCReference Include="..\..\Generated\FMX\FMX.FNCCS4Preview.pas"/>
         <DCCReference Include="..\..\Generated\FMX\FMX.FNCCS4PDF.pas"/>
+        <DCCReference Include="..\..\Generated\FMX\FMX.FNCCS4Image.pas"/>
         <DCCReference Include="..\..\Generated\FMX\FMX.FNCCadSysRegister.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>

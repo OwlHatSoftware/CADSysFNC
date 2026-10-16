@@ -17,9 +17,36 @@ uses
   DUnitX.TestFramework,
   VCL.TMSFNCGraphics, VCL.TMSFNCGraphicsTypes,
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsFNC,
-  VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCadSysRegister;
+  VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCadSysRegister,
+  VCL.FNCCS4Paper, VCL.FNCCS4Image, Vcl.Imaging.pngimage;
 
 type
+  { : CS-04: a sheet, or a rectangle of the model, as a PNG. Here rather
+    than in the main suite because it draws through FNC onto a bitmap,
+    which is what this suite is for. }
+  [TestFixture]
+  TCADImageExportTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FSheet: TCADSheet;
+    function SheetPNG(const ATransparent: Boolean): TPngImage;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+    [Test]
+    procedure ASheetImageIsThePaperAtTheResolution;
+    [Test]
+    procedure ASheetImageShowsTheSheet;
+    [Test]
+    procedure ATransparentSheetIsClearWhereNothingIsDrawn;
+    [Test]
+    procedure AModelRectangleIsTheRectangleAtTheScale;
+    [Test]
+    procedure TooLargeAnImageIsRefused;
+  end;
+
   [TestFixture]
   TCADFNCGraphicsTests = class(TObject)
   private
@@ -448,7 +475,180 @@ begin
     'transparent');
 end;
 
+{ ==================================================================
+  TCADImageExportTests
+  ================================================================== }
+
+procedure TCADImageExportTests.Setup;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(100, 50)));
+  { A3 landscape, 420 x 297 mm, and at 25.4 dpi one pixel to the
+    millimetre - every number below is a millimetre. }
+  FSheet := FCAD.Sheets.Add('Plate');
+  FSheet.AddObject(TFrame2D.Create(-1, Point2D(10, 10), Point2D(410, 287)));
+end;
+
+procedure TCADImageExportTests.TearDown;
+begin
+  FCAD.Free;
+end;
+
+function TCADImageExportTests.SheetPNG(const ATransparent: Boolean)
+  : TPngImage;
+var
+  TmpStream: TMemoryStream;
+begin
+  TmpStream := TMemoryStream.Create;
+  try
+    CADSaveSheetToPNGStream(FCAD, FSheet, TmpStream, 25, ATransparent);
+    Assert.IsTrue(TmpStream.Size > 0, 'something was written');
+    TmpStream.Position := 0;
+    Result := TPngImage.Create;
+    try
+      Result.LoadFromStream(TmpStream);
+    except
+      Result.Free;
+      Raise;
+    end;
+  finally
+    TmpStream.Free;
+  end;
+end;
+
+procedure TCADImageExportTests.ASheetImageIsThePaperAtTheResolution;
+var
+  TmpPNG: TPngImage;
+  TmpSize: TPoint;
+begin
+  TmpSize := CADSheetImageSize(FSheet, 300);
+  Assert.AreEqual(4961, TmpSize.X, 'A3 across at 300 dpi');
+  Assert.AreEqual(3508, TmpSize.Y, 'and down');
+  TmpPNG := SheetPNG(False);
+  try
+    Assert.AreEqual(CADSheetImageSize(FSheet, 25).X, TmpPNG.Width, 'width');
+    Assert.AreEqual(CADSheetImageSize(FSheet, 25).Y, TmpPNG.Height, 'height');
+  finally
+    TmpPNG.Free;
+  end;
+end;
+
+procedure TCADImageExportTests.ASheetImageShowsTheSheet;
+var
+  TmpPNG: TPngImage;
+  TmpInk, X, Y: Integer;
+begin
+  TmpPNG := SheetPNG(False);
+  try
+    Assert.AreEqual(TColor(clWhite), ColorToRGB(TmpPNG.Pixels[TmpPNG.Width div 2,
+      TmpPNG.Height div 2]), 'white paper in the middle');
+    { The frame's left edge, 10 mm in: some ink in the column around it. }
+    TmpInk := 0;
+    for Y := TmpPNG.Height div 4 to TmpPNG.Height div 2 do
+      for X := 7 to 12 do
+        if ColorToRGB(TmpPNG.Pixels[X, Y]) <> clWhite then
+          Inc(TmpInk);
+    Assert.IsTrue(TmpInk > 10, 'the frame is drawn: ' + IntToStr(TmpInk));
+  finally
+    TmpPNG.Free;
+  end;
+end;
+
+procedure TCADImageExportTests.ATransparentSheetIsClearWhereNothingIsDrawn;
+var
+  TmpPNG: TPngImage;
+  TmpOpaque, X, Y: Integer;
+begin
+  TmpPNG := SheetPNG(True);
+  try
+    Assert.AreEqual(0, Integer(TmpPNG.AlphaScanline[TmpPNG.Height div 2]
+      ^[TmpPNG.Width div 2]), 'clear where the paper is empty');
+    TmpOpaque := 0;
+    for Y := TmpPNG.Height div 4 to TmpPNG.Height div 2 do
+      for X := 7 to 12 do
+        if TmpPNG.AlphaScanline[Y]^[X] > 128 then
+          Inc(TmpOpaque);
+    Assert.IsTrue(TmpOpaque > 10, 'and solid where the frame is: ' +
+      IntToStr(TmpOpaque));
+  finally
+    TmpPNG.Free;
+  end;
+end;
+
+procedure TCADImageExportTests.AModelRectangleIsTheRectangleAtTheScale;
+var
+  TmpStream: TMemoryStream;
+  TmpPNG: TPngImage;
+  TmpSize: TPoint;
+  TmpInk, X, Y: Integer;
+begin
+  { 200 x 100 units at 2 units to the millimetre is 100 x 50 mm. }
+  TmpSize := CADModelRectImageSize(Rect2D(0, 0, 200, 100), 2, 254);
+  Assert.AreEqual(1000, TmpSize.X, '100 mm at 254 dpi');
+  Assert.AreEqual(500, TmpSize.Y);
+  TmpStream := TMemoryStream.Create;
+  TmpPNG := TPngImage.Create;
+  try
+    CADSaveModelRectToPNGStream(FCAD, Rect2D(0, 0, 100, 50), 1, TmpStream, 254);
+    TmpStream.Position := 0;
+    TmpPNG.LoadFromStream(TmpStream);
+    Assert.AreEqual(1000, TmpPNG.Width, 'width');
+    Assert.AreEqual(500, TmpPNG.Height, 'height');
+    { The line runs corner to corner, so it passes through the middle -
+      within a pixel or two, a one-pixel line being anti-aliased across
+      the pixel-centre half-pixel. }
+    TmpInk := 0;
+    for Y := 245 to 255 do
+      for X := 495 to 505 do
+        if ColorToRGB(TmpPNG.Pixels[X, Y]) <> clWhite then
+          Inc(TmpInk);
+    if TmpInk = 0 then
+    begin
+      { Where the ink is, if not where it was expected: the number that
+        says whether this is a placement or nothing drawn at all. }
+      for Y := 0 to TmpPNG.Height - 1 do
+        for X := 0 to TmpPNG.Width - 1 do
+          if ColorToRGB(TmpPNG.Pixels[X, Y]) <> clWhite then
+            Assert.Fail(Format('no ink at the middle; first ink at %d,%d',
+              [X, Y]));
+      Assert.Fail('no ink in the image at all');
+    end;
+    Assert.AreEqual(TColor(clWhite), ColorToRGB(TmpPNG.Pixels[900, 100]),
+      'and paper away from it');
+  finally
+    TmpPNG.Free;
+    TmpStream.Free;
+  end;
+end;
+
+procedure TCADImageExportTests.TooLargeAnImageIsRefused;
+var
+  TmpOld: Int64;
+  TmpRaised: Boolean;
+  TmpStream: TMemoryStream;
+begin
+  TmpOld := CADImageMaxPixels;
+  CADImageMaxPixels := 1000;
+  TmpStream := TMemoryStream.Create;
+  try
+    TmpRaised := False;
+    try
+      CADSaveSheetToPNGStream(FCAD, FSheet, TmpStream, 300);
+    except
+      on ECADPageError do
+        TmpRaised := True;
+    end;
+    Assert.IsTrue(TmpRaised, 'refused, with a reason');
+    Assert.AreEqual(Int64(0), TmpStream.Size, 'and nothing written');
+  finally
+    TmpStream.Free;
+    CADImageMaxPixels := TmpOld;
+  end;
+end;
+
 initialization
-  TDUnitX.RegisterTestFixture(TCADFNCGraphicsTests);
+
+TDUnitX.RegisterTestFixture(TCADImageExportTests);
+TDUnitX.RegisterTestFixture(TCADFNCGraphicsTests);
 
 end.
