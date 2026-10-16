@@ -82,6 +82,7 @@ $Units = [ordered]@{
   'VCL.FNCCS4Preview.pas'      = $All
   'VCL.FNCCS4PDF.pas'          = $All
   'VCL.FNCCS4Image.pas'        = $All
+  'VCL.FNCCS4SVG.pas'          = $All
   'VCL.FNCCadSysRegister.pas'  = $All
   'VCL.FNCCadSysRegisterDE.pas' = $All
 }

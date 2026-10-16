@@ -18,7 +18,8 @@ uses
   VCL.TMSFNCGraphics, VCL.TMSFNCGraphicsTypes,
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsFNC,
   VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCadSysRegister,
-  VCL.FNCCS4Paper, VCL.FNCCS4Image, Vcl.Imaging.pngimage;
+  VCL.FNCCS4Paper, VCL.FNCCS4Image, Vcl.Imaging.pngimage, VCL.FNCCS4SVG,
+  System.IOUtils, Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom, Xml.omnixmldom;
 
 type
   { : CS-04: a sheet, or a rectangle of the model, as a PNG. Here rather
@@ -45,6 +46,51 @@ type
     procedure AModelRectangleIsTheRectangleAtTheScale;
     [Test]
     procedure TooLargeAnImageIsRefused;
+  end;
+
+  { : CS-05: a sheet as SVG. Here rather than in the main suite because
+    the text is measured through FNC. Most of it draws on a
+    TCADSVGGraphics directly and reads the text back; what has to be
+    well-formed is parsed. }
+  [TestFixture]
+  TCADSVGExportTests = class(TObject)
+  private
+    FSVG: TCADSVGGraphics;
+    FOldVendor: string;
+    function Parse(const AText: string): IXMLDocument;
+    function FindElement(const ANode: IXMLNode; const AName: string): IXMLNode;
+    function ArialSpec(const AHeight: Integer): TCADFontSpec;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+    [Test]
+    procedure ASheetIsAnSVGOfThePaperSize;
+    [Test]
+    procedure LineToRunsBecomeOnePolyline;
+    [Test]
+    procedure APenChangeEndsTheRun;
+    [Test]
+    procedure ARectangleCarriesItsFillAndStroke;
+    [Test]
+    procedure ADashedPenIsDashedAtPaperSize;
+    [Test]
+    procedure OneGradientServesEveryShapeThatUsesIt;
+    [Test]
+    procedure AClipIsAGroupWithAClipPath;
+    [Test]
+    procedure AClipLeftOpenIsClosedInTheDocument;
+    [Test]
+    procedure TextIsEscapedAndReadsBack;
+    [Test]
+    procedure WordWrapMakesOneLinePerTspan;
+    [Test]
+    procedure CalcRectAgreesWithTheFNCBackend;
+    [Test]
+    procedure AnImageIsEmbeddedAsADataURI;
+    [Test]
+    procedure SeveralSheetsNeedAPattern;
   end;
 
   [TestFixture]
@@ -646,9 +692,381 @@ begin
   end;
 end;
 
+{ ==================================================================
+  TCADSVGExportTests
+  ================================================================== }
+
+function CountOf(const ASub, AText: string): Integer;
+var
+  P: Integer;
+begin
+  Result := 0;
+  P := Pos(ASub, AText);
+  while P > 0 do
+  begin
+    Inc(Result);
+    P := Pos(ASub, AText, P + Length(ASub));
+  end;
+end;
+
+procedure TCADSVGExportTests.Setup;
+begin
+  { 1000 x 500 dots at 600 dpi. }
+  FSVG := TCADSVGGraphics.Create(1000, 500, 600 / 25.4);
+  { Parse switches the DOM vendor; put back whatever was there. }
+  FOldVendor := DefaultDOMVendor;
+end;
+
+procedure TCADSVGExportTests.TearDown;
+begin
+  DefaultDOMVendor := FOldVendor;
+  FSVG.Free;
+end;
+
+function TCADSVGExportTests.Parse(const AText: string): IXMLDocument;
+var
+  TmpStream: TBytesStream;
+begin
+  { OmniXML rather than MSXML: no COM to initialise in a console
+    runner. }
+  DefaultDOMVendor := sOmniXmlVendor;
+  TmpStream := TBytesStream.Create(TEncoding.UTF8.GetBytes(AText));
+  try
+    Result := TXMLDocument.Create(nil);
+    Result.LoadFromStream(TmpStream);
+    Result.Active := True;
+  finally
+    TmpStream.Free;
+  end;
+end;
+
+function TCADSVGExportTests.FindElement(const ANode: IXMLNode;
+  const AName: string): IXMLNode;
+var
+  I: Integer;
+begin
+  Result := nil;
+  if ANode = nil then
+    Exit;
+  if ANode.NodeName = AName then
+    Exit(ANode);
+  for I := 0 to ANode.ChildNodes.Count - 1 do
+  begin
+    Result := FindElement(ANode.ChildNodes[I], AName);
+    if Result <> nil then
+      Exit;
+  end;
+end;
+
+function TCADSVGExportTests.ArialSpec(const AHeight: Integer): TCADFontSpec;
+begin
+  Result := TCADFontSpec.Default;
+  Result.FaceName := 'Arial';
+  Result.Height := AHeight;
+end;
+
+procedure TCADSVGExportTests.ASheetIsAnSVGOfThePaperSize;
+var
+  TmpCAD: TFNCCADCmp2D;
+  TmpSheet: TCADSheet;
+  TmpStream: TBytesStream;
+  TmpText: string;
+  TmpDoc: IXMLDocument;
+  TmpDevice: TCADPageDevice;
+begin
+  TmpCAD := TFNCCADCmp2D.Create(nil);
+  TmpStream := TBytesStream.Create;
+  try
+    TmpCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(100, 50)));
+    TmpSheet := TmpCAD.Sheets.Add('Plate');
+    TmpSheet.AddObject(TFrame2D.Create(-1, Point2D(10, 10),
+      Point2D(410, 287)));
+    CADSaveSheetToSVGStream(TmpCAD, TmpSheet, TmpStream);
+    Assert.IsTrue(TmpStream.Size > 0, 'something was written');
+    TmpText := TEncoding.UTF8.GetString(TmpStream.Bytes, 0, TmpStream.Size);
+    TmpDoc := Parse(TmpText);
+    Assert.AreEqual('svg', TmpDoc.DocumentElement.NodeName, 'an SVG');
+    Assert.AreEqual('420mm', string(TmpDoc.DocumentElement.Attributes['width']),
+      'A3 landscape across');
+    Assert.AreEqual('297mm', string(TmpDoc.DocumentElement.Attributes['height']),
+      'and down');
+    TmpDevice := TCADPageDevice.FromDPI(600, 600);
+    Assert.AreEqual(Format('0 0 %d %d', [TmpDevice.MMToPxX(420),
+      TmpDevice.MMToPxY(297)]),
+      string(TmpDoc.DocumentElement.Attributes['viewBox']),
+      'laid out in 600 dpi dots');
+    Assert.IsTrue(CountOf('<polyline', TmpText) + CountOf('<polygon', TmpText)
+      + CountOf('<rect', TmpText) > 0, 'the frame is drawn');
+  finally
+    TmpStream.Free;
+    TmpCAD.Free;
+  end;
+end;
+
+procedure TCADSVGExportTests.LineToRunsBecomeOnePolyline;
+var
+  TmpText: string;
+begin
+  FSVG.MoveTo(10, 10);
+  FSVG.LineTo(100, 10);
+  FSVG.LineTo(100, 100);
+  { A MoveTo to where the run ends does not break it. }
+  FSVG.MoveTo(100, 100);
+  FSVG.LineTo(10, 100);
+  TmpText := FSVG.SVGText;
+  Assert.AreEqual(1, CountOf('<polyline', TmpText), TmpText);
+  Assert.IsTrue(Pos('points="10,10 100,10 100,100 10,100"', TmpText) > 0,
+    TmpText);
+  Assert.IsTrue(Pos('fill="none"', TmpText) > 0, 'a line is not filled');
+end;
+
+procedure TCADSVGExportTests.APenChangeEndsTheRun;
+var
+  TmpText: string;
+begin
+  FSVG.MoveTo(0, 0);
+  FSVG.LineTo(10, 0);
+  FSVG.Pen.Color := cadclRed;
+  FSVG.LineTo(10, 10);
+  TmpText := FSVG.SVGText;
+  Assert.AreEqual(2, CountOf('<polyline', TmpText), TmpText);
+  Assert.IsTrue(Pos('points="0,0 10,0" fill="none" stroke="#000000"',
+    TmpText) > 0, TmpText);
+  Assert.IsTrue(Pos('points="10,0 10,10" fill="none" stroke="#FF0000"',
+    TmpText) > 0, TmpText);
+end;
+
+procedure TCADSVGExportTests.ARectangleCarriesItsFillAndStroke;
+var
+  TmpText: string;
+begin
+  FSVG.Brush.Style := cbsSolid;
+  FSVG.Brush.Color := cadclRed;
+  FSVG.Pen.Color := cadclBlue;
+  FSVG.Pen.Width := 3;
+  FSVG.Rectangle(10, 20, 30, 50);
+  FSVG.Brush.Color := CADColorSetAlpha(cadclLime, 128);
+  FSVG.FillRect(Rect(40, 40, 60, 60));
+  TmpText := FSVG.SVGText;
+  Assert.IsTrue(Pos('<rect x="10" y="20" width="20" height="30" ' +
+    'fill="#FF0000" stroke="#0000FF" stroke-width="3"/>', TmpText) > 0,
+    TmpText);
+  Assert.IsTrue(Pos('<rect x="40" y="40" width="20" height="20" ' +
+    'fill="#00FF00" fill-opacity="0.502" stroke="none"/>', TmpText) > 0,
+    TmpText);
+end;
+
+procedure TCADSVGExportTests.ADashedPenIsDashedAtPaperSize;
+var
+  TmpText: string;
+begin
+  FSVG.Pen.Style := cpsDash;
+  FSVG.Pen.Width := 1;
+  FSVG.Polyline([Point(0, 0), Point(500, 0)]);
+  TmpText := FSVG.SVGText;
+  { GDI's 18 on, 6 off, in screen pixels - 600/96 dots each. }
+  Assert.IsTrue(Pos('stroke-dasharray="112.5,37.5"', TmpText) > 0, TmpText);
+end;
+
+procedure TCADSVGExportTests.OneGradientServesEveryShapeThatUsesIt;
+var
+  TmpText: string;
+begin
+  FSVG.Brush.Style := cbsGradient;
+  FSVG.Brush.Color := cadclRed;
+  FSVG.Brush.Color2 := cadclBlue;
+  FSVG.Rectangle(0, 0, 100, 20);
+  FSVG.Rectangle(0, 30, 100, 50);
+  FSVG.Ellipse(0, 60, 100, 80);
+  TmpText := FSVG.SVGText;
+  Assert.AreEqual(1, CountOf('<linearGradient', TmpText), TmpText);
+  Assert.AreEqual(3, CountOf('fill="url(#grad1)"', TmpText), TmpText);
+  Assert.IsTrue(Pos('x2="1" y2="0"', TmpText) > 0, 'left to right');
+  Assert.IsTrue(Pos('stop-color="#FF0000"', TmpText) > 0, 'from red');
+  Assert.IsTrue(Pos('stop-color="#0000FF"', TmpText) > 0, 'to blue');
+
+  FSVG.Brush.GradientVertical := True;
+  FSVG.Rectangle(0, 90, 100, 110);
+  TmpText := FSVG.SVGText;
+  Assert.AreEqual(2, CountOf('<linearGradient', TmpText),
+    'top to bottom is another gradient');
+  Assert.IsTrue(Pos('x2="0" y2="1"', TmpText) > 0, TmpText);
+  Parse(TmpText);
+end;
+
+procedure TCADSVGExportTests.AClipIsAGroupWithAClipPath;
+var
+  TmpText: string;
+  TmpGroup, TmpRect, TmpEnd: Integer;
+begin
+  FSVG.PushClip(Rect(10, 10, 200, 100));
+  FSVG.Rectangle(0, 0, 300, 300);
+  FSVG.PopClip;
+  TmpText := FSVG.SVGText;
+  Assert.AreEqual(1, CountOf('<clipPath', TmpText), TmpText);
+  Assert.IsTrue(Pos('<rect x="10" y="10" width="190" height="90"/>',
+    TmpText) > 0, TmpText);
+  TmpGroup := Pos('<g clip-path="url(#clip1)">', TmpText);
+  TmpRect := Pos('<rect x="0"', TmpText);
+  TmpEnd := Pos('</g>', TmpText);
+  Assert.IsTrue((TmpGroup > 0) and (TmpGroup < TmpRect) and
+    (TmpRect < TmpEnd), 'the rectangle is inside the clipped group');
+  Assert.AreEqual(0, FSVG.ClipDepth, 'balanced');
+  Parse(TmpText);
+end;
+
+procedure TCADSVGExportTests.AClipLeftOpenIsClosedInTheDocument;
+var
+  TmpText: string;
+begin
+  FSVG.PushClip(Rect(0, 0, 500, 400));
+  FSVG.PushClip(Rect(10, 10, 200, 100));
+  FSVG.Rectangle(0, 0, 300, 300);
+  TmpText := FSVG.SVGText;
+  Assert.AreEqual(2, CountOf('</g>', TmpText), TmpText);
+  Parse(TmpText);
+  FSVG.PopAllClips;
+  Assert.AreEqual(2, CountOf('</g>', FSVG.SVGText), 'and not twice');
+end;
+
+procedure TCADSVGExportTests.TextIsEscapedAndReadsBack;
+var
+  TmpR: TRect;
+  TmpDoc: IXMLDocument;
+  TmpText: IXMLNode;
+begin
+  FSVG.SelectFont(ArialSpec(-40));
+  FSVG.FontColor := cadclRed;
+  TmpR := Rect(0, 0, 900, 100);
+  FSVG.DrawText('a < b & "c"', TmpR, CAD_DT_SINGLELINE or CAD_DT_NOPREFIX);
+  TmpDoc := Parse(FSVG.SVGText);
+  TmpText := FindElement(TmpDoc.DocumentElement, 'text');
+  Assert.IsTrue(TmpText <> nil, 'a text element');
+  Assert.AreEqual('40', string(TmpText.Attributes['font-size']), 'em size');
+  Assert.IsTrue(Pos('Arial', string(TmpText.Attributes['font-family'])) > 0,
+    'family');
+  Assert.AreEqual('#FF0000', string(TmpText.Attributes['fill']), 'colour');
+  Assert.AreEqual('a < b & "c"', FindElement(TmpText, 'tspan').Text,
+    'the words, unharmed');
+end;
+
+procedure TCADSVGExportTests.WordWrapMakesOneLinePerTspan;
+var
+  TmpOne, TmpR: TRect;
+  TmpText: string;
+begin
+  FSVG.SelectFont(ArialSpec(-40));
+  TmpOne := Rect(0, 0, 0, 0);
+  FSVG.DrawText('one two', TmpOne, CAD_DT_CALCRECT or CAD_DT_SINGLELINE);
+  Assert.IsTrue(TmpOne.Right > 0, 'measured');
+  { Room for 'one two' and not a word more. }
+  TmpR := Rect(0, 0, TmpOne.Right + 5, 1000);
+  FSVG.DrawText('one two one two one two', TmpR, CAD_DT_WORDBREAK);
+  TmpText := FSVG.SVGText;
+  Assert.AreEqual(3, CountOf('<tspan', TmpText), TmpText);
+  Assert.AreEqual(3, CountOf('>one two</tspan>', TmpText), TmpText);
+
+  TmpR := Rect(0, 0, TmpOne.Right + 5, 1000);
+  FSVG.DrawText('one two one two one two', TmpR, CAD_DT_WORDBREAK or
+    CAD_DT_CALCRECT);
+  Assert.AreEqual(3 * TmpOne.Bottom, TmpR.Bottom, 'three lines tall');
+end;
+
+procedure TCADSVGExportTests.CalcRectAgreesWithTheFNCBackend;
+var
+  TmpG: TTMSFNCGraphics;
+  TmpFNC: TCADFNCGraphics;
+  TmpA, TmpB: TRect;
+begin
+  TmpG := TTMSFNCGraphics.CreateBitmapCanvas(16, 16, False, False);
+  try
+    TmpG.BeginScene;
+    try
+      TmpFNC := TCADFNCGraphics.Create(TmpG, Rect(0, 0, 16, 16), False);
+      try
+        TmpFNC.SelectFont(ArialSpec(-30));
+        TmpA := Rect(0, 0, 0, 0);
+        TmpFNC.DrawText('Hello world', TmpA, CAD_DT_CALCRECT or
+          CAD_DT_SINGLELINE);
+      finally
+        TmpFNC.Free;
+      end;
+    finally
+      TmpG.EndScene;
+    end;
+  finally
+    TmpG.Free;
+  end;
+  FSVG.SelectFont(ArialSpec(-30));
+  TmpB := Rect(0, 0, 0, 0);
+  FSVG.DrawText('Hello world', TmpB, CAD_DT_CALCRECT or CAD_DT_SINGLELINE);
+  Assert.AreEqual(TmpA.Right, TmpB.Right, 'as wide');
+  Assert.AreEqual(TmpA.Bottom, TmpB.Bottom, 'as tall');
+end;
+
+procedure TCADSVGExportTests.AnImageIsEmbeddedAsADataURI;
+var
+  TmpPNG: TPngImage;
+  TmpStream: TBytesStream;
+  TmpImage: TCADImage;
+  TmpText: string;
+begin
+  TmpImage := TCADImage.Create;
+  TmpStream := TBytesStream.Create;
+  try
+    TmpPNG := TPngImage.CreateBlank(COLOR_RGB, 8, 4, 4);
+    try
+      TmpPNG.SaveToStream(TmpStream);
+    finally
+      TmpPNG.Free;
+    end;
+    TmpImage.SetData(Copy(TmpStream.Bytes, 0, TmpStream.Size));
+    FSVG.DrawImage(Rect(10, 10, 110, 60), TmpImage, 0);
+    TmpText := FSVG.SVGText;
+    Assert.IsTrue(Pos('<image x="10" y="10" width="100" height="50"',
+      TmpText) > 0, TmpText);
+    { The PNG signature, base64 encoded. }
+    Assert.IsTrue(Pos('xlink:href="data:image/png;base64,iVBORw0KGgo',
+      TmpText) > 0, 'the PNG itself');
+    Parse(TmpText);
+  finally
+    TmpStream.Free;
+    TmpImage.Free;
+  end;
+end;
+
+procedure TCADSVGExportTests.SeveralSheetsNeedAPattern;
+var
+  TmpCAD: TFNCCADCmp2D;
+  TmpA, TmpB: TCADSheet;
+  TmpDir: string;
+begin
+  TmpDir := TPath.Combine(TPath.GetTempPath, 'CADSysSVGTest');
+  TDirectory.CreateDirectory(TmpDir);
+  TmpCAD := TFNCCADCmp2D.Create(nil);
+  try
+    TmpA := TmpCAD.Sheets.Add('A');
+    TmpB := TmpCAD.Sheets.Add('B');
+    Assert.WillRaise(
+      procedure
+      begin
+        CADSaveSheetsToSVG(TmpCAD, [TmpA, TmpB],
+          TPath.Combine(TmpDir, 'plate.svg'));
+      end, ECADPageError, 'one name for two files');
+    CADSaveSheetsToSVG(TmpCAD, [TmpA, TmpB],
+      TPath.Combine(TmpDir, 'plate-%d.svg'));
+    Assert.IsTrue(TFile.Exists(TPath.Combine(TmpDir, 'plate-1.svg')), 'first');
+    Assert.IsTrue(TFile.Exists(TPath.Combine(TmpDir, 'plate-2.svg')), 'second');
+  finally
+    TmpCAD.Free;
+    TDirectory.Delete(TmpDir, True);
+  end;
+end;
+
 initialization
 
 TDUnitX.RegisterTestFixture(TCADImageExportTests);
+TDUnitX.RegisterTestFixture(TCADSVGExportTests);
 TDUnitX.RegisterTestFixture(TCADFNCGraphicsTests);
 
 end.

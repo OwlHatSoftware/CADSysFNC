@@ -30,19 +30,19 @@ All changes go into `Sources\VCL.*` (the masters) and are regenerated for FMX/VC
 
 ## 2. Summary of changes
 
-| ID | Change | Priority | Masterplanner need |
-|---|---|---|---|
-| CS-01 | Viewport **content inset** + **viewport draw hook** for application furniture (repeated timescale and lane headers per viewport) | Must | MP-PAP-003, WP-5.0b |
-| CS-02 | Viewport **application data** saved with the sheet | Must | MP-PAP-002/004 |
-| CS-03 | **Linear gradient** brush | Must | MP-SHP-006 |
-| CS-04 | **Image export** of a sheet or a model rectangle (PNG at a DPI, transparent option) — FMX and VCL | Must | MP-OUT-003 |
-| CS-05 | **SVG backend** + `CADSaveSheetsToSVG` | Must | MP-OUT-006 |
-| CS-06 | **EMF + clipboard on FMX (Windows)** through a framework-free GDI backend | Must | MP-OUT-004 |
-| CS-07 | **Printing on FMX** | Should | MP-OUT-002 |
-| CS-08 | **PDF**: link annotations and font embedding control | Should | MP-OUT-001 |
-| CS-09 | Anisotropic viewport scale (`UnitsPerMMY`) | Could (P1.1) | date window fitted to a sheet while lanes keep their height |
-| CS-10 | Verification items (no change expected) | Must | spike WP-0.1 |
-| CS-11 | Docs, JSON format, tests, demo | Must | — |
+| ID | Change | Priority | Masterplanner need | Status |
+|---|---|---|---|---|
+| CS-01 | Viewport **content inset** + **viewport draw hook** for application furniture (repeated timescale and lane headers per viewport) | Must | MP-PAP-003, WP-5.0b | Done (6263116) |
+| CS-02 | Viewport **application data** saved with the sheet | Must | MP-PAP-002/004 | Done (6263116) |
+| CS-03 | **Linear gradient** brush | Must | MP-SHP-006 | Done (734332a) |
+| CS-04 | **Image export** of a sheet or a model rectangle (PNG at a DPI, transparent option) — FMX and VCL | Must | MP-OUT-003 | Done (536ac82) |
+| CS-05 | **SVG backend** + `CADSaveSheetsToSVG` | Must | MP-OUT-006 | Done |
+| CS-06 | **EMF + clipboard on FMX (Windows)** through a framework-free GDI backend | Must | MP-OUT-004 | Open |
+| CS-07 | **Printing on FMX** | Should | MP-OUT-002 | Open |
+| CS-08 | **PDF**: link annotations and font embedding control | Should | MP-OUT-001 | Open |
+| CS-09 | Anisotropic viewport scale (`UnitsPerMMY`) | Could (P1.1) | date window fitted to a sheet while lanes keep their height | Open |
+| CS-10 | Verification items (no change expected) | Must | spike WP-0.1 | Open |
+| CS-11 | Docs, JSON format, tests, demo | Must | — | Open |
 
 ---
 
