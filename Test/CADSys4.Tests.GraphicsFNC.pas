@@ -13,7 +13,7 @@ interface
 
 uses
   Winapi.Windows, System.SysUtils, System.Types, System.Classes,
-  System.UITypes, Vcl.Graphics,
+  System.UITypes, System.Math, Vcl.Graphics,
   DUnitX.TestFramework,
   VCL.TMSFNCGraphics, VCL.TMSFNCGraphicsTypes,
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsFNC,
@@ -161,6 +161,27 @@ type
     procedure FontsAreLeftOutWhenAskedTo;
     [Test]
     procedure TheViewportHookRunsOncePerPhase;
+  end;
+
+  { : CS-10: text that has to come out the same on every device -
+    turned labels, and word-wrapped text measured before it is drawn. }
+  [TestFixture]
+  TCADTextAgreementTests = class(TObject)
+  private
+    function Spec(const AHeight, AEscapement: Integer): TCADFontSpec;
+    function FNCInk(const AW, AH: Integer; const AText: string;
+      const AFont: TCADFontSpec; const R: TRect; const AFlags: Cardinal;
+      out ABottom: Integer): TPointF;
+    function GDIInk(const AW, AH: Integer; const AText: string;
+      const AFont: TCADFontSpec; const R: TRect;
+      const AFlags: Cardinal): TPointF;
+  public
+    [Test]
+    procedure ATurnedLabelIsTheLevelLabelTurned;
+    [Test]
+    procedure SVGLaysTurnedTextOutAsFNCDoes;
+    [Test]
+    procedure WrappedTextIsAsTallAsItWasMeasured;
   end;
 
   [TestFixture]
@@ -1622,9 +1643,229 @@ begin
   end;
 end;
 
+{ ==================================================================
+  TCADTextAgreementTests
+  ================================================================== }
+
+function TCADTextAgreementTests.Spec(const AHeight,
+  AEscapement: Integer): TCADFontSpec;
+begin
+  Result := TCADFontSpec.Default;
+  Result.FaceName := 'Arial';
+  Result.Height := AHeight;
+  Result.Escapement := AEscapement;
+end;
+
+function TCADTextAgreementTests.FNCInk(const AW, AH: Integer;
+  const AText: string; const AFont: TCADFontSpec; const R: TRect;
+  const AFlags: Cardinal; out ABottom: Integer): TPointF;
+var
+  TmpG: TTMSFNCGraphics;
+  TmpFNC: TCADFNCGraphics;
+  TmpR: TRect;
+  X, Y, N: Integer;
+  SX, SY: Double;
+begin
+  TmpG := TTMSFNCGraphics.CreateBitmapCanvas(AW, AH, False, False);
+  try
+    TmpG.BeginScene;
+    try
+      TmpG.Fill.Kind := gfkSolid;
+      TmpG.Fill.Color := gcWhite;
+      TmpG.Stroke.Kind := gskNone;
+      TmpG.DrawRectangle(RectF(0, 0, AW, AH), gcrmNone);
+      TmpFNC := TCADFNCGraphics.Create(TmpG, Rect(0, 0, AW, AH), False);
+      try
+        TmpFNC.SelectFont(AFont);
+        TmpFNC.FontColor := cadclBlack;
+        TmpFNC.Transparent := True;
+        TmpR := R;
+        TmpFNC.DrawText(AText, TmpR, AFlags);
+      finally
+        TmpFNC.Free;
+      end;
+    finally
+      TmpG.EndScene;
+    end;
+    N := 0;
+    SX := 0;
+    SY := 0;
+    ABottom := -1;
+    for Y := 0 to AH - 1 do
+      for X := 0 to AW - 1 do
+        if RedOf(TmpG.Bitmap.Canvas.Pixels[X, Y]) < 160 then
+        begin
+          Inc(N);
+          SX := SX + X;
+          SY := SY + Y;
+          ABottom := Y;
+        end;
+    Assert.IsTrue(N > 30, 'FNC drew something: ' + IntToStr(N));
+    Result := PointF(SX / N, SY / N);
+  finally
+    TmpG.Free;
+  end;
+end;
+
+function TCADTextAgreementTests.GDIInk(const AW, AH: Integer;
+  const AText: string; const AFont: TCADFontSpec; const R: TRect;
+  const AFlags: Cardinal): TPointF;
+var
+  TmpDC: HDC;
+  TmpBmp: HBITMAP;
+  TmpOld: HGDIOBJ;
+  TmpInfo: TBitmapInfo;
+  TmpBits: Pointer;
+  TmpG: TCADGDIGraphics;
+  TmpR: TRect;
+  X, Y, N: Integer;
+  SX, SY: Double;
+begin
+  TmpDC := CreateCompatibleDC(0);
+  FillChar(TmpInfo, SizeOf(TmpInfo), 0);
+  TmpInfo.bmiHeader.biSize := SizeOf(TBitmapInfoHeader);
+  TmpInfo.bmiHeader.biWidth := AW;
+  TmpInfo.bmiHeader.biHeight := -AH;
+  TmpInfo.bmiHeader.biPlanes := 1;
+  TmpInfo.bmiHeader.biBitCount := 32;
+  TmpInfo.bmiHeader.biCompression := BI_RGB;
+  TmpBmp := CreateDIBSection(TmpDC, TmpInfo, DIB_RGB_COLORS, TmpBits, 0, 0);
+  TmpOld := SelectObject(TmpDC, TmpBmp);
+  try
+    PatBlt(TmpDC, 0, 0, AW, AH, WHITENESS);
+    TmpG := TCADGDIGraphics.Create(TmpDC, 0);
+    try
+      TmpG.SelectFont(AFont);
+      TmpG.FontColor := cadclBlack;
+      TmpG.Transparent := True;
+      TmpR := R;
+      TmpG.DrawText(AText, TmpR, AFlags);
+    finally
+      TmpG.Free;
+    end;
+    GdiFlush;
+    N := 0;
+    SX := 0;
+    SY := 0;
+    for Y := 0 to AH - 1 do
+      for X := 0 to AW - 1 do
+        if GetRValue(GetPixel(TmpDC, X, Y)) < 160 then
+        begin
+          Inc(N);
+          SX := SX + X;
+          SY := SY + Y;
+        end;
+    Assert.IsTrue(N > 30, 'GDI drew something: ' + IntToStr(N));
+    Result := PointF(SX / N, SY / N);
+  finally
+    SelectObject(TmpDC, TmpOld);
+    DeleteObject(TmpBmp);
+    DeleteDC(TmpDC);
+  end;
+end;
+
+procedure TCADTextAgreementTests.ATurnedLabelIsTheLevelLabelTurned;
+const
+  R: TRect = (Left: 100; Top: 180; Right: 300; Bottom: 220);
+var
+  TmpLevel, TmpTurned, TmpWant: TPointF;
+  TmpC, TmpS, TmpDX, TmpDY: Double;
+begin
+  { The rule every output follows for turned text - FNC's PDF engine,
+    the SVG, the metafile and the printer: lay the text out level in R's
+    bounding box once turned (CADRotatedTextRect), then turn the lot
+    about R's middle. Checked on GDI by drawing the label level in that
+    box and turning its ink centre by hand. A label at 45 degrees,
+    left-aligned: where turning about the line's start, as GDI does on
+    its own, comes out furthest from it. }
+  TmpLevel := GDIInk(400, 400, 'Milestone label', Spec(-22, 0),
+    CADRotatedTextRect(R, 45), CAD_DT_SINGLELINE or CAD_DT_NOPREFIX);
+  TmpTurned := GDIInk(400, 400, 'Milestone label', Spec(-22, 450), R,
+    CAD_DT_SINGLELINE or CAD_DT_NOPREFIX);
+  TmpC := Cos(DegToRad(45));
+  TmpS := Sin(DegToRad(45));
+  TmpDX := TmpLevel.X - 200;
+  TmpDY := TmpLevel.Y - 200;
+  { Counter-clockwise on the page, Y down. }
+  TmpWant := PointF(200 + TmpDX * TmpC + TmpDY * TmpS,
+    200 - TmpDX * TmpS + TmpDY * TmpC);
+  { Within a few pixels: GDI hints turned glyphs differently from level
+    ones. Turned about the line's start instead, it is twenty out. }
+  Assert.IsTrue((Abs(TmpWant.X - TmpTurned.X) < 6) and
+    (Abs(TmpWant.Y - TmpTurned.Y) < 6), Format('turned ink centre %.1f, ' +
+    '%.1f; the level one turned %.1f, %.1f', [TmpTurned.X, TmpTurned.Y,
+    TmpWant.X, TmpWant.Y]));
+end;
+
+procedure TCADTextAgreementTests.SVGLaysTurnedTextOutAsFNCDoes;
+var
+  TmpSVG: TCADSVGGraphics;
+  TmpR: TRect;
+  TmpText: string;
+begin
+  TmpSVG := TCADSVGGraphics.Create(400, 400, 0);
+  try
+    TmpSVG.SelectFont(Spec(-20, 900));
+    TmpR := Rect(0, 0, 200, 40);
+    TmpSVG.DrawText('Up', TmpR, CAD_DT_SINGLELINE);
+    TmpText := TmpSVG.SVGText;
+  finally
+    TmpSVG.Free;
+  end;
+  { A quarter turn about the middle (100, 20); laid out left-aligned in
+    the turned box, which is 40 wide and starts at x 80. }
+  Assert.IsTrue(Pos('rotate(-90 100 20)', TmpText) > 0, TmpText);
+  Assert.IsTrue(Pos('<tspan x="80"', TmpText) > 0, TmpText);
+end;
+
+procedure TCADTextAgreementTests.WrappedTextIsAsTallAsItWasMeasured;
+const
+  Text = 'The quick brown fox jumps over the lazy dog, and then over the ' +
+    'lazy dog again, and once more for luck.';
+var
+  TmpG: TTMSFNCGraphics;
+  TmpFNC: TCADFNCGraphics;
+  TmpMeasured, TmpLine: TRect;
+  TmpBottom: Integer;
+begin
+  { At a 600 dpi size: a 2.5 mm font is about 60 dots. }
+  TmpG := TTMSFNCGraphics.CreateBitmapCanvas(16, 16, False, False);
+  try
+    TmpG.BeginScene;
+    try
+      TmpFNC := TCADFNCGraphics.Create(TmpG, Rect(0, 0, 16, 16), False);
+      try
+        TmpFNC.SelectFont(Spec(-60, 0));
+        TmpMeasured := Rect(0, 0, 900, 0);
+        TmpFNC.DrawText(Text, TmpMeasured, CAD_DT_WORDBREAK or
+          CAD_DT_CALCRECT);
+        TmpLine := Rect(0, 0, 0, 0);
+        TmpFNC.DrawText('Wg', TmpLine, CAD_DT_SINGLELINE or CAD_DT_CALCRECT);
+      finally
+        TmpFNC.Free;
+      end;
+    finally
+      TmpG.EndScene;
+    end;
+  finally
+    TmpG.Free;
+  end;
+  Assert.IsTrue(TmpMeasured.Bottom > 2 * TmpLine.Bottom,
+    'measured as several lines');
+  FNCInk(1000, 1200, Text, Spec(-60, 0), Rect(0, 0, 900, 1200),
+    CAD_DT_WORDBREAK, TmpBottom);
+  { The ink of the last line ends inside the measured height, and below
+    the line above it. }
+  Assert.IsTrue((TmpBottom <= TmpMeasured.Bottom + 2) and
+    (TmpBottom > TmpMeasured.Bottom - TmpLine.Bottom), Format('ink ends at ' +
+    '%d, measured %d, a line is %d', [TmpBottom, TmpMeasured.Bottom,
+    TmpLine.Bottom]));
+end;
+
 initialization
 
 TDUnitX.RegisterTestFixture(TCADImageExportTests);
+TDUnitX.RegisterTestFixture(TCADTextAgreementTests);
 TDUnitX.RegisterTestFixture(TCADPDFExtrasTests);
 TDUnitX.RegisterTestFixture(TCADGDIExportTests);
 TDUnitX.RegisterTestFixture(TCADSVGExportTests);

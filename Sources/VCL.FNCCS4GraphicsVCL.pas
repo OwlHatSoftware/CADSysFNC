@@ -758,9 +758,80 @@ end;
 
 function TCADVCLGraphics.DrawText(const Text: string; var R: TRect;
   const Flags: Cardinal): Integer;
+var
+  TmpDC: HDC;
+  TmpFlat: TCADFontSpec;
+  TmpLF: TLogFont;
+  TmpFlatFont: HFONT;
+  TmpLayout: TRect;
+  TmpAngle, TmpC, TmpS, TmpCX, TmpCY: Double;
+  TmpOldMode, TmpOldBk, TmpLen: Integer;
+  TmpOld, TmpTurn: TXForm;
 begin
-  Result := WinAPI.Windows.DrawText(fCanvas.Handle, PChar(Text),
-    Length(Text), R, Flags);
+  if (not fFontSelected) or (fFontSpec.Escapement mod 3600 = 0) or
+    ((Flags and CAD_DT_CALCRECT) <> 0) then
+  begin
+    Result := WinAPI.Windows.DrawText(fCanvas.Handle, PChar(Text),
+      Length(Text), R, Flags);
+    Exit;
+  end;
+  { Turned text, laid out and turned as FNC does it - see
+    CADRotatedTextRect and TCADGDIGraphics.DrawTurnedText, which this
+    follows line for line. GDI on its own turns each line about its
+    start, and a label printed from here would not land where the
+    screen and the PDF put it. }
+  TmpDC := fCanvas.Handle;
+  TmpFlat := fFontSpec;
+  FillChar(TmpLF, SizeOf(TmpLF), 0);
+  TmpLF.lfHeight := TmpFlat.Height;
+  TmpLF.lfWidth := TmpFlat.Width;
+  TmpLF.lfWeight := TmpFlat.Weight;
+  TmpLF.lfItalic := Byte(TmpFlat.Italic);
+  TmpLF.lfUnderline := Byte(TmpFlat.Underline);
+  TmpLF.lfStrikeOut := Byte(TmpFlat.StrikeOut);
+  TmpLF.lfCharSet := TmpFlat.CharSet;
+  TmpLF.lfOutPrecision := TmpFlat.OutPrecision;
+  TmpLF.lfClipPrecision := TmpFlat.ClipPrecision;
+  TmpLF.lfQuality := TmpFlat.Quality;
+  TmpLF.lfPitchAndFamily := TmpFlat.PitchAndFamily;
+  TmpLen := Min(Length(TmpFlat.FaceName), LF_FACESIZE - 1);
+  if TmpLen > 0 then
+    Move(PChar(TmpFlat.FaceName)^, TmpLF.lfFaceName[0], TmpLen * SizeOf(Char));
+  TmpFlatFont := WinAPI.Windows.CreateFontIndirect(TmpLF);
+  WinAPI.Windows.SelectObject(TmpDC, TmpFlatFont);
+  try
+    Result := R.Bottom - R.Top;
+    if not Transparent then
+      FillRect(R);
+    TmpAngle := fFontSpec.Escapement / 10;
+    TmpLayout := CADRotatedTextRect(R, TmpAngle);
+    TmpC := Cos(DegToRad(TmpAngle));
+    TmpS := Sin(DegToRad(TmpAngle));
+    TmpCX := (R.Left + R.Right) / 2;
+    TmpCY := (R.Top + R.Bottom) / 2;
+    TmpTurn.eM11 := TmpC;
+    TmpTurn.eM12 := -TmpS;
+    TmpTurn.eM21 := TmpS;
+    TmpTurn.eM22 := TmpC;
+    TmpTurn.eDx := TmpCX - TmpCX * TmpC - TmpCY * TmpS;
+    TmpTurn.eDy := TmpCY + TmpCX * TmpS - TmpCY * TmpC;
+    TmpOldMode := SetGraphicsMode(TmpDC, GM_ADVANCED);
+    GetWorldTransform(TmpDC, TmpOld);
+    TmpOldBk := GetBkMode(TmpDC);
+    try
+      ModifyWorldTransform(TmpDC, TmpTurn, MWT_LEFTMULTIPLY);
+      SetBkMode(TmpDC, WinAPI.Windows.TRANSPARENT);
+      WinAPI.Windows.DrawText(TmpDC, PChar(Text), Length(Text), TmpLayout,
+        Flags);
+    finally
+      SetWorldTransform(TmpDC, TmpOld);
+      SetGraphicsMode(TmpDC, TmpOldMode);
+      SetBkMode(TmpDC, TmpOldBk);
+    end;
+  finally
+    WinAPI.Windows.SelectObject(TmpDC, fFontHandle);
+    WinAPI.Windows.DeleteObject(TmpFlatFont);
+  end;
 end;
 
 procedure TCADVCLGraphics.DrawImage(const Dest: TRect;

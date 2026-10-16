@@ -34,8 +34,9 @@
   answered. The baseline is put at four fifths of the line height. A
   viewer with other font metrics will make the words a little wider or
   narrower than they were measured; the line breaks stay where they
-  were put. Rotation (Escapement) turns about the middle of the text
-  rectangle, as FNC does.>
+  were put. Rotated text (Escapement) is laid out in the text
+  rectangle's bounding box once turned and turned about its middle, as
+  FNC does on the screen and in the PDF - see CADRotatedTextRect.>
   <LI=Images - an image element carrying the picture's own bytes (PNG,
   BMP or JPEG) as a data URI.>
   <LI=PushClip/PopClip - a clipPath in defs and a group that uses it.>
@@ -891,6 +892,7 @@ var
   TmpLineH, TmpWidest, I, TmpW: Integer;
   TmpTop, TmpX, TmpEm, TmpAngle: Double;
   TmpAnchor, TmpDecoration: string;
+  TmpLayout: TRect;
 begin
   FlushRun;
   TmpFont := CurrentFont;
@@ -920,31 +922,44 @@ begin
   Result := R.Bottom - R.Top;
   if not fTransparent then
     FillRect(R);
+  { Turned text is laid out as FNC lays it out - in R's bounding box
+    once turned, centred on R - and then turned about the centre. See
+    CADRotatedTextRect. }
+  TmpAngle := TmpFont.Escapement / 10;
+  TmpLayout := R;
+  if TmpAngle <> 0 then
+  begin
+    TmpLayout := CADRotatedTextRect(R, TmpAngle);
+    if TmpWrap then
+      TmpLines := TextLines(Text, TmpLayout.Right - TmpLayout.Left, TmpWrap,
+        TmpSingle);
+  end;
   if (Length(TmpLines) = 0) or ((Length(TmpLines) = 1) and
     (TmpLines[0] = '')) then
     Exit;
 
   if (Flags and CAD_DT_CENTER) <> 0 then
   begin
-    TmpX := (R.Left + R.Right) / 2;
+    TmpX := (TmpLayout.Left + TmpLayout.Right) / 2;
     TmpAnchor := ' text-anchor="middle"';
   end
   else if (Flags and CAD_DT_RIGHT) <> 0 then
   begin
-    TmpX := R.Right;
+    TmpX := TmpLayout.Right;
     TmpAnchor := ' text-anchor="end"';
   end
   else
   begin
-    TmpX := R.Left;
+    TmpX := TmpLayout.Left;
     TmpAnchor := '';
   end;
   if (Flags and CAD_DT_VCENTER) <> 0 then
-    TmpTop := (R.Top + R.Bottom - TmpLineH * Length(TmpLines)) / 2
+    TmpTop := (TmpLayout.Top + TmpLayout.Bottom - TmpLineH *
+      Length(TmpLines)) / 2
   else if (Flags and CAD_DT_BOTTOM) <> 0 then
-    TmpTop := R.Bottom - TmpLineH * Length(TmpLines)
+    TmpTop := TmpLayout.Bottom - TmpLineH * Length(TmpLines)
   else
-    TmpTop := R.Top;
+    TmpTop := TmpLayout.Top;
 
   fBody.Append('<text font-family="').Append(FontFamily(TmpFont))
     .Append('" font-size="').Append(Num(TmpEm)).Append('"');
@@ -966,7 +981,6 @@ begin
   fBody.Append(TmpAnchor);
   { Escapement is counter-clockwise in tenths of a degree; SVG's
     rotate, with Y down, turns clockwise. }
-  TmpAngle := TmpFont.Escapement / 10;
   if TmpAngle <> 0 then
     fBody.Append(' transform="rotate(').Append(Num(-TmpAngle)).Append(' ')
       .Append(Num((R.Left + R.Right) / 2)).Append(' ')

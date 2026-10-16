@@ -41,8 +41,8 @@ All changes go into `Sources\VCL.*` (the masters) and are regenerated for FMX/VC
 | CS-07 | **Printing on FMX** | Should | MP-OUT-002 | Done (e32f949) |
 | CS-08 | **PDF**: link annotations and font embedding control | Should | MP-OUT-001 | Done (b1b8315) |
 | CS-09 | Anisotropic viewport scale (`UnitsPerMMY`) | Could (P1.1) | date window fitted to a sheet while lanes keep their height | Open |
-| CS-10 | Verification items (no change expected) | Must | spike WP-0.1 | Open |
-| CS-11 | Docs, JSON format, tests, demo | Must | — | Done |
+| CS-10 | Verification items (no change expected) | Must | spike WP-0.1 | Library side done; 5,000 shapes for the spike |
+| CS-11 | Docs, JSON format, tests, demo | Must | — | Done (08bd7bd) |
 
 ---
 
@@ -271,6 +271,18 @@ Lets a sheet show ten years of a plate across an A3 width while lanes keep their
 | Polygons with ~40 points per rounded end (rounded bars, arrow caps) look smooth in PDF | zoom the PDF | none expected (600 dpi layout) |
 | 5,000 custom shapes: redraw and `PickObject` on FMX | existing benchmark with Masterplanner shapes | consider a spatial index for picking |
 | `OnPaintOverlay` gives access to the canvas and the current transform | draw a header band in the overlay | expose them |
+
+**Checked on the library side (2026-10-16):**
+
+| Item | Result |
+|---|---|
+| Rotated text in PDF and SVG | **Fixed where it disagreed.** The rule is FNC's own, as its PDF engine applies it (checked by rasterising a PDF of eight layouts): the text is laid out level in the bounding box of its rectangle once turned, then turned about the rectangle's middle - `CADRotatedTextRect`. The SVG laid it out in the rectangle itself, and GDI (the EMF, printing through `VCL.FNCCS4GDI` and through a VCL `TCanvas`) turned each line about its start, about 20 px out at 45 degrees; all three now follow the rule. **Known deviation:** FNC's GDI+ context - the VCL screen and the VCL PNG - displaces turned text across the line by an amount that grows with the rectangle's height (28 px for a 40 px rectangle at 45 degrees). Turning it ourselves through `TTMSFNCGraphics.SetMatrix` does not work: GDI+ text ignores that matrix. Masterplanner is FMX, whose context uses the same formula as the PDF engine; to be confirmed by eye in the spike. Worth reporting to TMS. |
+| Word wrap: `CAD_DT_CALCRECT` against `DrawText` at 600 dpi | Agrees on the FNC backend; test `WrappedTextIsAsTallAsItWasMeasured`. The SVG measures through the same FNC call. |
+| Dashes on paper | **Fixed.** FNC's PDF writer puts a fixed `[4] 1 d` on a dashed stroke, in page units - at 600 dpi a sixth of a millimetre, so a dashed line printed solid. The PDF backend now draws dashed pens as solid pieces from `CADDashPattern`, the pattern the SVG and the EMF use, which scales with the pen's width (a hairline dashes 4.8 mm on, 1.6 mm off; checked by rasterising). |
+| Polygons with many points in a PDF | Nothing to do: 600 dpi layout. |
+| 5,000 shapes on FMX | For the spike, with Masterplanner's shapes. For scale: `docs\drawing-speed.md` (100,000 lines, FMX repaint at zoom-all 209 ms). |
+| `OnPaintOverlay` | Nothing to expose: the event's `Sender` is the viewport, whose public `OnScreenCanvas` and `ViewportToScreenTransform` are the canvas and the transform. On FMX the overlay canvas carries a `ViewScale` matrix. |
+| *Found on the way:* text size in a PDF on the VCL | **Fixed.** FNC's PDF engine takes the font's `Size`, which on the VCL is the pixel height turned into points at the font's pixels per inch - three quarters of the intended size at 96 dpi, under a third at 240. `TCADPDFGraphics.SelectFont` now sets the size to the pixel height. A 10 mm text object now has 6.3 mm capitals, as it should. FMX was not affected. **VCL PDFs written before this have text 25% too small.** |
 
 ---
 

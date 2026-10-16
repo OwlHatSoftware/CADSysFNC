@@ -217,6 +217,25 @@ type
     procedure EverySegmentStaysInsideTheShape;
   end;
 
+  { : CS-10: the dash pattern every file output uses, the dashing of a
+    path, and the rectangle turned text is laid out in. Pure geometry. }
+  [TestFixture]
+  TDashAndTurnGeometryTests = class(TObject)
+  public
+    [Test]
+    procedure SolidStylesHaveNoPattern;
+    [Test]
+    procedure APatternIsInPenWidthsAndNeverUnderAScreenPixel;
+    [Test]
+    procedure AStraightLineIsCutIntoDashes;
+    [Test]
+    procedure ThePatternRunsOnAcrossAVertex;
+    [Test]
+    procedure AClosedPathDashesItsLastEdge;
+    [Test]
+    procedure TurnedTextIsLaidOutInTheTurnedBoundingBox;
+  end;
+
   [TestFixture]
   TCADImageTests = class
   private
@@ -1191,8 +1210,108 @@ begin
   Assert.AreEqual(0, FImg.Width, 'but nothing claims to know the size');
 end;
 
+{ ==================================================================
+  TDashAndTurnGeometryTests
+  ================================================================== }
+
+procedure TDashAndTurnGeometryTests.SolidStylesHaveNoPattern;
+begin
+  Assert.AreEqual(0, Length(CADDashPattern(cpsSolid, 3, 600 / 25.4)), 'solid');
+  Assert.AreEqual(0, Length(CADDashPattern(cpsClear, 3, 600 / 25.4)), 'clear');
+  Assert.AreEqual(0, Length(CADDashPattern(cpsInsideFrame, 3, 600 / 25.4)),
+    'inside frame');
+end;
+
+procedure TDashAndTurnGeometryTests.APatternIsInPenWidthsAndNeverUnderAScreenPixel;
+var
+  P: TCADDashPattern;
+begin
+  { A hairline at 600 dpi: a screen pixel's worth of paper, 600/96 dots. }
+  P := CADDashPattern(cpsDash, 1, 600 / 25.4);
+  Assert.AreEqual(2, Length(P));
+  Assert.AreEqual(Double(18 * 6.25), P[0], 0.001, 'dash');
+  Assert.AreEqual(Double(6 * 6.25), P[1], 0.001, 'gap');
+  { A 0.5 mm pen at 600 dpi is 12 dots: wider than that pixel, so the
+    pattern grows with it. }
+  P := CADDashPattern(cpsDash, 12, 600 / 25.4);
+  Assert.AreEqual(Double(18 * 12), P[0], 0.001, 'scales with the pen');
+  { No physical scale: plain pen widths. }
+  P := CADDashPattern(cpsDot, 1, 0);
+  Assert.AreEqual(Double(3), P[0], 0.001, 'screen');
+end;
+
+procedure TDashAndTurnGeometryTests.AStraightLineIsCutIntoDashes;
+var
+  S: TCADHatchSegments;
+  P: TCADDashPattern;
+begin
+  SetLength(P, 2);
+  P[0] := 10;
+  P[1] := 5;
+  S := CADDashSegments([Point(0, 0), Point(40, 0)], False, P);
+  { 0-10 on, 10-15 off, 15-25 on, 25-30 off, 30-40 on. }
+  Assert.AreEqual(3, Length(S));
+  Assert.AreEqual(0, S[0].P1.X);
+  Assert.AreEqual(10, S[0].P2.X);
+  Assert.AreEqual(15, S[1].P1.X);
+  Assert.AreEqual(25, S[1].P2.X);
+  Assert.AreEqual(30, S[2].P1.X);
+  Assert.AreEqual(40, S[2].P2.X);
+end;
+
+procedure TDashAndTurnGeometryTests.ThePatternRunsOnAcrossAVertex;
+var
+  S: TCADHatchSegments;
+  P: TCADDashPattern;
+begin
+  SetLength(P, 2);
+  P[0] := 10;
+  P[1] := 10;
+  { 6 along X, then down: the first dash is 6 + 4. }
+  S := CADDashSegments([Point(0, 0), Point(6, 0), Point(6, 30)], False, P);
+  Assert.IsTrue(Length(S) >= 3, IntToStr(Length(S)));
+  Assert.AreEqual(6, S[1].P1.X, 'the dash goes round the corner');
+  Assert.AreEqual(0, S[1].P1.Y);
+  Assert.AreEqual(4, S[1].P2.Y, 'and stops four down');
+  Assert.AreEqual(14, S[2].P1.Y, 'then ten off');
+end;
+
+procedure TDashAndTurnGeometryTests.AClosedPathDashesItsLastEdge;
+var
+  S: TCADHatchSegments;
+  P: TCADDashPattern;
+  I: Integer;
+  TmpLeftEdge: Boolean;
+begin
+  SetLength(P, 0);
+  { No pattern: every edge whole, the closing one included. }
+  S := CADDashSegments([Point(0, 0), Point(10, 0), Point(10, 10),
+    Point(0, 10)], True, P);
+  Assert.AreEqual(4, Length(S));
+  TmpLeftEdge := False;
+  for I := 0 to High(S) do
+    if (S[I].P1.X = 0) and (S[I].P2.X = 0) then
+      TmpLeftEdge := True;
+  Assert.IsTrue(TmpLeftEdge, 'the edge back to the start');
+end;
+
+procedure TDashAndTurnGeometryTests.TurnedTextIsLaidOutInTheTurnedBoundingBox;
+var
+  R: TRect;
+begin
+  R := CADRotatedTextRect(Rect(0, 0, 200, 40), 90);
+  Assert.AreEqual(80, R.Left, 'a quarter turn swaps the sides');
+  Assert.AreEqual(-80, R.Top);
+  Assert.AreEqual(120, R.Right);
+  Assert.AreEqual(120, R.Bottom);
+  R := CADRotatedTextRect(Rect(0, 0, 200, 40), 0);
+  Assert.AreEqual(0, R.Left, 'no turn, no change');
+  Assert.AreEqual(200, R.Right);
+end;
+
 initialization
   TDUnitX.RegisterTestFixture(TCADGraphicsCoreTests);
+  TDUnitX.RegisterTestFixture(TDashAndTurnGeometryTests);
   TDUnitX.RegisterTestFixture(TCADVCLGraphicsTests);
   TDUnitX.RegisterTestFixture(TCADImageTests);
   TDUnitX.RegisterTestFixture(TShapesThroughRecordingBackendTests);

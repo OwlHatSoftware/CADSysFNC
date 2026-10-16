@@ -166,15 +166,39 @@ type
     If a future FNC Core calls DrawPathEndClip from ClipRect, this
     override becomes harmless duplication rather than a wrong answer -
     the clip would simply be set twice to the same rectangle. It is
-    still worth deleting then. }
+    still worth deleting then.
+
+    AND DASHES THAT ARE DASHES ON PAPER
+
+    FNC's PDF writer puts a fixed pattern on a dashed stroke - '[4] 1 d'
+    for a dash - in the page's own units. Here those are 600 dpi dots,
+    so a dash came out a sixth of a millimetre long whatever the pen:
+    on paper a dashed line was a solid one. So a dashed pen is drawn
+    here as solid pieces, laid out by CADDashPattern and
+    CADDashSegments - the pattern the SVG and the metafile use, which
+    scales with the pen's width. A filled shape with a dashed outline is
+    filled first with no pen, then outlined. }
   TCADPDFGraphics = class(TCADFNCGraphics)
   private
     fLib: ITMSFNCCustomPDFGraphicsLib;
+    fCur: TPoint;
+    function Dashes: TCADDashPattern;
+    procedure StrokeDashed(const APts: array of TPoint; const AClosed: Boolean;
+      const APattern: TCADDashPattern);
   protected
     procedure DoPushClip(const R: TRect); override;
     procedure DoPopClip; override;
   public
+    { Public, as in TCADFNCGraphics. }
+    procedure DoPolygon(const Pts: Pointer; const Count: Integer); override;
+    procedure DoRectangle(const X1, Y1, X2, Y2: Integer); override;
+    procedure DoEllipse(const X1, Y1, X2, Y2: Integer); override;
     constructor CreateForPDF(const ALib: ITMSFNCCustomPDFGraphicsLib);
+    procedure SelectFont(const Font: TCADFontSpec); override;
+    procedure MoveTo(const X, Y: Integer); override;
+    procedure LineTo(const X, Y: Integer); override;
+    procedure Polyline(const Pts: Pointer; const Count: Integer); overload;
+      override;
   end;
 
   { : One link area on a sheet: RectMM in the sheet's millimetres,
@@ -290,6 +314,181 @@ begin
   fLib.DrawPathBeginClip;
   fLib.DrawPathAddRectangle(RectF(R.Left, R.Top, R.Right, R.Bottom));
   fLib.DrawPathEndClip;
+end;
+
+function TCADPDFGraphics.Dashes: TCADDashPattern;
+begin
+  SetLength(Result, 0);
+  if (fLib = nil) or (Pen.Mode = cpmNop) or (CADColorAlpha(Pen.Color) = 0) then
+    Exit;
+  Result := CADDashPattern(Pen.Style, Pen.Width, PixelsPerMM);
+end;
+
+procedure TCADPDFGraphics.StrokeDashed(const APts: array of TPoint;
+  const AClosed: Boolean; const APattern: TCADDashPattern);
+var
+  TmpSegs: TCADHatchSegments;
+  TmpStyle: TCADPenStyle;
+  I: Integer;
+begin
+  TmpSegs := CADDashSegments(APts, AClosed, APattern);
+  TmpStyle := Pen.Style;
+  { Solid for the pieces - which also sends Polyline below straight to
+    the inherited one. }
+  Pen.Style := cpsSolid;
+  try
+    for I := 0 to High(TmpSegs) do
+      Polyline([TmpSegs[I].P1, TmpSegs[I].P2]);
+  finally
+    Pen.Style := TmpStyle;
+  end;
+end;
+
+procedure TCADPDFGraphics.SelectFont(const Font: TCADFontSpec);
+begin
+  inherited SelectFont(Font);
+{$IFNDEF CADSYS_FMX}
+  { FNC's PDF engine takes the font's Size, in the page's own units -
+    and a VCL or LCL font's Size is its pixel height turned into points
+    at whatever pixels per inch the font was made with: three quarters
+    of it at 96, under a third on a 240 dpi screen. The text came out
+    that much too small. On FMX the size already is the pixel height.
+    So here it is set to the height in pixels - the page's units - which
+    is what everything else on the page is measured in. }
+  if (fLib <> nil) and (FNCGraphics <> nil) then
+    FNCGraphics.Font.Size := Max(1,
+      Round(CADFontHeightToFNCSize(Font.Height) * 96 / 72));
+{$ENDIF}
+end;
+
+procedure TCADPDFGraphics.MoveTo(const X, Y: Integer);
+begin
+  fCur := Point(X, Y);
+  inherited MoveTo(X, Y);
+end;
+
+procedure TCADPDFGraphics.LineTo(const X, Y: Integer);
+var
+  TmpDashes: TCADDashPattern;
+begin
+  TmpDashes := Dashes;
+  if Length(TmpDashes) = 0 then
+    inherited LineTo(X, Y)
+  else
+  begin
+    StrokeDashed([fCur, Point(X, Y)], False, TmpDashes);
+    inherited MoveTo(X, Y);
+  end;
+  fCur := Point(X, Y);
+end;
+
+procedure TCADPDFGraphics.Polyline(const Pts: Pointer; const Count: Integer);
+var
+  TmpDashes: TCADDashPattern;
+  TmpPts: array of TPoint;
+  I: Integer;
+begin
+  if (Pts = nil) or (Count <= 0) then
+    Exit;
+  TmpDashes := Dashes;
+  if Length(TmpDashes) = 0 then
+    inherited Polyline(Pts, Count)
+  else
+  begin
+    SetLength(TmpPts, Count);
+    for I := 0 to Count - 1 do
+      TmpPts[I] := PCADPoints(Pts)^[I];
+    StrokeDashed(TmpPts, False, TmpDashes);
+    inherited MoveTo(TmpPts[Count - 1].X, TmpPts[Count - 1].Y);
+  end;
+  fCur := PCADPoints(Pts)^[Count - 1];
+end;
+
+procedure TCADPDFGraphics.DoPolygon(const Pts: Pointer; const Count: Integer);
+var
+  TmpStyle: TCADPenStyle;
+  TmpDashes: TCADDashPattern;
+  TmpPts: array of TPoint;
+  I: Integer;
+begin
+  TmpDashes := Dashes;
+  if (Length(TmpDashes) = 0) or (Pts = nil) or (Count <= 0) then
+  begin
+    inherited DoPolygon(Pts, Count);
+    Exit;
+  end;
+  { The fill alone, then the dashed outline. }
+  TmpStyle := Pen.Style;
+  Pen.Style := cpsClear;
+  try
+    inherited DoPolygon(Pts, Count);
+  finally
+    Pen.Style := TmpStyle;
+  end;
+  SetLength(TmpPts, Count);
+  for I := 0 to Count - 1 do
+    TmpPts[I] := PCADPoints(Pts)^[I];
+  StrokeDashed(TmpPts, True, TmpDashes);
+end;
+
+procedure TCADPDFGraphics.DoRectangle(const X1, Y1, X2, Y2: Integer);
+var
+  TmpStyle: TCADPenStyle;
+  TmpDashes: TCADDashPattern;
+begin
+  TmpDashes := Dashes;
+  if Length(TmpDashes) = 0 then
+  begin
+    inherited DoRectangle(X1, Y1, X2, Y2);
+    Exit;
+  end;
+  { The fill alone, then the dashed outline. }
+  TmpStyle := Pen.Style;
+  Pen.Style := cpsClear;
+  try
+    inherited DoRectangle(X1, Y1, X2, Y2);
+  finally
+    Pen.Style := TmpStyle;
+  end;
+  { X2 and Y2 exclusive, as the FNC backend draws them. }
+  StrokeDashed([Point(X1, Y1), Point(X2 - 1, Y1), Point(X2 - 1, Y2 - 1),
+    Point(X1, Y2 - 1)], True, TmpDashes);
+end;
+
+procedure TCADPDFGraphics.DoEllipse(const X1, Y1, X2, Y2: Integer);
+var
+  TmpStyle: TCADPenStyle;
+  TmpDashes: TCADDashPattern;
+  TmpPts: array of TPoint;
+  TmpCX, TmpCY, TmpRX, TmpRY: Double;
+  I, TmpN: Integer;
+begin
+  TmpDashes := Dashes;
+  if Length(TmpDashes) = 0 then
+  begin
+    inherited DoEllipse(X1, Y1, X2, Y2);
+    Exit;
+  end;
+  { The fill alone, then the dashed outline. }
+  TmpStyle := Pen.Style;
+  Pen.Style := cpsClear;
+  try
+    inherited DoEllipse(X1, Y1, X2, Y2);
+  finally
+    Pen.Style := TmpStyle;
+  end;
+  TmpCX := (X1 + X2 - 1) / 2;
+  TmpCY := (Y1 + Y2 - 1) / 2;
+  TmpRX := Abs(X2 - 1 - X1) / 2;
+  TmpRY := Abs(Y2 - 1 - Y1) / 2;
+  { A point every two millimetres or so of outline at 600 dpi, and
+    never fewer than 32. }
+  TmpN := Max(32, Round(Pi * (TmpRX + TmpRY) / 48));
+  SetLength(TmpPts, TmpN);
+  for I := 0 to TmpN - 1 do
+    TmpPts[I] := Point(Round(TmpCX + TmpRX * Cos(2 * Pi * I / TmpN)),
+      Round(TmpCY + TmpRY * Sin(2 * Pi * I / TmpN)));
+  StrokeDashed(TmpPts, True, TmpDashes);
 end;
 
 procedure TCADPDFGraphics.DoPopClip;

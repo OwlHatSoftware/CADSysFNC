@@ -117,6 +117,8 @@ type
     procedure Reapply;
     function GradientActive: Boolean;
     procedure GradientShape(const AShape: TProc; const ABox: TRect);
+    function DrawTurnedText(const Text: string; var R: TRect;
+      const Flags: Cardinal): Integer;
   protected
     function CreatePen: TCADPen; override;
     function CreateBrush: TCADBrush; override;
@@ -952,7 +954,70 @@ begin
   { The brush, for the background of opaque text. The CAD_DT_ flags are
     GDI's DT_ values, deliberately. }
   PrepareBrush;
-  Result := DrawTextW(fDC, PChar(Text), Length(Text), R, Flags);
+  if (not fFontSelected) or (fFont.Escapement mod 3600 = 0) then
+  begin
+    Result := DrawTextW(fDC, PChar(Text), Length(Text), R, Flags);
+    Exit;
+  end;
+  Result := DrawTurnedText(Text, R, Flags);
+end;
+
+function TCADGDIGraphics.DrawTurnedText(const Text: string; var R: TRect;
+  const Flags: Cardinal): Integer;
+var
+  TmpFlat: TCADFontSpec;
+  TmpLayout: TRect;
+  TmpAngle, TmpC, TmpS, TmpCX, TmpCY: Double;
+  TmpOldMode: Integer;
+  TmpOld, TmpTurn: TXForm;
+begin
+  { GDI turns a font's glyphs about each line's starting point, and
+    DrawText's layout knows nothing of the turn. FNC - the screen and the
+    PDF - lays the text out level in the turned rectangle's bounding box
+    and turns the whole about the middle. This does what FNC does, with
+    a level font and a world transform, so a turned label lands in the
+    same place on paper as on the screen. Measuring needs no turn. }
+  TmpFlat := fFont;
+  TmpFlat.Escapement := 0;
+  TmpFlat.Orientation := 0;
+  SelectObject(fDC, FontHandle(TmpFlat));
+  try
+    if (Flags and CAD_DT_CALCRECT) <> 0 then
+      Exit(DrawTextW(fDC, PChar(Text), Length(Text), R, Flags));
+    Result := R.Bottom - R.Top;
+    if not fTransparent then
+      FillRect(R);
+    TmpAngle := fFont.Escapement / 10;
+    TmpLayout := CADRotatedTextRect(R, TmpAngle);
+    TmpC := Cos(DegToRad(TmpAngle));
+    TmpS := Sin(DegToRad(TmpAngle));
+    TmpCX := (R.Left + R.Right) / 2;
+    TmpCY := (R.Top + R.Bottom) / 2;
+    { Counter-clockwise on the page, with Y down. }
+    TmpTurn.eM11 := TmpC;
+    TmpTurn.eM12 := -TmpS;
+    TmpTurn.eM21 := TmpS;
+    TmpTurn.eM22 := TmpC;
+    TmpTurn.eDx := TmpCX - TmpCX * TmpC - TmpCY * TmpS;
+    TmpTurn.eDy := TmpCY + TmpCX * TmpS - TmpCY * TmpC;
+    TmpOldMode := SetGraphicsMode(fDC, GM_ADVANCED);
+    GetWorldTransform(fDC, TmpOld);
+    try
+      ModifyWorldTransform(fDC, TmpTurn, MWT_LEFTMULTIPLY);
+      { Transparent for the text itself: an opaque cell background
+        would be turned too, and FNC's is the level rectangle filled
+        above. }
+      SetBkMode(fDC, Winapi.Windows.TRANSPARENT);
+      DrawTextW(fDC, PChar(Text), Length(Text), TmpLayout, Flags);
+    finally
+      SetWorldTransform(fDC, TmpOld);
+      SetGraphicsMode(fDC, TmpOldMode);
+      if not fTransparent then
+        SetBkMode(fDC, Winapi.Windows.OPAQUE);
+    end;
+  finally
+    SelectObject(fDC, FontHandle(fFont));
+  end;
 end;
 
 procedure TCADGDIGraphics.DrawImage(const Dest: TRect; const Image: TCADImage;

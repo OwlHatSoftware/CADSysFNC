@@ -606,6 +606,37 @@ function CADHatchLines(const APoly: array of TPoint;
   const AStyle: TCADBrushStyle; const ASpacing: Integer = 0)
   : TCADHatchSegments;
 
+
+type
+  { : On and off lengths of a dashed line, in device pixels, starting
+    with on. Empty for a solid line. }
+  TCADDashPattern = array of Double;
+
+{ : The dash pattern a pen style comes out as on a device of
+  APixelsPerMM: GDI's own proportions (dash 18 on 6 off, dot 3 3,
+  dash-dot 9 6 3 6, dash-dot-dot 9 3 3 3 3 3, alternate 1 1), counted in
+  pen widths and never in less than a screen pixel's worth of paper -
+  so a dash on paper is as long as it looks on the screen, and a wider
+  pen has longer dashes. Empty for the solid styles and for an unknown
+  physical scale with a one-pixel pen. The SVG, EMF and PDF outputs all
+  dash by this. }
+function CADDashPattern(const AStyle: TCADPenStyle; const APenWidth: Integer;
+  const APixelsPerMM: Double): TCADDashPattern;
+
+{ : The "on" pieces of APts drawn with APattern, as segments. The
+  pattern runs on across the vertices rather than starting again at
+  each, as a pen does. AClosed adds the edge from the last point back
+  to the first. An empty pattern gives back every edge whole. }
+function CADDashSegments(const APts: array of TPoint; const AClosed: Boolean;
+  const APattern: TCADDashPattern): TCADHatchSegments;
+
+{ : The rectangle rotated text is laid out in, as FNC does it: the
+  bounding box of R turned by AAngleDegrees, centred where R is. Text is
+  aligned in this, unrotated, and the whole turned about the centre -
+  which is how the screen and the PDF place it, and so how every other
+  output must, or a rotated label lands somewhere else on paper. }
+function CADRotatedTextRect(const R: TRect; const AAngleDegrees: Double): TRect;
+
 implementation
 
 { The four directions a hatch line can run, as the angle the line
@@ -617,6 +648,133 @@ const
   HatchAngleVert = Pi / 2;
   HatchAngleFDiag = Pi / 4;
   HatchAngleBDiag = -Pi / 4;
+
+
+function CADDashPattern(const AStyle: TCADPenStyle; const APenWidth: Integer;
+  const APixelsPerMM: Double): TCADDashPattern;
+var
+  TmpOut: TCADDashPattern;
+
+  procedure SetTo(const AValues: array of Integer);
+  var
+    I: Integer;
+    TmpUnit: Double;
+  begin
+    TmpUnit := Max(1, APenWidth);
+    if APixelsPerMM > 0 then
+      TmpUnit := Max(TmpUnit, APixelsPerMM * 25.4 / 96);
+    SetLength(TmpOut, Length(AValues));
+    for I := 0 to High(AValues) do
+      TmpOut[I] := AValues[I] * TmpUnit;
+  end;
+
+begin
+  SetLength(TmpOut, 0);
+  case AStyle of
+    cpsDash:
+      SetTo([18, 6]);
+    cpsDot:
+      SetTo([3, 3]);
+    cpsDashDot:
+      SetTo([9, 6, 3, 6]);
+    cpsDashDotDot:
+      SetTo([9, 3, 3, 3, 3, 3]);
+    cpsAlternate:
+      SetTo([1, 1]);
+  end;
+  Result := TmpOut;
+end;
+
+function CADDashSegments(const APts: array of TPoint; const AClosed: Boolean;
+  const APattern: TCADDashPattern): TCADHatchSegments;
+var
+  TmpCount, I, TmpIndex, TmpEdges: Integer;
+  TmpOn: Boolean;
+  TmpRemain, TmpLen, TmpT, TmpStep, TmpTotal: Double;
+  P, Q: TPoint;
+  TmpOut: TCADHatchSegments;
+
+  procedure Add(const A, B: TPoint);
+  begin
+    if TmpCount = Length(TmpOut) then
+      SetLength(TmpOut, TmpCount * 2 + 16);
+    TmpOut[TmpCount].P1 := A;
+    TmpOut[TmpCount].P2 := B;
+    Inc(TmpCount);
+  end;
+
+  function At(const AT: Double): TPoint;
+  begin
+    Result := Point(Round(P.X + (Q.X - P.X) * AT / TmpLen),
+      Round(P.Y + (Q.Y - P.Y) * AT / TmpLen));
+  end;
+
+begin
+  SetLength(Result, 0);
+  SetLength(TmpOut, 0);
+  TmpCount := 0;
+  if Length(APts) < 2 then
+    Exit;
+  TmpEdges := Length(APts) - 1;
+  if AClosed and ((APts[0].X <> APts[High(APts)].X) or
+    (APts[0].Y <> APts[High(APts)].Y)) then
+    Inc(TmpEdges);
+  TmpTotal := 0;
+  for I := 0 to High(APattern) do
+    TmpTotal := TmpTotal + Max(0, APattern[I]);
+  TmpIndex := 0;
+  TmpOn := True;
+  if Length(APattern) > 0 then
+    TmpRemain := APattern[0]
+  else
+    TmpRemain := 0;
+  for I := 0 to TmpEdges - 1 do
+  begin
+    P := APts[I];
+    Q := APts[(I + 1) mod Length(APts)];
+    TmpLen := Sqrt(Sqr(Double(Q.X - P.X)) + Sqr(Double(Q.Y - P.Y)));
+    if TmpLen = 0 then
+      Continue;
+    if TmpTotal <= 0 then
+    begin
+      Add(P, Q);
+      Continue;
+    end;
+    TmpT := 0;
+    while TmpT < TmpLen do
+    begin
+      TmpStep := Min(TmpRemain, TmpLen - TmpT);
+      if TmpOn and (TmpStep > 0) then
+        Add(At(TmpT), At(TmpT + TmpStep));
+      TmpT := TmpT + TmpStep;
+      TmpRemain := TmpRemain - TmpStep;
+      if TmpRemain <= 1E-9 then
+      begin
+        TmpIndex := (TmpIndex + 1) mod Length(APattern);
+        TmpRemain := APattern[TmpIndex];
+        TmpOn := not TmpOn;
+      end;
+    end;
+  end;
+  SetLength(TmpOut, TmpCount);
+  Result := TmpOut;
+end;
+
+function CADRotatedTextRect(const R: TRect; const AAngleDegrees: Double): TRect;
+var
+  TmpC, TmpS, TmpW, TmpH, TmpCW, TmpCH, TmpCX, TmpCY: Double;
+begin
+  TmpW := R.Right - R.Left;
+  TmpH := R.Bottom - R.Top;
+  TmpC := Cos(DegToRad(AAngleDegrees));
+  TmpS := Sin(DegToRad(AAngleDegrees));
+  TmpCW := Abs(TmpW * TmpC) + Abs(TmpH * TmpS);
+  TmpCH := Abs(TmpW * TmpS) + Abs(TmpH * TmpC);
+  TmpCX := (R.Left + R.Right) / 2;
+  TmpCY := (R.Top + R.Bottom) / 2;
+  Result := Rect(Round(TmpCX - TmpCW / 2), Round(TmpCY - TmpCH / 2),
+    Round(TmpCX + TmpCW / 2), Round(TmpCY + TmpCH / 2));
+end;
 
 function CADHatchLines(const APoly: array of TPoint;
   const AStyle: TCADBrushStyle; const ASpacing: Integer): TCADHatchSegments;
