@@ -38,8 +38,8 @@ All changes go into `Sources\VCL.*` (the masters) and are regenerated for FMX/VC
 | CS-04 | **Image export** of a sheet or a model rectangle (PNG at a DPI, transparent option) — FMX and VCL | Must | MP-OUT-003 | Done (536ac82) |
 | CS-05 | **SVG backend** + `CADSaveSheetsToSVG` | Must | MP-OUT-006 | Done (69db963) |
 | CS-06 | **EMF + clipboard on FMX (Windows)** through a framework-free GDI backend | Must | MP-OUT-004 | Done (f0c2c8e) |
-| CS-07 | **Printing on FMX** | Should | MP-OUT-002 | Done |
-| CS-08 | **PDF**: link annotations and font embedding control | Should | MP-OUT-001 | Open |
+| CS-07 | **Printing on FMX** | Should | MP-OUT-002 | Done (e32f949) |
+| CS-08 | **PDF**: link annotations and font embedding control | Should | MP-OUT-001 | Done |
 | CS-09 | Anisotropic viewport scale (`UnitsPerMMY`) | Could (P1.1) | date window fitted to a sheet while lanes keep their height | Open |
 | CS-10 | Verification items (no change expected) | Must | spike WP-0.1 | Open |
 | CS-11 | Docs, JSON format, tests, demo | Must | — | Open |
@@ -244,6 +244,8 @@ Drawing through an FNC graphics on `Printer.Canvas` per page, using `CADDrawShee
 
 - **Links:** an optional list of link areas passed to `CADSaveSheetsToPDF` (or a callback per sheet): `TCADPDFLink = record RectMM: TRect2D; URL: String; end;` → link annotations on the page. Use the URL/link support of `TTMSFNCPDFLib` if FNC Core provides it; if it does not, record that as a known limitation in `VCL.FNCCS4PDF`'s header comment and close the item.
 - **Fonts:** expose whether TrueType fonts are embedded (and subset) — a global `CADPDFEmbedFonts: Boolean = True` passed to the FNC PDF library — and document what happens with a font that is not installed.
+
+**Done as:** `CADSaveSheetsToPDF` takes an optional `TCADPDFSheetLinksFunc` returning `TCADPDFLink` records per sheet. FNC only links over text it draws (`AddURL`) and its rectangle-taking routine is out of reach in an implementation section, so the links are appended after writing as a PDF incremental update (`CADAddPDFLinks`, public). `CADPDFEmbedFonts` (default True) and `CADPDFFontFallbacks` (tried in order for a font that is not installed; with none of them available the name is written unembedded and the reader substitutes) are set on the FNC PDF library when a document starts. See the `VCL.FNCCS4PDF` header.
 
 ---
 

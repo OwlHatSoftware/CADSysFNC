@@ -19,7 +19,7 @@ uses
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsFNC,
   VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCadSysRegister,
   VCL.FNCCS4Paper, VCL.FNCCS4Image, Vcl.Imaging.pngimage, VCL.FNCCS4SVG,
-  VCL.FNCCS4GDI, System.IOUtils, System.RegularExpressions, Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom, Xml.omnixmldom;
+  VCL.FNCCS4GDI, VCL.FNCCS4PDF, System.IOUtils, System.RegularExpressions, Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom, Xml.omnixmldom;
 
 type
   { : CS-04: a sheet, or a rectangle of the model, as a PNG. Here rather
@@ -136,6 +136,26 @@ type
     procedure TheClipboardGetsAllThreeFormats;
     [Test]
     procedure SheetsPrintEachInItsOwnOrientation;
+  end;
+
+  { : CS-08: link areas and font embedding in a PDF of sheets. }
+  [TestFixture]
+  TCADPDFExtrasTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FFile: string;
+    function WriteAndRead(const ALinks: TCADPDFSheetLinksFunc): string;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+    [Test]
+    procedure ALinkBecomesAnAnnotationInPoints;
+    [Test]
+    procedure FontsAreEmbeddedByDefault;
+    [Test]
+    procedure FontsAreLeftOutWhenAskedTo;
   end;
 
   [TestFixture]
@@ -1503,9 +1523,79 @@ begin
   end;
 end;
 
+{ ==================================================================
+  TCADPDFExtrasTests
+  ================================================================== }
+
+procedure TCADPDFExtrasTests.Setup;
+var
+  TmpSheet: TCADSheet;
+  TmpText: TText2D;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+  TmpSheet := FCAD.Sheets.Add('Plate');
+  TmpSheet.Paper := pkA4;
+  TmpSheet.Orientation := pgoPortrait;
+  TmpText := TText2D.Create(-1, Rect2D(20, 250, 120, 262), 8, 'Hello');
+  TmpSheet.AddObject(TmpText);
+  FFile := TPath.Combine(TPath.GetTempPath, 'CADSysPDFExtras.pdf');
+end;
+
+procedure TCADPDFExtrasTests.TearDown;
+begin
+  FCAD.Free;
+  if TFile.Exists(FFile) then
+    TFile.Delete(FFile);
+end;
+
+function TCADPDFExtrasTests.WriteAndRead(const ALinks
+  : TCADPDFSheetLinksFunc): string;
+begin
+  CADSaveSheetsToPDF(FCAD, FCAD.Sheets, FFile, 0, -1, ALinks);
+  Assert.IsTrue(TFile.Exists(FFile), 'written');
+  Result := TEncoding.ANSI.GetString(TFile.ReadAllBytes(FFile));
+end;
+
+procedure TCADPDFExtrasTests.ALinkBecomesAnAnnotationInPoints;
+var
+  TmpText: string;
+begin
+  TmpText := WriteAndRead(
+    function(const ASheet: TCADSheet; const AIndex: Integer): TCADPDFLinks
+    begin
+      Result := [TCADPDFLink.Create(Rect2D(10, 20, 60, 40),
+        'https://example.com/plan')];
+    end);
+  Assert.IsTrue(Pos('/URI(https://example.com/plan)', TmpText) > 0,
+    'the URL');
+  { 10, 20, 60, 40 mm from the bottom-left corner, in points. }
+  Assert.IsTrue(Pos('/Rect[28.35 56.69 170.08 113.39]', TmpText) > 0,
+    'where it is');
+  Assert.IsTrue(Pos('/Subtype/Link', TmpText) > 0, 'a link annotation');
+end;
+
+procedure TCADPDFExtrasTests.FontsAreEmbeddedByDefault;
+begin
+  Assert.IsTrue(CADPDFEmbedFonts, 'the default');
+  Assert.IsTrue(Pos('/FontFile2', WriteAndRead(nil)) > 0,
+    'a TrueType font program in the file');
+end;
+
+procedure TCADPDFExtrasTests.FontsAreLeftOutWhenAskedTo;
+begin
+  CADPDFEmbedFonts := False;
+  try
+    Assert.IsTrue(Pos('/FontFile2', WriteAndRead(nil)) = 0,
+      'no font program in the file');
+  finally
+    CADPDFEmbedFonts := True;
+  end;
+end;
+
 initialization
 
 TDUnitX.RegisterTestFixture(TCADImageExportTests);
+TDUnitX.RegisterTestFixture(TCADPDFExtrasTests);
 TDUnitX.RegisterTestFixture(TCADGDIExportTests);
 TDUnitX.RegisterTestFixture(TCADSVGExportTests);
 TDUnitX.RegisterTestFixture(TCADFNCGraphicsTests);

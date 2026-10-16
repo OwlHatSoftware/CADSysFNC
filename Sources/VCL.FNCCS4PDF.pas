@@ -53,7 +53,36 @@
 
   which is the right answer with both halves in step. If that interface
   is ever not supported, the code falls back to laying out at 72 dpi,
-  where no conversion is needed and the only cost is the rounding. }
+  where no conversion is needed and the only cost is the rounding.
+
+  FONTS
+
+  TrueType fonts are embedded, subset to the characters used, while
+  <See Variable=CADPDFEmbedFonts> is True (the default); a PDF without
+  them is smaller and shows in whatever the reader has instead. A font
+  the computer does not have is replaced by the first of
+  <See Variable=CADPDFFontFallbacks> that it does have, and that one is
+  embedded. With none of those either, the name is written as asked
+  and nothing is embedded for it, and the reader substitutes.
+
+  LINKS
+
+  CADSaveSheetsToPDF takes an optional function that gives each sheet's
+  link areas - rectangles in the sheet's millimetres with a URL each -
+  and puts a link annotation on the page for each.
+
+  FNC's PDF library offers a link only over text it draws itself
+  (AddURL: the annotation is the text's own bounds), and the routine
+  underneath that would take a rectangle lives in the implementation
+  section of its unit, out of reach. So the links are added after the
+  file is written, as a PDF incremental update
+  (<See Procedure=CADAddPDFLinks>): the annotations and the changed
+  page dictionaries are appended with a cross-reference section of
+  their own, and the original bytes are not touched. Every reader
+  applies an incremental update - it is how a PDF is signed or
+  annotated in place. Annotations are in points, measured up from the
+  bottom of the page as the sheet is, and not under the page transform
+  the drawing is scaled by. }
 unit VCL.FNCCS4PDF;
 
 {$I VCL.FNCCADSys.inc}
@@ -77,6 +106,7 @@ uses
 {$IFDEF CADSYS_VCL}
   VCL.TMSFNCTypes, VCL.TMSFNCGraphicsTypes, VCL.TMSFNCGraphics,
   VCL.TMSFNCPDFLib, VCL.TMSFNCPDFGraphicsLib, VCL.TMSFNCGraphicsPDFEngine,
+
 {$ENDIF}
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsFNC,
   VCL.FNCCADSys4, VCL.FNCCS4Views, VCL.FNCCS4Print;
@@ -99,6 +129,15 @@ var
     takes on its own if FNC's initialization interface is ever missing,
     and it is the first thing to try if a PDF comes out wrong. }
   CADPDFResolution: Integer = 600;
+
+  { : Whether TrueType fonts are embedded (subset) - see FONTS above.
+    Read when a document is started. }
+  CADPDFEmbedFonts: Boolean = True;
+
+  { : Fonts tried, in order, for a font the computer does not have,
+    separated by commas - see FONTS above. Read when a document is
+    started; '' for none. }
+  CADPDFFontFallbacks: String = 'Arial,Liberation Sans,DejaVu Sans,Helvetica';
 
 type
   { : The FNC backend with a clip that actually clips.
@@ -138,6 +177,23 @@ type
     constructor CreateForPDF(const ALib: ITMSFNCCustomPDFGraphicsLib);
   end;
 
+  { : One link area on a sheet: RectMM in the sheet's millimetres,
+    origin at the bottom-left corner of the paper and Y upwards - the
+    coordinates of CADSheetPointToMM - and the URL it opens. }
+  TCADPDFLink = record
+    RectMM: TRect2D;
+    URL: String;
+    class function Create(const ARectMM: TRect2D; const AURL: String)
+      : TCADPDFLink; static;
+  end;
+
+  TCADPDFLinks = TArray<TCADPDFLink>;
+
+  { : The link areas of ASheet, the AIndex-th of the sheets being
+    written. Called once per sheet, after it is drawn. }
+  TCADPDFSheetLinksFunc = reference to function(const ASheet: TCADSheet;
+    const AIndex: Integer): TCADPDFLinks;
+
 { : The page device a PDF is drawn with. Public because a caller that
   wants to check what the numbers will be should not have to guess. }
 function CADPDFPageDevice: TCADPageDevice;
@@ -168,9 +224,48 @@ procedure CADSavePagesToPDF(const ACAD: TFNCCADCmp2D;
   uses, applied once per sheet rather than once per document. }
 procedure CADSaveSheetsToPDF(const ACAD: TFNCCADCmp2D;
   const ASheets: TCADSheets; const AFileName: String;
-  const AFirstSheet: Integer = 0; const ALastSheet: Integer = -1);
+  const AFirstSheet: Integer = 0; const ALastSheet: Integer = -1;
+  const ALinks: TCADPDFSheetLinksFunc = nil);
+
+{ : Adds link annotations to a PDF already written: APageLinks[I] go on
+  page I, counted from zero in document order, their rectangles in
+  millimetres from the page's bottom-left corner. An incremental update
+  - see LINKS above. Raises ECADPageError for a file it cannot follow
+  (a cross-reference stream, or annotations kept in an object of their
+  own), leaving the file as it was. }
+procedure CADAddPDFLinks(const AFileName: String;
+  const APageLinks: array of TCADPDFLinks);
 
 implementation
+
+{$IFNDEF CADSYS_LCL}
+uses
+  System.RegularExpressions;
+{$ENDIF}
+
+class function TCADPDFLink.Create(const ARectMM: TRect2D;
+  const AURL: String): TCADPDFLink;
+begin
+  Result.RectMM := ARectMM;
+  Result.URL := AURL;
+end;
+
+{ : The settings a document takes when it is started - see FONTS. }
+procedure ConfigurePDF(const APDF: TTMSFNCPDFLib);
+var
+  TmpList: TStringList;
+begin
+  APDF.EmbedFonts := CADPDFEmbedFonts;
+  TmpList := TStringList.Create;
+  try
+    TmpList.StrictDelimiter := True;
+    TmpList.Delimiter := ',';
+    TmpList.DelimitedText := CADPDFFontFallbacks;
+    APDF.FontFallBackList.Assign(TmpList);
+  finally
+    TmpList.Free;
+  end;
+end;
 
 constructor TCADPDFGraphics.CreateForPDF
   (const ALib: ITMSFNCCustomPDFGraphicsLib);
@@ -276,6 +371,7 @@ begin
     TmpPDF.Header := '';
     TmpPDF.Footer := '';
     TmpPDF.PageNumber := pnNone;
+    ConfigurePDF(TmpPDF);
 
     { Laying out finer than a point needs the graphics library's own
       page height set in the same dots - see the unit header. Without
@@ -351,7 +447,8 @@ end;
 
 procedure CADSaveSheetsToPDF(const ACAD: TFNCCADCmp2D;
   const ASheets: TCADSheets; const AFileName: String;
-  const AFirstSheet, ALastSheet: Integer);
+  const AFirstSheet, ALastSheet: Integer;
+  const ALinks: TCADPDFSheetLinksFunc);
 var
   TmpDevice: TCADPageDevice;
   TmpPDF: TTMSFNCPDFLib;
@@ -364,7 +461,12 @@ var
   TmpBounds: TRect;
   TmpResolution: Integer;
   TmpFirst, TmpLast, Cont: Integer;
+  TmpLinks: TCADPDFLinks;
+  TmpPageLinks: TArray<TCADPDFLinks>;
+  TmpAnyLinks: Boolean;
 begin
+  TmpAnyLinks := False;
+  SetLength(TmpPageLinks, 0);
   if (ACAD = nil) or (ASheets = nil) or (AFileName = '') then
     Exit;
   TmpFirst := AFirstSheet;
@@ -386,6 +488,7 @@ begin
     TmpPDF.Header := '';
     TmpPDF.Footer := '';
     TmpPDF.PageNumber := pnNone;
+    ConfigurePDF(TmpPDF);
 
     TmpResolution := CADPDFResolution;
     if not Supports(TmpPDF.Graphics, ITMSFNCCustomPDFInitializationLib,
@@ -426,6 +529,14 @@ begin
               end;
               CADDrawSheet(ACAD, TmpSheet, TmpDevice, TmpCanvas);
               TmpGraphics.Attach(nil, Rect(0, 0, 0, 0));
+              SetLength(TmpPageLinks, Length(TmpPageLinks) + 1);
+              if Assigned(ALinks) then
+              begin
+                TmpLinks := ALinks(TmpSheet, Cont);
+                TmpPageLinks[High(TmpPageLinks)] := TmpLinks;
+                if Length(TmpLinks) > 0 then
+                  TmpAnyLinks := True;
+              end;
             end;
           finally
             TmpPDF.EndDocument;
@@ -442,6 +553,326 @@ begin
   finally
     TmpPDF.Free;
   end;
+  { Only now: the file is complete and closed. }
+  if TmpAnyLinks then
+    CADAddPDFLinks(AFileName, TmpPageLinks);
 end;
+
+{ ------------------------------------------------------------------
+  Links, as an incremental update
+  ------------------------------------------------------------------ }
+
+{$IFDEF CADSYS_LCL}
+
+procedure CADAddPDFLinks(const AFileName: String;
+  const APageLinks: array of TCADPDFLinks);
+begin
+  Raise ECADPageError.Create('PDF links are not available on the LCL yet');
+end;
+
+{$ELSE}
+
+const
+  PDFEOL = #13#10;
+
+{ : AURL as the inside of a PDF literal string: UTF-8, anything outside
+  printable ASCII percent-encoded as a URI wants it, and the three
+  characters a literal string reserves escaped. }
+function PDFURILiteral(const AURL: String): String;
+var
+  TmpBytes: TBytes;
+  I: Integer;
+begin
+  Result := '';
+  TmpBytes := TEncoding.UTF8.GetBytes(AURL);
+  for I := 0 to High(TmpBytes) do
+    case TmpBytes[I] of
+      Ord('('), Ord(')'), Ord('\'):
+        Result := Result + '\' + Char(TmpBytes[I]);
+      33 .. 39, 42 .. 91, 93 .. 126:
+        Result := Result + Char(TmpBytes[I]);
+    else
+      Result := Result + '%' + IntToHex(TmpBytes[I], 2);
+    end;
+end;
+
+function PDFNum(const AValue: Double): String;
+var
+  TmpFmt: TFormatSettings;
+begin
+  TmpFmt := FormatSettings;
+  TmpFmt.DecimalSeparator := '.';
+  Result := FormatFloat('0.##', AValue, TmpFmt);
+end;
+
+{ : The index just past the '>>' that closes the dictionary opening at
+  or after AFrom, or 0. Strings are skipped, so a '>>' inside one does
+  not count. }
+function DictEnd(const S: String; const AFrom: Integer;
+  out AStart: Integer): Integer;
+var
+  I, TmpDepth: Integer;
+begin
+  Result := 0;
+  AStart := Pos('<<', S, AFrom);
+  if AStart = 0 then
+    Exit;
+  TmpDepth := 0;
+  I := AStart;
+  while I < Length(S) do
+  begin
+    if S[I] = '(' then
+    begin
+      { A literal string, with escapes and balanced parentheses. }
+      Inc(I);
+      TmpDepth := TmpDepth + 1000;
+      while (I <= Length(S)) and (TmpDepth >= 1000) do
+      begin
+        if S[I] = '\' then
+          Inc(I)
+        else if S[I] = '(' then
+          Inc(TmpDepth, 1000)
+        else if S[I] = ')' then
+          Dec(TmpDepth, 1000);
+        Inc(I);
+      end;
+      Continue;
+    end;
+    if (S[I] = '<') and (S[I + 1] = '<') then
+    begin
+      Inc(TmpDepth);
+      Inc(I, 2);
+      Continue;
+    end;
+    if (S[I] = '>') and (S[I + 1] = '>') then
+    begin
+      Dec(TmpDepth);
+      Inc(I, 2);
+      if TmpDepth = 0 then
+        Exit(I);
+      Continue;
+    end;
+    Inc(I);
+  end;
+end;
+
+{ : Where object ANum's latest definition starts ('ANum G obj'), and its
+  generation; 0 when there is none. }
+function FindObject(const S: String; const ANum: Integer;
+  out AGen: Integer): Integer;
+var
+  TmpMatch: TMatch;
+begin
+  Result := 0;
+  AGen := 0;
+  { The last one: a file already updated before has the newest last. }
+  for TmpMatch in TRegEx.Matches(S, '(?<![0-9])' + IntToStr(ANum) +
+    '\s+(\d+)\s+obj\b') do
+  begin
+    Result := TmpMatch.Index;
+    AGen := StrToInt(TmpMatch.Groups[1].Value);
+  end;
+end;
+
+function ObjectDict(const S: String; const ANum: Integer; out AGen: Integer;
+  out AStart, AEnd: Integer): String;
+var
+  TmpAt: Integer;
+begin
+  Result := '';
+  AStart := 0;
+  AEnd := 0;
+  TmpAt := FindObject(S, ANum, AGen);
+  if TmpAt = 0 then
+    Exit;
+  AEnd := DictEnd(S, TmpAt, AStart);
+  if AEnd > 0 then
+    Result := Copy(S, AStart, AEnd - AStart);
+end;
+
+procedure CADAddPDFLinks(const AFileName: String;
+  const APageLinks: array of TCADPDFLinks);
+
+  procedure Fail(const AWhy: String);
+  begin
+    Raise ECADPageError.Create('The PDF was written without its links: ' +
+      AWhy);
+  end;
+
+var
+  TmpLatin: TEncoding;
+  TmpStream: TFileStream;
+  TmpBytes: TBytes;
+  S, TmpTrailer, TmpRoot, TmpInfo, TmpOut, TmpDict, TmpRefs: String;
+  TmpPages: TArray<Integer>;
+  TmpObjNums, TmpObjOffsets, TmpObjGens: TArray<Integer>;
+  TmpPrev, TmpSize, TmpNext, TmpBase, TmpGen, TmpDummy, I, J,
+    TmpPagesNum, TmpAt: Integer;
+  TmpMatch: TMatch;
+  TmpRect: TRect2D;
+  TmpAny: Boolean;
+
+  procedure Collect(const ANum: Integer; const ADepth: Integer);
+  var
+    TmpKidsDict: String;
+    TmpKid: TMatch;
+    TmpKidsGen, TmpA, TmpB: Integer;
+  begin
+    if ADepth > 32 then
+      Fail('the page tree is too deep');
+    TmpKidsDict := ObjectDict(S, ANum, TmpKidsGen, TmpA, TmpB);
+    if TmpKidsDict = '' then
+      Fail('page tree object ' + IntToStr(ANum) + ' not found');
+    if TRegEx.IsMatch(TmpKidsDict, '/Type\s*/Pages(?![A-Za-z])') then
+    begin
+      TmpKid := TRegEx.Match(TmpKidsDict, '/Kids\s*\[([^\]]*)\]');
+      if not TmpKid.Success then
+        Fail('a page tree node without /Kids');
+      for TmpKid in TRegEx.Matches(TmpKid.Groups[1].Value,
+        '(\d+)\s+\d+\s+R') do
+        Collect(StrToInt(TmpKid.Groups[1].Value), ADepth + 1);
+    end
+    else
+      TmpPages := TmpPages + [ANum];
+  end;
+
+  procedure AddOffset(const ANum, AGen: Integer);
+  begin
+    TmpObjNums := TmpObjNums + [ANum];
+    TmpObjGens := TmpObjGens + [AGen];
+    TmpObjOffsets := TmpObjOffsets + [TmpBase + Length(TmpOut)];
+  end;
+
+begin
+  TmpAny := False;
+  for I := 0 to High(APageLinks) do
+    if Length(APageLinks[I]) > 0 then
+      TmpAny := True;
+  if not TmpAny then
+    Exit;
+  { Latin-1: one byte, one character, both ways - so a character index
+    is a byte offset and nothing is lost on the way back. }
+  TmpLatin := TEncoding.GetEncoding(28591);
+  try
+    TmpStream := TFileStream.Create(AFileName, fmOpenReadWrite or
+      fmShareDenyWrite);
+    try
+      SetLength(TmpBytes, TmpStream.Size);
+      if Length(TmpBytes) > 0 then
+        TmpStream.ReadBuffer(TmpBytes[0], Length(TmpBytes));
+      S := TmpLatin.GetString(TmpBytes);
+
+      { The previous cross-reference section and its trailer. }
+      TmpMatch := TRegEx.Match(S, 'startxref\s+(\d+)\s+%%EOF\s*$');
+      if not TmpMatch.Success then
+        Fail('no startxref at the end');
+      TmpPrev := StrToInt(TmpMatch.Groups[1].Value);
+      if Copy(S, TmpPrev + 1, 4) <> 'xref' then
+        Fail('a cross-reference stream, which this does not update');
+      TmpAt := Pos('trailer', S, TmpPrev + 1);
+      if (TmpAt = 0) or (DictEnd(S, TmpAt, TmpDummy) = 0) then
+        Fail('no trailer');
+      TmpTrailer := Copy(S, TmpDummy, DictEnd(S, TmpAt, TmpDummy) - TmpDummy);
+      TmpMatch := TRegEx.Match(TmpTrailer, '/Size\s+(\d+)');
+      if not TmpMatch.Success then
+        Fail('no /Size');
+      TmpSize := StrToInt(TmpMatch.Groups[1].Value);
+      TmpMatch := TRegEx.Match(TmpTrailer, '/Root\s+(\d+)\s+(\d+)\s+R');
+      if not TmpMatch.Success then
+        Fail('no /Root');
+      TmpRoot := TmpMatch.Value;
+      TmpMatch := TRegEx.Match(TmpTrailer, '/Info\s+\d+\s+\d+\s+R');
+      if TmpMatch.Success then
+        TmpInfo := TmpMatch.Value
+      else
+        TmpInfo := '';
+
+      { The pages, in document order. }
+      TmpMatch := TRegEx.Match(TmpRoot, '(\d+)');
+      TmpDict := ObjectDict(S, StrToInt(TmpMatch.Value), TmpGen, TmpDummy,
+        TmpAt);
+      TmpMatch := TRegEx.Match(TmpDict, '/Pages\s+(\d+)\s+\d+\s+R');
+      if not TmpMatch.Success then
+        Fail('no /Pages in the catalogue');
+      TmpPagesNum := StrToInt(TmpMatch.Groups[1].Value);
+      SetLength(TmpPages, 0);
+      Collect(TmpPagesNum, 0);
+
+      { The appended part: annotations, then the pages that carry them,
+        then their cross-reference section. }
+      TmpOut := '';
+      if (Length(S) > 0) and not CharInSet(S[Length(S)], [#10, #13]) then
+        TmpOut := PDFEOL;
+      TmpBase := Length(TmpBytes);
+      TmpNext := TmpSize;
+      for I := 0 to Min(High(APageLinks), High(TmpPages)) do
+      begin
+        if Length(APageLinks[I]) = 0 then
+          Continue;
+        TmpRefs := '';
+        for J := 0 to High(APageLinks[I]) do
+        begin
+          if APageLinks[I][J].URL = '' then
+            Continue;
+          TmpRect := ReorderRect2D(APageLinks[I][J].RectMM);
+          AddOffset(TmpNext, 0);
+          TmpOut := TmpOut + IntToStr(TmpNext) + ' 0 obj' + PDFEOL +
+            '<</Type/Annot/Subtype/Link/Rect[' +
+            PDFNum(TmpRect.Left * CADPDFPointsPerMM) + ' ' +
+            PDFNum(TmpRect.Bottom * CADPDFPointsPerMM) + ' ' +
+            PDFNum(TmpRect.Right * CADPDFPointsPerMM) + ' ' +
+            PDFNum(TmpRect.Top * CADPDFPointsPerMM) +
+            ']/Border[0 0 0]/A<</Type/Action/S/URI/URI(' +
+            PDFURILiteral(APageLinks[I][J].URL) + ')>>>>' + PDFEOL +
+            'endobj' + PDFEOL;
+          TmpRefs := TmpRefs + ' ' + IntToStr(TmpNext) + ' 0 R';
+          Inc(TmpNext);
+        end;
+        if TmpRefs = '' then
+          Continue;
+        TmpDict := ObjectDict(S, TmpPages[I], TmpGen, TmpDummy, TmpAt);
+        TmpMatch := TRegEx.Match(TmpDict, '/Annots\s*\[');
+        if TmpMatch.Success then
+        begin
+          TmpAt := Pos(']', TmpDict, TmpMatch.Index + TmpMatch.Length);
+          Insert(TmpRefs, TmpDict, TmpAt);
+        end
+        else if TRegEx.IsMatch(TmpDict, '/Annots\s+\d+\s+\d+\s+R') then
+          Fail('page ' + IntToStr(I + 1) +
+            ' keeps its annotations in an object of their own')
+        else
+          Insert('/Annots[' + Trim(TmpRefs) + ']', TmpDict,
+            Length(TmpDict) - 1);
+        AddOffset(TmpPages[I], TmpGen);
+        TmpOut := TmpOut + IntToStr(TmpPages[I]) + ' ' + IntToStr(TmpGen) +
+          ' obj' + PDFEOL + TmpDict + PDFEOL + 'endobj' + PDFEOL;
+      end;
+      if Length(TmpObjNums) = 0 then
+        Exit;
+
+      TmpAt := TmpBase + Length(TmpOut);
+      TmpOut := TmpOut + 'xref' + PDFEOL;
+      for I := 0 to High(TmpObjNums) do
+        { Twenty bytes an entry, end of line included, as the format
+          insists. }
+        TmpOut := TmpOut + IntToStr(TmpObjNums[I]) + ' 1' + PDFEOL +
+          Format('%.10d %.5d n', [TmpObjOffsets[I], TmpObjGens[I]]) + PDFEOL;
+      TmpOut := TmpOut + 'trailer' + PDFEOL + '<</Size ' +
+        IntToStr(Max(TmpSize, TmpNext)) + TmpRoot + TmpInfo + '/Prev ' +
+        IntToStr(TmpPrev) + '>>' + PDFEOL + 'startxref' + PDFEOL +
+        IntToStr(TmpAt) + PDFEOL + '%%EOF' + PDFEOL;
+
+      TmpBytes := TmpLatin.GetBytes(TmpOut);
+      TmpStream.Seek(0, soEnd);
+      TmpStream.WriteBuffer(TmpBytes[0], Length(TmpBytes));
+    finally
+      TmpStream.Free;
+    end;
+  finally
+    TmpLatin.Free;
+  end;
+end;
+
+{$ENDIF}
 
 end.
