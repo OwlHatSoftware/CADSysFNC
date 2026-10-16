@@ -37,8 +37,8 @@ All changes go into `Sources\VCL.*` (the masters) and are regenerated for FMX/VC
 | CS-03 | **Linear gradient** brush | Must | MP-SHP-006 | Done (734332a) |
 | CS-04 | **Image export** of a sheet or a model rectangle (PNG at a DPI, transparent option) — FMX and VCL | Must | MP-OUT-003 | Done (536ac82) |
 | CS-05 | **SVG backend** + `CADSaveSheetsToSVG` | Must | MP-OUT-006 | Done (69db963) |
-| CS-06 | **EMF + clipboard on FMX (Windows)** through a framework-free GDI backend | Must | MP-OUT-004 | Done |
-| CS-07 | **Printing on FMX** | Should | MP-OUT-002 | Open |
+| CS-06 | **EMF + clipboard on FMX (Windows)** through a framework-free GDI backend | Must | MP-OUT-004 | Done (f0c2c8e) |
+| CS-07 | **Printing on FMX** | Should | MP-OUT-002 | Done |
 | CS-08 | **PDF**: link annotations and font embedding control | Should | MP-OUT-001 | Open |
 | CS-09 | Anisotropic viewport scale (`UnitsPerMMY`) | Could (P1.1) | date window fitted to a sheet while lanes keep their height | Open |
 | CS-10 | Verification items (no change expected) | Must | spike WP-0.1 | Open |
@@ -235,6 +235,8 @@ procedure CADPrintSheetsFMX(const ACAD: TFNCCADCmp2D; const ASheets: TCADSheets;
 ```
 
 Drawing through an FNC graphics on `Printer.Canvas` per page, using `CADDrawSheet` like the VCL version. **Fallback** already used by VisualPlannerFNC (write a temporary PDF and hand it to the shell's `print` verb) stays acceptable if FMX printer output proves unreliable; then this item is closed with a documented decision.
+
+**Done as:** not through the FMX printer canvas but through GDI on the active FMX printer's own device context - `VCL.FNCCS4PrintFMX` (`CADPrintSheetsFMX`, `CADPrintPagesFMX`, `CADFMXPrinterPageDevice`) over `CADPrintSheetsWin` / `CADPrintPagesWin` in `VCL.FNCCS4GDI`. Same drawing as the EMF and the VCL print, and each sheet sets its own orientation and (standard) paper by resetting the DC between pages. Copies and other settings made on FMX's printer object are not carried over. Windows only; elsewhere the calls raise `ECADPageError` and the PDF is the way to paper.
 
 ---
 

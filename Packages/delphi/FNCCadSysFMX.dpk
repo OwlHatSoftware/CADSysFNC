@@ -95,6 +95,7 @@ contains
   FMX.FNCCS4Image in '..\..\Generated\FMX\FMX.FNCCS4Image.pas',
   FMX.FNCCS4SVG in '..\..\Generated\FMX\FMX.FNCCS4SVG.pas',
   FMX.FNCCS4GDI in '..\..\Generated\FMX\FMX.FNCCS4GDI.pas',
+  FMX.FNCCS4PrintFMX in '..\..\Generated\FMX\FMX.FNCCS4PrintFMX.pas',
   FMX.FNCCadSysRegister in '..\..\Generated\FMX\FMX.FNCCadSysRegister.pas';
 
 end.

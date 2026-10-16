@@ -54,7 +54,8 @@ interface
 
 uses
   Winapi.Windows, System.Types, System.Classes, System.SysUtils, System.Math,
-  VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4Paper, VCL.FNCCADSys4;
+  VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4Paper, VCL.FNCCS4Print,
+  VCL.FNCCADSys4;
 
 var
   { : The resolution of the PNG and the bitmap that go on the clipboard
@@ -186,6 +187,40 @@ procedure CADCopySheetToClipboardWin(const ACAD: TFNCCADCmp2D;
 { : The same for ARect of the model at AUnitsPerMM. }
 procedure CADCopyModelRectToClipboardWin(const ACAD: TFNCCADCmp2D;
   const ARect: TRect2D; const AUnitsPerMM: TRealType);
+
+{ : Printing on Windows, straight through GDI - the same drawing as the
+  metafile, on the printer's own device context, with no VCL TPrinter or
+  FMX printer in between. VCL.FNCCS4PrintFMX is built on it.
+
+  Each sheet sets the orientation and, for a standard size, the paper of
+  its own page: the device context is reset between pages, which Windows
+  allows and Vcl.Printers does not offer. A custom size keeps the
+  printer's paper. }
+
+{ : The page device of a printer's device context: its resolution, and
+  where the paper's corner is relative to the printable area - negative,
+  see TCADPageDevice. }
+function CADPrinterDCPageDevice(const ADC: HDC): TCADPageDevice;
+{ : The page device of the printer APrinterName ('' for the default), or
+  a 96 dpi device when there is no such printer. }
+function CADPrinterPageDeviceWin(const APrinterName: String = ''): TCADPageDevice;
+{ : The default printer's name, or '' when there is none. }
+function CADDefaultPrinterName: String;
+
+{ : Prints ASheets, from AFirstSheet to ALastSheet (-1: to the end), one
+  sheet to a page, on APrinterName ('' for the default printer).
+  ATitle names the job in the queue. AOutputFile, when given, is where
+  the printer writes instead of to a port - for a printer that makes
+  files, such as Microsoft Print to PDF, it saves without asking. }
+procedure CADPrintSheetsWin(const ACAD: TFNCCADCmp2D;
+  const ASheets: TCADSheets; const APrinterName: String = '';
+  const ATitle: String = ''; const AFirstSheet: Integer = 0;
+  const ALastSheet: Integer = -1; const AOutputFile: String = '');
+{ : Prints ASetup's pages of the model, the same way. }
+procedure CADPrintPagesWin(const ACAD: TFNCCADCmp2D;
+  const ASetup: TCADPageSetup; const APrinterName: String = '';
+  const ATitle: String = ''; const AFirstPage: Integer = 0;
+  const ALastPage: Integer = -1; const AOutputFile: String = '');
 
 {$ENDIF}
 
@@ -1256,6 +1291,296 @@ begin
     end);
   TmpEMF := CADModelRectToEMF(ACAD, ARect, AUnitsPerMM);
   PutOnClipboard(TmpEMF, TmpPNG);
+end;
+
+{ ------------------------------------------------------------------
+  Printing
+  ------------------------------------------------------------------ }
+
+function CADOpenPrinterW(pPrinterName: PWideChar; out hPrinter: THandle;
+  pDefault: Pointer): BOOL; stdcall;
+  external 'winspool.drv' name 'OpenPrinterW';
+function CADClosePrinter(hPrinter: THandle): BOOL; stdcall;
+  external 'winspool.drv' name 'ClosePrinter';
+function CADDocumentPropertiesW(hWnd: HWND; hPrinter: THandle;
+  pDeviceName: PWideChar; pDevModeOutput, pDevModeInput: Pointer;
+  fMode: DWORD): Longint; stdcall;
+  external 'winspool.drv' name 'DocumentPropertiesW';
+function CADGetDefaultPrinterW(pszBuffer: PWideChar; pcchBuffer: PDWORD): BOOL;
+  stdcall; external 'winspool.drv' name 'GetDefaultPrinterW';
+
+const
+  CAD_DMORIENT_PORTRAIT = 1;
+  CAD_DMORIENT_LANDSCAPE = 2;
+  CAD_DM_ORIENTATION = $00000001;
+  CAD_DM_PAPERSIZE = $00000002;
+  CAD_DM_PAPERLENGTH = $00000004;
+  CAD_DM_PAPERWIDTH = $00000008;
+  { DMPAPER_ for each TCADPaperKind, 0 for "leave the printer's". A1
+    and A0 have no number of their own in GDI. }
+  CADPaperToDMPaper: array [TCADPaperKind] of SmallInt = (11 { A5 },
+    9 { A4 }, 8 { A3 }, 66 { A2 }, 0, 0, 1 { Letter }, 5 { Legal },
+    3 { Tabloid }, 0);
+
+function CADDefaultPrinterName: String;
+var
+  TmpLen: DWORD;
+  TmpBuf: array of WideChar;
+begin
+  Result := '';
+  TmpLen := 0;
+  CADGetDefaultPrinterW(nil, @TmpLen);
+  if TmpLen = 0 then
+    Exit;
+  SetLength(TmpBuf, TmpLen + 1);
+  if CADGetDefaultPrinterW(@TmpBuf[0], @TmpLen) then
+    Result := PWideChar(@TmpBuf[0]);
+end;
+
+function CADPrinterDCPageDevice(const ADC: HDC): TCADPageDevice;
+begin
+  Result := TCADPageDevice.FromDPI(96, 96);
+  if ADC = 0 then
+    Exit;
+  Result := TCADPageDevice.FromDPI(GetDeviceCaps(ADC, LOGPIXELSX),
+    GetDeviceCaps(ADC, LOGPIXELSY));
+  Result.OffsetXPx := -GetDeviceCaps(ADC, PHYSICALOFFSETX);
+  Result.OffsetYPx := -GetDeviceCaps(ADC, PHYSICALOFFSETY);
+end;
+
+function ResolvePrinterName(const AName: String): String;
+begin
+  Result := AName;
+  if Result = '' then
+    Result := CADDefaultPrinterName;
+end;
+
+function CADPrinterPageDeviceWin(const APrinterName: String): TCADPageDevice;
+var
+  TmpName: String;
+  TmpIC: HDC;
+begin
+  Result := TCADPageDevice.FromDPI(96, 96);
+  TmpName := ResolvePrinterName(APrinterName);
+  if TmpName = '' then
+    Exit;
+  TmpIC := CreateICW('WINSPOOL', PChar(TmpName), nil, nil);
+  if TmpIC = 0 then
+    Exit;
+  try
+    Result := CADPrinterDCPageDevice(TmpIC);
+  finally
+    DeleteDC(TmpIC);
+  end;
+end;
+
+{ : The printer's own DEVMODE, driver part and all, or nothing when the
+  printer will not say. }
+function LoadDevMode(const AName: String): TBytes;
+var
+  TmpPrinter: THandle;
+  TmpSize: Integer;
+begin
+  SetLength(Result, 0);
+  if not CADOpenPrinterW(PChar(AName), TmpPrinter, nil) then
+    Exit;
+  try
+    TmpSize := CADDocumentPropertiesW(0, TmpPrinter, PChar(AName), nil, nil, 0);
+    if TmpSize <= 0 then
+      Exit;
+    SetLength(Result, TmpSize);
+    if CADDocumentPropertiesW(0, TmpPrinter, PChar(AName), @Result[0], nil,
+      DM_OUT_BUFFER) < 0 then
+      SetLength(Result, 0);
+  finally
+    CADClosePrinter(TmpPrinter);
+  end;
+end;
+
+{ : ADevMode with the orientation and paper of one page, merged by the
+  driver - which may refuse a paper it does not have and keep its own. }
+procedure SetPageMode(const AName: String; var ADevMode: TBytes;
+  const AOrientation: TCADPageOrientation; const APaper: TCADPaperKind);
+var
+  TmpMode: PDeviceModeW;
+  TmpOut: TBytes;
+  TmpPrinter: THandle;
+begin
+  if Length(ADevMode) = 0 then
+    Exit;
+  TmpMode := PDeviceModeW(@ADevMode[0]);
+  TmpMode.dmFields := TmpMode.dmFields or CAD_DM_ORIENTATION;
+  if AOrientation = pgoLandscape then
+    TmpMode.dmOrientation := CAD_DMORIENT_LANDSCAPE
+  else
+    TmpMode.dmOrientation := CAD_DMORIENT_PORTRAIT;
+  if CADPaperToDMPaper[APaper] <> 0 then
+  begin
+    { A paper number, and no explicit length and width to override it. }
+    TmpMode.dmFields := (TmpMode.dmFields or CAD_DM_PAPERSIZE) and
+      not (CAD_DM_PAPERLENGTH or CAD_DM_PAPERWIDTH);
+    TmpMode.dmPaperSize := CADPaperToDMPaper[APaper];
+  end;
+  if not CADOpenPrinterW(PChar(AName), TmpPrinter, nil) then
+    Exit;
+  try
+    TmpOut := Copy(ADevMode);
+    if CADDocumentPropertiesW(0, TmpPrinter, PChar(AName), @TmpOut[0],
+      @ADevMode[0], DM_IN_BUFFER or DM_OUT_BUFFER) >= 0 then
+      ADevMode := TmpOut;
+  finally
+    CADClosePrinter(TmpPrinter);
+  end;
+end;
+
+type
+  TCADWinPageSetup = reference to procedure(const AIndex: Integer;
+    out AOrientation: TCADPageOrientation; out APaper: TCADPaperKind);
+  TCADWinPageDraw = reference to procedure(const AIndex: Integer;
+    const ADevice: TCADPageDevice; const ACanvas: TDecorativeCanvas);
+
+procedure PrintJob(const APrinterName, ATitle, AOutputFile: String;
+  const AFirst, ALast: Integer; const ASetup: TCADWinPageSetup;
+  const ADraw: TCADWinPageDraw);
+var
+  TmpName, TmpTitle: String;
+  TmpDevMode: TBytes;
+  TmpModePtr: PDeviceModeW;
+  TmpDC: HDC;
+  TmpInfo: TDocInfoW;
+  TmpOrientation: TCADPageOrientation;
+  TmpPaper: TCADPaperKind;
+  TmpDevice: TCADPageDevice;
+  TmpGraphics: TCADGDIGraphics;
+  TmpCanvas: TDecorativeCanvas;
+  I: Integer;
+begin
+  TmpName := ResolvePrinterName(APrinterName);
+  if TmpName = '' then
+    Raise ECADPageError.Create('There is no printer to print on');
+  TmpDevMode := LoadDevMode(TmpName);
+  ASetup(AFirst, TmpOrientation, TmpPaper);
+  SetPageMode(TmpName, TmpDevMode, TmpOrientation, TmpPaper);
+  if Length(TmpDevMode) > 0 then
+    TmpModePtr := PDeviceModeW(@TmpDevMode[0])
+  else
+    TmpModePtr := nil;
+  TmpDC := CreateDCW('WINSPOOL', PChar(TmpName), nil, TmpModePtr);
+  if TmpDC = 0 then
+    RaiseLastOSError;
+  try
+    TmpTitle := ATitle;
+    if TmpTitle = '' then
+      TmpTitle := 'CADSys';
+    FillChar(TmpInfo, SizeOf(TmpInfo), 0);
+    TmpInfo.cbSize := SizeOf(TmpInfo);
+    TmpInfo.lpszDocName := PChar(TmpTitle);
+    if AOutputFile <> '' then
+      TmpInfo.lpszOutput := PChar(AOutputFile);
+    if StartDocW(TmpDC, TmpInfo) <= 0 then
+      RaiseLastOSError;
+    try
+      for I := AFirst to ALast do
+      begin
+        { Between EndPage and StartPage is the one place a printer's DC
+          may be reset, and the page after takes the new mode. }
+        if (I > AFirst) and (Length(TmpDevMode) > 0) then
+        begin
+          ASetup(I, TmpOrientation, TmpPaper);
+          SetPageMode(TmpName, TmpDevMode, TmpOrientation, TmpPaper);
+          ResetDCW(TmpDC, PDeviceModeW(@TmpDevMode[0])^);
+        end;
+        if StartPage(TmpDC) <= 0 then
+          RaiseLastOSError;
+        { Asked per page: a page turned the other way has its printable
+          area somewhere else. }
+        TmpDevice := CADPrinterDCPageDevice(TmpDC);
+        TmpGraphics := TCADGDIGraphics.Create(TmpDC, TmpDevice.PixelsPerMM);
+        try
+          TmpCanvas := TDecorativeCanvas.Create(TmpGraphics, False);
+          try
+            ADraw(I, TmpDevice, TmpCanvas);
+          finally
+            TmpCanvas.Free;
+          end;
+        finally
+          TmpGraphics.Free;
+        end;
+        if EndPage(TmpDC) <= 0 then
+          RaiseLastOSError;
+      end;
+    except
+      { A half-printed document left in the spooler is worse than none. }
+      AbortDoc(TmpDC);
+      Raise;
+    end;
+    EndDoc(TmpDC);
+  finally
+    DeleteDC(TmpDC);
+  end;
+end;
+
+procedure CADPrintSheetsWin(const ACAD: TFNCCADCmp2D;
+  const ASheets: TCADSheets; const APrinterName: String;
+  const ATitle: String; const AFirstSheet: Integer;
+  const ALastSheet: Integer; const AOutputFile: String);
+var
+  TmpFirst, TmpLast: Integer;
+begin
+  if (ACAD = nil) or (ASheets = nil) then
+    Exit;
+  TmpFirst := Max(0, AFirstSheet);
+  TmpLast := ALastSheet;
+  if (TmpLast < 0) or (TmpLast > ASheets.Count - 1) then
+    TmpLast := ASheets.Count - 1;
+  if TmpLast < TmpFirst then
+    Exit;
+  PrintJob(APrinterName, ATitle, AOutputFile, TmpFirst, TmpLast,
+    procedure(const AIndex: Integer; out AOrientation: TCADPageOrientation;
+      out APaper: TCADPaperKind)
+    begin
+      AOrientation := ASheets[AIndex].Orientation;
+      APaper := ASheets[AIndex].Paper;
+    end,
+    procedure(const AIndex: Integer; const ADevice: TCADPageDevice;
+      const ACanvas: TDecorativeCanvas)
+    begin
+      CADDrawSheet(ACAD, ASheets[AIndex], ADevice, ACanvas);
+    end);
+end;
+
+procedure CADPrintPagesWin(const ACAD: TFNCCADCmp2D;
+  const ASetup: TCADPageSetup; const APrinterName: String;
+  const ATitle: String; const AFirstPage: Integer; const ALastPage: Integer;
+  const AOutputFile: String);
+var
+  TmpSetup: TCADPageSetup;
+  TmpFirst, TmpLast, TmpCount: Integer;
+begin
+  if ACAD = nil then
+    Exit;
+  { A copy, because the query methods are not const and a const record
+    parameter cannot be asked anything. }
+  TmpSetup := ASetup;
+  TmpCount := TmpSetup.PageCount(ACAD);
+  TmpFirst := Max(0, AFirstPage);
+  TmpLast := ALastPage;
+  if (TmpLast < 0) or (TmpLast > TmpCount - 1) then
+    TmpLast := TmpCount - 1;
+  if TmpLast < TmpFirst then
+    Exit;
+  PrintJob(APrinterName, ATitle, AOutputFile, TmpFirst, TmpLast,
+    procedure(const AIndex: Integer; out AOrientation: TCADPageOrientation;
+      out APaper: TCADPaperKind)
+    begin
+      AOrientation := TmpSetup.Orientation;
+      APaper := TmpSetup.Paper;
+    end,
+    procedure(const AIndex: Integer; const ADevice: TCADPageDevice;
+      const ACanvas: TDecorativeCanvas)
+    begin
+      CADDrawPage(ACAD, TmpSetup, ADevice, AIndex, ACanvas);
+    end);
 end;
 
 initialization

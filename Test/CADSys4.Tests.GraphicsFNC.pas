@@ -19,7 +19,7 @@ uses
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsFNC,
   VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCadSysRegister,
   VCL.FNCCS4Paper, VCL.FNCCS4Image, Vcl.Imaging.pngimage, VCL.FNCCS4SVG,
-  VCL.FNCCS4GDI, System.IOUtils, Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom, Xml.omnixmldom;
+  VCL.FNCCS4GDI, System.IOUtils, System.RegularExpressions, Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom, Xml.omnixmldom;
 
 type
   { : CS-04: a sheet, or a rectangle of the model, as a PNG. Here rather
@@ -134,6 +134,8 @@ type
     procedure AMetafileFileIsWritten;
     [Test]
     procedure TheClipboardGetsAllThreeFormats;
+    [Test]
+    procedure SheetsPrintEachInItsOwnOrientation;
   end;
 
   [TestFixture]
@@ -1420,6 +1422,84 @@ begin
     Assert.IsTrue(IsClipboardFormatAvailable(CF_DIB), 'the bitmap');
   finally
     TmpCAD.Free;
+  end;
+end;
+
+procedure TCADGDIExportTests.SheetsPrintEachInItsOwnOrientation;
+const
+  PDFPrinter = 'Microsoft Print to PDF';
+var
+  TmpCAD: TFNCCADCmp2D;
+  TmpSheet: TCADSheet;
+  TmpIC: HDC;
+  TmpName, TmpText, TmpBoxes: string;
+  TmpBytes: TBytes;
+  TmpMatch: TMatch;
+  TmpW, TmpH: Double;
+  TmpPortrait, TmpLandscape, I: Integer;
+begin
+  TmpIC := CreateIC('WINSPOOL', PDFPrinter, nil, nil);
+  if TmpIC = 0 then
+  begin
+    Assert.Pass(PDFPrinter + ' is not installed here');
+    Exit;
+  end;
+  DeleteDC(TmpIC);
+  TmpName := TPath.Combine(TPath.GetTempPath, 'CADSysPrintTest.pdf');
+  if TFile.Exists(TmpName) then
+    TFile.Delete(TmpName);
+  TmpCAD := TFNCCADCmp2D.Create(nil);
+  try
+    TmpSheet := TmpCAD.Sheets.Add('Upright');
+    TmpSheet.Paper := pkA4;
+    TmpSheet.Orientation := pgoPortrait;
+    TmpSheet.AddObject(TFrame2D.Create(-1, Point2D(10, 10), Point2D(200, 287)));
+    TmpSheet := TmpCAD.Sheets.Add('Wide');
+    TmpSheet.Paper := pkA4;
+    TmpSheet.Orientation := pgoLandscape;
+    TmpSheet.AddObject(TFrame2D.Create(-1, Point2D(10, 10), Point2D(287, 200)));
+    CADPrintSheetsWin(TmpCAD, TmpCAD.Sheets, PDFPrinter, 'CADSys print test',
+      0, -1, TmpName);
+  finally
+    TmpCAD.Free;
+  end;
+  { The spooler writes the file after EndDoc, in its own time. }
+  for I := 1 to 100 do
+  begin
+    if TFile.Exists(TmpName) then
+      try
+        TmpBytes := TFile.ReadAllBytes(TmpName);
+        if (Length(TmpBytes) > 0) and
+          (Pos('%%EOF', TEncoding.ANSI.GetString(TmpBytes)) > 0) then
+          Break;
+      except
+        { Still being written. }
+      end;
+    Sleep(100);
+  end;
+  try
+    Assert.IsTrue(Length(TmpBytes) > 0, 'the printer wrote the file');
+    TmpText := TEncoding.ANSI.GetString(TmpBytes);
+    Assert.IsTrue(Copy(TmpText, 1, 5) = '%PDF-', 'a PDF');
+    TmpPortrait := 0;
+    TmpLandscape := 0;
+    TmpBoxes := '';
+    for TmpMatch in TRegEx.Matches(TmpText,
+      '/MediaBox\s*\[\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)') do
+    begin
+      TmpW := StrToFloat(TmpMatch.Groups[1].Value, TFormatSettings.Invariant);
+      TmpH := StrToFloat(TmpMatch.Groups[2].Value, TFormatSettings.Invariant);
+      TmpBoxes := TmpBoxes + ' ' + TmpMatch.Value;
+      if TmpW < TmpH then
+        Inc(TmpPortrait)
+      else if TmpW > TmpH then
+        Inc(TmpLandscape);
+    end;
+    Assert.IsTrue((TmpPortrait > 0) and (TmpLandscape > 0),
+      'one page each way:' + TmpBoxes);
+  finally
+    if TFile.Exists(TmpName) then
+      TFile.Delete(TmpName);
   end;
 end;
 
