@@ -2,15 +2,14 @@
 
   Demos\CAD2D\VCL\PrintPrvFrm.pas is the same dialog written for the
   VCL - same class name, same Execute, same handler names, same order.
-  Diff them. Two things differ and both are substantive: the Print
-  button prints there and says what is missing here, and LayoutBar uses
-  plain numbers here and measures the font there.
+  Diff them. Two things differ: the Print button prints through
+  VCL.FNCCS4ExportVCL there and FMX.FNCCS4PrintFMX here, and LayoutBar
+  uses plain numbers here and measures the font there.
 
   The preview itself is the library's TFNCPrintPreview, unchanged from
   the VCL side. It is an FNC control drawing through the same
   CADDrawPage the printer uses, so a page looks the same on both
-  frameworks without either demo doing anything about it. That is worth
-  more than the printing this side is missing. }
+  frameworks without either demo doing anything about it. }
 unit PrintPrvFrm;
 
 {$I FMX.FNCCADSys.inc}
@@ -23,7 +22,7 @@ uses
   FMX.Layouts, FMX.Controls.Presentation, FMX.Dialogs,
   DemoLog,
   FMX.FNCCS4BaseTypes, FMX.FNCCS4Graphics, FMX.FNCCADSys4, FMX.FNCCS4Views,
-  FMX.FNCCS4Print, FMX.FNCCS4Preview, FMX.FNCCS4PDF;
+  FMX.FNCCS4Print, FMX.FNCCS4Preview, FMX.FNCCS4PDF, FMX.FNCCS4PrintFMX;
 
 type
   TPrintPreviewForm = class(TForm)
@@ -429,16 +428,29 @@ end;
 
 procedure TPrintPreviewForm.PrintClick(Sender: TObject);
 begin
-  { The substantive difference between this file and its VCL twin.
-    Printing is CADPrintPages in VCL.FNCCS4ExportVCL, which is VCL-only
-    by construction - it wants a TPrinter and a GDI device context. The
-    page model underneath is not, so an FMX printer path is a unit to
-    write rather than a design to redo. }
-  Log('PrintPreview: print asked for on FMX');
-  ShowMessage('Sending pages to a printer is VCL-only for now. PDF is not: '
-    + 'the PDF button beside this one works here exactly as it does on '
-    + 'the VCL side, from the same page model, and most things that want '
-    + 'a printed drawing will take a PDF.');
+{$IFDEF MSWINDOWS}
+  { FMX has no print dialog of its own, so the printer is FMX's active
+    one - the default printer unless the application chose another
+    through FMX.Printer. }
+  if CADFMXPrinterName = '' then
+  begin
+    ShowMessage('There is no printer.');
+    Exit;
+  end;
+  Log('PrintPreview: printing');
+  { The one difference from the VCL twin: FMX.FNCCS4PrintFMX instead of
+    VCL.FNCCS4ExportVCL. Both draw the same sheet or the same pages. }
+  if SelectedSheet <> nil then
+    CADPrintSheetsFMX(fCAD, fCAD.Sheets, 'CAD2D', fSheetBox.ItemIndex - 1,
+      fSheetBox.ItemIndex - 1)
+  else
+    CADPrintPagesFMX(fCAD, fSetup, 'CAD2D');
+  Log('PrintPreview: printed on ' + CADFMXPrinterName);
+  ShowMessage('Sent to ' + CADFMXPrinterName + '.');
+{$ELSE}
+  ShowMessage('Printing from FMX is Windows-only. The PDF button beside '
+    + 'this one works everywhere.');
+{$ENDIF}
 end;
 
 procedure TPrintPreviewForm.CloseClick(Sender: TObject);

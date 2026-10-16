@@ -27,6 +27,7 @@ uses
   DemoLog, DemoDlg, LayersFrm, PrintPrvFrm,
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCS4Tasks,
   VCL.FNCCS4DXFModule, VCL.FNCCS4Legacy, VCL.FNCCS4Print, VCL.FNCCS4ExportVCL, VCL.FNCCS4Views,
+  VCL.FNCCS4Image, VCL.FNCCS4SVG, VCL.FNCCS4GDI,
   { VCL.FNCCadSysRegister is here for its initialization section, not for
     the component palette: it is the only place that fills the class
     registry, and without it LoadFromFile and SaveToFile have no class
@@ -215,6 +216,17 @@ type
     procedure ViewPaint(Sender: TObject);
     function IsSameRect2D(const A, B: TRect2D): Boolean;
     procedure ExportDXFClick(Sender: TObject);
+    function ExportSheet: TCADSheet;
+    function AskExportFile(const AFilter, AExt: string;
+      out AFileName: string): Boolean;
+    procedure ExportSVGClick(Sender: TObject);
+    procedure ExportPNGClick(Sender: TObject);
+    procedure ExportEMFClick(Sender: TObject);
+    procedure CopySheetClick(Sender: TObject);
+    procedure ViewportInsetClick(Sender: TObject);
+    procedure SampleViewportHook(Sender: TObject;
+      const AInfo: TCADSheetViewportDrawInfo;
+      const APhase: TCADViewportDrawPhase);
     procedure PrintPreviewClick(Sender: TObject);
     procedure PrintActualClick(Sender: TObject);
     procedure PrintFitClick(Sender: TObject);
@@ -526,7 +538,7 @@ end;
 
 procedure TMainForm.BuildMenu;
 var
-  TmpFile, TmpEdit, TmpView, TmpJust, TmpPrint, TmpNamed: TMenuItem;
+  TmpFile, TmpEdit, TmpView, TmpJust, TmpPrint, TmpNamed, TmpExport: TMenuItem;
 begin
   Log('BuildMenu');
   fMenu := TMainMenu.Create(Self);
@@ -540,11 +552,17 @@ begin
   AddItem(TmpFile, 'Import DXF...', ImportDXFClick);
   AddItem(TmpFile, 'Import legacy .CS2...', ImportLegacyClick);
   AddItem(TmpFile, 'Export DXF...', ExportDXFClick);
+  TmpExport := AddMenu(TmpFile, 'Export sheet');
+  AddItem(TmpExport, 'SVG...', ExportSVGClick);
+  AddItem(TmpExport, 'PNG...', ExportPNGClick);
+  AddItem(TmpExport, 'EMF...', ExportEMFClick);
+  AddItem(TmpExport, 'To clipboard (vector)', CopySheetClick);
   AddSeparator(TmpFile);
   AddItem(TmpFile, 'Save view...', SaveViewClick);
   AddItem(TmpFile, 'Open view...', OpenViewClick);
   AddItem(TmpFile, 'New sheet', NewSheetClick);
   AddItem(TmpFile, 'Show sheet / model', ShowSheetClick);
+  AddItem(TmpFile, 'Viewport inset...', ViewportInsetClick);
   AddSeparator(TmpFile);
   TmpPrint := AddMenu(TmpFile, 'Print');
   AddItem(TmpPrint, 'Preview...', PrintPreviewClick);
@@ -685,6 +703,9 @@ begin
 
   Log('BuildControls: TFNCCADCmp2D');
   fCAD := TFNCCADCmp2D.Create(Self);
+  { The sample furniture for a viewport with an inset - see
+    SampleViewportHook. It does nothing for a viewport without one. }
+  fCAD.OnDrawSheetViewport := SampleViewportHook;
 
   Log('BuildControls: TFNCCADViewport2D');
   fView := TFNCCADViewport2D.Create(Self);
@@ -2401,6 +2422,261 @@ begin
   Say(Format('Repaint: %d ms for %d objects.', [TmpMs, fCAD.ObjectsCount]));
 end;
 
+{ ------------------------------------------------------------------
+  Sheet output and viewport furniture (CS-04 to CS-07, CS-01)
+  ------------------------------------------------------------------ }
+
+function TMainForm.ExportSheet: TCADSheet;
+begin
+  { The sheet on the screen, or the first one when the model is. }
+  Result := fView.Sheet;
+  if (Result = nil) and (fCAD.Sheets.Count > 0) then
+    Result := fCAD.Sheets[0];
+  if Result = nil then
+    Say('There are no sheets yet. File - New sheet makes one.');
+end;
+
+function TMainForm.AskExportFile(const AFilter, AExt: string;
+  out AFileName: string): Boolean;
+var
+  TmpDlg: TSaveDialog;
+begin
+  AFileName := '';
+  TmpDlg := TSaveDialog.Create(Self);
+  try
+    TmpDlg.Filter := AFilter;
+    TmpDlg.DefaultExt := AExt;
+    Result := TmpDlg.Execute;
+    if Result then
+      AFileName := TmpDlg.FileName;
+  finally
+    TmpDlg.Free;
+  end;
+end;
+
+procedure TMainForm.ExportSVGClick(Sender: TObject);
+var
+  TmpSheet: TCADSheet;
+  TmpName: string;
+begin
+  TmpSheet := ExportSheet;
+  if (TmpSheet = nil) or not AskExportFile('SVG (*.svg)|*.svg', 'svg',
+    TmpName) then
+    Exit;
+  CADSaveSheetsToSVG(fCAD, [TmpSheet], TmpName);
+  Log('export: SVG ' + TmpName);
+  Say(Format('%s written as SVG, at the size of its paper.', [TmpSheet.Name]));
+end;
+
+procedure TMainForm.ExportPNGClick(Sender: TObject);
+var
+  TmpSheet: TCADSheet;
+  TmpName, TmpDPI: string;
+begin
+  TmpSheet := ExportSheet;
+  if TmpSheet = nil then
+    Exit;
+  TmpDPI := '300';
+  if not AskString('Export PNG', 'Dots per inch', TmpDPI) then
+    Exit;
+  if StrToIntDef(Trim(TmpDPI), 0) <= 0 then
+  begin
+    Say(Format('"%s" is not a resolution.', [TmpDPI]));
+    Exit;
+  end;
+  if not AskExportFile('PNG (*.png)|*.png', 'png', TmpName) then
+    Exit;
+  try
+    CADSaveSheetToImage(fCAD, TmpSheet, TmpName, StrToInt(Trim(TmpDPI)));
+  except
+    on E: ECADPageError do
+    begin
+      Say(E.Message);
+      Exit;
+    end;
+  end;
+  Log('export: PNG ' + TmpName);
+  Say(Format('%s written as PNG at %s dpi.', [TmpSheet.Name, Trim(TmpDPI)]));
+end;
+
+procedure TMainForm.ExportEMFClick(Sender: TObject);
+var
+  TmpSheet: TCADSheet;
+  TmpName: string;
+begin
+{$IFDEF MSWINDOWS}
+  TmpSheet := ExportSheet;
+  if (TmpSheet = nil) or not AskExportFile('Enhanced metafile (*.emf)|*.emf',
+    'emf', TmpName) then
+    Exit;
+  CADSaveSheetToEMF(fCAD, TmpSheet, TmpName);
+  Log('export: EMF ' + TmpName);
+  Say(Format('%s written as an enhanced metafile.', [TmpSheet.Name]));
+{$ELSE}
+  Say('Metafiles are a Windows thing.');
+{$ENDIF}
+end;
+
+procedure TMainForm.CopySheetClick(Sender: TObject);
+var
+  TmpSheet: TCADSheet;
+begin
+{$IFDEF MSWINDOWS}
+  TmpSheet := ExportSheet;
+  if TmpSheet = nil then
+    Exit;
+  CADCopySheetToClipboardWin(fCAD, TmpSheet);
+  Log('export: ' + TmpSheet.Name + ' to the clipboard');
+  Say(Format('%s is on the clipboard as a metafile, a PNG and a bitmap. '
+    + 'Word and PowerPoint paste the metafile, which stays sharp.',
+    [TmpSheet.Name]));
+{$ELSE}
+  Say('The clipboard export is Windows-only.');
+{$ENDIF}
+end;
+
+procedure TMainForm.ViewportInsetClick(Sender: TObject);
+var
+  TmpVP: TCADSheetViewport;
+  TmpText: string;
+  TmpParts: TArray<string>;
+  TmpValues: array [0 .. 3] of TRealType;
+  TmpInset: TRect2D;
+  Cont: Integer;
+begin
+  if fView.Sheet = nil then
+  begin
+    Say('An inset belongs to a sheet viewport. File - Show sheet / model '
+      + 'first.');
+    Exit;
+  end;
+  if fView.Sheet.ViewportCount = 0 then
+  begin
+    Say('This sheet has no viewports.');
+    Exit;
+  end;
+  { The last viewport placed: a demo, not a picker. }
+  TmpVP := fView.Sheet.Viewports[fView.Sheet.ViewportCount - 1];
+  TmpInset := TmpVP.ContentInsetMM;
+  if (TmpInset.Left = 0) and (TmpInset.Top = 0) and (TmpInset.Right = 0) and
+    (TmpInset.Bottom = 0) then
+    TmpText := '25; 10; 0; 0'
+  else
+    TmpText := Format('%g; %g; %g; %g', [TmpInset.Left, TmpInset.Top,
+      TmpInset.Right, TmpInset.Bottom]);
+  { Semicolons: a decimal comma is a comma too. }
+  if not AskString('Viewport inset', Format('Margins inside "%s", mm: left; '
+    + 'top; right; bottom', [TmpVP.Name]), TmpText) then
+    Exit;
+  TmpParts := TmpText.Split([';']);
+  if Length(TmpParts) <> 4 then
+  begin
+    Say('Four numbers, separated by semicolons: left; top; right; bottom.');
+    Exit;
+  end;
+  for Cont := 0 to 3 do
+  begin
+    TmpValues[Cont] := StrToFloatDef(Trim(TmpParts[Cont]), -1);
+    if TmpValues[Cont] < 0 then
+    begin
+      Say(Format('"%s" is not a margin.', [Trim(TmpParts[Cont])]));
+      Exit;
+    end;
+  end;
+  { Rect2D takes left, bottom, right, top; each one here is a width. }
+  TmpVP.ContentInsetMM := Rect2D(TmpValues[0], TmpValues[3], TmpValues[2],
+    TmpValues[1]);
+  Log(Format('viewport "%s": inset %g; %g; %g; %g mm', [TmpVP.Name,
+    TmpValues[0], TmpValues[1], TmpValues[2], TmpValues[3]]));
+  fView.Repaint;
+  Say('The model keeps out of those margins now. The sample hook draws in '
+    + 'them: the model window''s X range and ten ticks across the top, the '
+    + 'Y range down the left - in the preview, the PDF and every export '
+    + 'too.');
+end;
+
+procedure TMainForm.SampleViewportHook(Sender: TObject;
+  const AInfo: TCADSheetViewportDrawInfo;
+  const APhase: TCADViewportDrawPhase);
+var
+  G: TCADGraphics;
+  TmpBand, TmpR: TRect;
+  TmpFont: TCADFontSpec;
+  TmpWin: TRect2D;
+  TmpPt: TPoint2D;
+  I, TmpTick: Integer;
+begin
+  { What an application draws per viewport: here, a band in each margin
+    with ticks at tenths of the model window and the range written in
+    it. A viewport without an inset has no margins and gets nothing. }
+  if APhase <> vdpAfterModel then
+    Exit;
+  G := AInfo.Canvas.Graphics;
+  TmpWin := ReorderRect2D(AInfo.ModelWindow);
+  G.Pen.Style := cpsSolid;
+  G.Pen.Color := cadclGray;
+  G.Pen.Width := Max(1, Round(0.2 * AInfo.PixelsPerMM));
+  G.Brush.Style := cbsSolid;
+  G.Brush.Color := CADColor($FF, $F2, $F2, $EC);
+  TmpFont := TCADFontSpec.Default;
+  TmpFont.FaceName := 'Arial';
+
+  if AInfo.ContentPx.Top > AInfo.OuterPx.Top then
+  begin
+    TmpBand := Rect(AInfo.ContentPx.Left, AInfo.OuterPx.Top,
+      AInfo.ContentPx.Right, AInfo.ContentPx.Top);
+    G.Rectangle(TmpBand.Left, TmpBand.Top, TmpBand.Right, TmpBand.Bottom);
+    TmpTick := (TmpBand.Bottom - TmpBand.Top) div 3;
+    for I := 0 to 10 do
+    begin
+      TmpPt := TransformPoint2D(Point2D(TmpWin.Left + I * (TmpWin.Right -
+        TmpWin.Left) / 10, TmpWin.Top), AInfo.ModelToDevice);
+      G.MoveTo(Round(TmpPt.X), TmpBand.Bottom);
+      G.LineTo(Round(TmpPt.X), TmpBand.Bottom - TmpTick);
+    end;
+    TmpFont.Height := -Max(1, Round((TmpBand.Bottom - TmpBand.Top) * 0.4));
+    G.SelectFont(TmpFont);
+    try
+      G.FontColor := cadclBlack;
+      G.Transparent := True;
+      TmpR := Rect(TmpBand.Left + Round(AInfo.PixelsPerMM), TmpBand.Top,
+        TmpBand.Right, TmpBand.Bottom - TmpTick);
+      G.DrawText(Format('x %.5g .. %.5g', [TmpWin.Left, TmpWin.Right]), TmpR,
+        CAD_DT_SINGLELINE or CAD_DT_VCENTER or CAD_DT_NOPREFIX);
+    finally
+      G.ResetFont;
+    end;
+  end;
+
+  if AInfo.ContentPx.Left > AInfo.OuterPx.Left then
+  begin
+    TmpBand := Rect(AInfo.OuterPx.Left, AInfo.ContentPx.Top,
+      AInfo.ContentPx.Left, AInfo.ContentPx.Bottom);
+    G.Rectangle(TmpBand.Left, TmpBand.Top, TmpBand.Right, TmpBand.Bottom);
+    TmpTick := (TmpBand.Right - TmpBand.Left) div 4;
+    for I := 0 to 10 do
+    begin
+      TmpPt := TransformPoint2D(Point2D(TmpWin.Left, TmpWin.Bottom + I *
+        (TmpWin.Top - TmpWin.Bottom) / 10), AInfo.ModelToDevice);
+      G.MoveTo(TmpBand.Right, Round(TmpPt.Y));
+      G.LineTo(TmpBand.Right - TmpTick, Round(TmpPt.Y));
+    end;
+    TmpFont.Height := -Max(1, Round(3 * AInfo.PixelsPerMM));
+    G.SelectFont(TmpFont);
+    try
+      G.FontColor := cadclBlack;
+      G.Transparent := True;
+      TmpR := Rect(TmpBand.Left + Round(AInfo.PixelsPerMM),
+        TmpBand.Top + Round(AInfo.PixelsPerMM), TmpBand.Right - TmpTick,
+        TmpBand.Bottom);
+      G.DrawText(Format('y %.5g .. %.5g', [TmpWin.Bottom, TmpWin.Top]), TmpR,
+        CAD_DT_WORDBREAK or CAD_DT_NOPREFIX);
+    finally
+      G.ResetFont;
+    end;
+  end;
+end;
+
 initialization
 
 { The vector font the text tool and the DXF reader need. Registered from
@@ -2408,5 +2684,6 @@ initialization
 if FileExists(ExtractFilePath(ParamStr(0)) + 'RomanC.json') then
   CADSysRegisterFontFromFile(0, ExtractFilePath(ParamStr(0)) +
     'RomanC.json');
+
 
 end.

@@ -51,6 +51,14 @@ A layer carries its pen and brush, whose styles are the drawing-layer names (`"s
 }
 ```
 
+A brush with the style `"gradient"` blends from `color` to `color2`, left to
+right, or top to bottom when `gradientVertical` is true; the alpha comes from
+`color`. The two members are written only for a gradient:
+
+```jsonc
+"brush": { "color": "#3070C0", "style": "gradient", "color2": "#FFFFFF", "gradientVertical": false }
+```
+
 Reading is lenient: a missing member takes its default, an unknown enum name falls back to the default. A structurally wrong file (a member that must be an object or array and is not) raises `ECADJSONError`; a wrong `format`, `kind` or `version` raises `ECADFileNotValid`.
 
 ## Sheets and named views
@@ -66,13 +74,16 @@ when it has something in it:
     "name": "Sheet 1",
     "paper": "A3", "orientation": "landscape",
     "marginLeftMM": 10, "marginTopMM": 10, "marginRightMM": 10, "marginBottomMM": 10,
+    "appData": "{\"series\":2}",          // only when set; the application's own text
     "viewports": [ {
       "name": "Detail 1",
       "min": [20, 177], "max": [140, 277],   // the rectangle on the paper, mm
       "unitsPerMM": 0,                       // 0 fits the view to the rectangle
       "border": true,
       "view": { "kind": "view", ... },       // always written - see below
-      "viewLink": "{8F1C...}"                // only when linked to a named view
+      "viewLink": "{8F1C...}",               // only when linked to a named view
+      "contentInset": { "left": 25, "top": 8, "right": 0, "bottom": 0 },  // mm; only when not all zero
+      "appData": "{\"lanes\":[3,4,5]}"        // only when set
     } ],
     "objects": [ ... ]                       // the sheet's own objects, in mm
   } ],
@@ -82,6 +93,13 @@ when it has something in it:
   } ]
 }
 ```
+
+`contentInset` is the margin inside the viewport that the model is not drawn
+in (see paper-space.md, section 11). `appData`, on a sheet or a viewport, is
+text that belongs to the application; the library carries it and never reads
+it. All three are absent from a file that does not use them, so such a file is
+what an older version wrote. `unitsPerMMY` (an anisotropic viewport scale) is
+planned and not yet written.
 
 A linked viewport's `view` is a copy of the named view as it was when the file
 was written, so a reader that ignores `viewLink` and `views` shows the same

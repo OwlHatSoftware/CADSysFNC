@@ -351,7 +351,82 @@ from a selection* in the model (an existing name redefines that view),
 *Place on sheet...* on a sheet (name, then drawing units per mm, 0 to fit), and
 *List (log)*.
 
-## 11. What the library does not decide
+## 11. A viewport's furniture: content inset, draw hook, application data
+
+A Gantt sheet needs, per viewport, a timescale across the top for exactly the
+dates that viewport shows and a column of lane headers down its left for
+exactly its lanes. Drawn as model objects they would sit at the edge of the
+model, not of each viewport. Three things make it possible.
+
+**The content inset** keeps the model out of margins inside the viewport:
+
+```pascal
+TCADSheetViewport.ContentInsetMM: TRect2D;   { Left, Top, Right, Bottom - each a width, mm }
+function TCADSheetViewport.ContentRectMM: TRect2D;   { RectMM less the inset }
+function CADSheetViewportContentRectPx(const ASheet: TCADSheet;
+  const AViewport: TCADSheetViewport; const ADevice: TCADPageDevice): TRect;
+```
+
+Zero by default, which is the viewport as it always was. Everything that
+places, fits or inverts the model uses the content rectangle -
+`EffectiveUnitsPerMM`, `ModelWindow`, `PointMMToModel`, `ModelToPointMM`,
+`CADSheetViewportTransform` and the clip the model is drawn in. Finding a
+viewport, its border and its handles keep using `RectMM`, so the whole
+viewport, margins included, is still what is clicked and dragged. An inset
+larger than the rectangle leaves an empty content rectangle, never an
+inside-out one.
+
+**The draw hook** is called for every viewport as it is drawn, before the
+model and after it, on every device a sheet goes to - the editing viewport,
+the preview, the printer, the PDF, PNG, SVG and EMF exports:
+
+```pascal
+procedure TForm1.CADDrawSheetViewport(Sender: TObject;
+  const AInfo: TCADSheetViewportDrawInfo; const APhase: TCADViewportDrawPhase);
+var
+  R: TRect;
+begin
+  if APhase <> vdpAfterModel then
+    Exit;
+  { The top margin, in device pixels: OuterPx is the viewport, ContentPx is
+    where the model went. }
+  R := Rect(AInfo.ContentPx.Left, AInfo.OuterPx.Top,
+    AInfo.ContentPx.Right, AInfo.ContentPx.Top);
+  AInfo.Canvas.Graphics.Brush.Style := cbsSolid;
+  AInfo.Canvas.Graphics.Brush.Color := cadclSilver;
+  AInfo.Canvas.Graphics.FillRect(R);
+  { AInfo.ModelWindow is the part of the model shown; AInfo.ModelToDevice
+    takes a model point to the device, so a tick at a date lands over it. }
+end;
+```
+
+`TCADSheetViewportDrawInfo` carries the sheet and the viewport, the canvas and
+the page device, the outer and content rectangles in device pixels, the
+model-to-device transform, the model window, the device's pixels per
+millimetre and the draw mode. The clip is the whole viewport, margins
+included. Pen, brush, font and any clip the handler pushes and forgets are put
+back afterwards, so a careless handler cannot spoil the rest of the sheet. The
+border is drawn last, over both phases.
+
+Sizes on the device come from `AInfo.PixelsPerMM`: a 3 mm header row is
+`Round(3 * AInfo.PixelsPerMM)` pixels on the screen and on paper alike, and a
+font height in pixels is worked out the same way.
+
+**Application data** is text the library saves, loads and copies and never
+reads - typically JSON:
+
+```pascal
+TCADSheetViewport.AppData: String;   { which lanes, which date window }
+TCADSheet.AppData: String;           { the sheet's place in a series }
+```
+
+Both are written to the file only when not empty (see json-format.md).
+
+The demo has a sample under **Sheet - Viewport inset...**, which sets an inset
+on the selected viewport, and a hook that prints the model window in the top
+margin.
+
+## 12. What the library does not decide
 
 - when the viewport handles are shown, and what they look like;
 - when the application switches space;

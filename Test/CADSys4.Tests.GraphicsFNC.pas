@@ -144,7 +144,10 @@ type
   private
     FCAD: TFNCCADCmp2D;
     FFile: string;
+    FBefore, FAfter: Integer;
     function WriteAndRead(const ALinks: TCADPDFSheetLinksFunc): string;
+    procedure CountHook(Sender: TObject; const AInfo: TCADSheetViewportDrawInfo;
+      const APhase: TCADViewportDrawPhase);
   public
     [Setup]
     procedure Setup;
@@ -156,6 +159,8 @@ type
     procedure FontsAreEmbeddedByDefault;
     [Test]
     procedure FontsAreLeftOutWhenAskedTo;
+    [Test]
+    procedure TheViewportHookRunsOncePerPhase;
   end;
 
   [TestFixture]
@@ -1572,6 +1577,31 @@ begin
   Assert.IsTrue(Pos('/Rect[28.35 56.69 170.08 113.39]', TmpText) > 0,
     'where it is');
   Assert.IsTrue(Pos('/Subtype/Link', TmpText) > 0, 'a link annotation');
+end;
+
+procedure TCADPDFExtrasTests.CountHook(Sender: TObject;
+  const AInfo: TCADSheetViewportDrawInfo; const APhase: TCADViewportDrawPhase);
+begin
+  if APhase = vdpBeforeModel then
+    Inc(FBefore)
+  else
+    Inc(FAfter);
+end;
+
+procedure TCADPDFExtrasTests.TheViewportHookRunsOncePerPhase;
+var
+  TmpVP: TCADSheetViewport;
+begin
+  { Something for the viewport to show: a fitted viewport on an empty
+    drawing is refused. }
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(100, 50)));
+  TmpVP := FCAD.Sheets[0].AddViewport;
+  TmpVP.RectMM := Rect2D(20, 20, 190, 200);
+  TmpVP.ContentInsetMM := Rect2D(20, 0, 0, 10);
+  FCAD.OnDrawSheetViewport := CountHook;
+  WriteAndRead(nil);
+  Assert.AreEqual(1, FBefore, 'before the model, once');
+  Assert.AreEqual(1, FAfter, 'after it, once');
 end;
 
 procedure TCADPDFExtrasTests.FontsAreEmbeddedByDefault;

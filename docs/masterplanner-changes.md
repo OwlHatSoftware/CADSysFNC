@@ -39,10 +39,10 @@ All changes go into `Sources\VCL.*` (the masters) and are regenerated for FMX/VC
 | CS-05 | **SVG backend** + `CADSaveSheetsToSVG` | Must | MP-OUT-006 | Done (69db963) |
 | CS-06 | **EMF + clipboard on FMX (Windows)** through a framework-free GDI backend | Must | MP-OUT-004 | Done (f0c2c8e) |
 | CS-07 | **Printing on FMX** | Should | MP-OUT-002 | Done (e32f949) |
-| CS-08 | **PDF**: link annotations and font embedding control | Should | MP-OUT-001 | Done |
+| CS-08 | **PDF**: link annotations and font embedding control | Should | MP-OUT-001 | Done (b1b8315) |
 | CS-09 | Anisotropic viewport scale (`UnitsPerMMY`) | Could (P1.1) | date window fitted to a sheet while lanes keep their height | Open |
 | CS-10 | Verification items (no change expected) | Must | spike WP-0.1 | Open |
-| CS-11 | Docs, JSON format, tests, demo | Must | — | Open |
+| CS-11 | Docs, JSON format, tests, demo | Must | — | Done |
 
 ---
 
