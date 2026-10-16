@@ -32,7 +32,7 @@ unit VCL.FNCCS4GraphicsVCL;
 interface
 
 uses
-  WinAPI.Windows, System.Types, System.UITypes, System.Classes,
+  WinAPI.Windows, System.Types, System.UITypes, System.Classes, System.Math,
   System.SysUtils, Vcl.Graphics, Vcl.Imaging.pngimage, VCL.FNCCS4Graphics;
 
 type
@@ -93,6 +93,11 @@ type
     fSavedClipRgns: array of HRGN;
     fSavedClipCount: Integer;
     procedure FreeFontHandle;
+  private
+    { cbsGradient: AShape's outline made the clip, the blend drawn over
+      ABox, then AShape's outline drawn again with no fill. }
+    function GradientActive: Boolean;
+    procedure GradientShape(const AShape: TProc; const ABox: TRect);
   protected
     function CreatePen: TCADPen; override;
     function CreateBrush: TCADBrush; override;
@@ -141,9 +146,13 @@ const
     cpmNop, cpmNot, cpmCopy, cpmNotCopy, cpmMergePenNot, cpmMaskPenNot,
     cpmMergeNotPen, cpmMaskNotPen, cpmMerge, cpmNotMerge, cpmMask, cpmNotMask,
     cpmXor, cpmNotXor);
+  { cbsGradient is a solid brush in the start colour as far as the
+    canvas knows: the blend is drawn by the Do* routines with
+    GradientFill, and anything that fills without them still gets the
+    right colour rather than nothing. }
   CADToVCLBrushStyle: array[TCADBrushStyle] of TBrushStyle = (bsSolid,
     bsClear, bsHorizontal, bsVertical, bsFDiagonal, bsBDiagonal, bsCross,
-    bsDiagCross);
+    bsDiagCross, bsSolid);
   VCLToCADBrushStyle: array[TBrushStyle] of TCADBrushStyle = (cbsSolid,
     cbsClear, cbsHorizontal, cbsVertical, cbsFDiagonal, cbsBDiagonal,
     cbsCross, cbsDiagCross);
@@ -151,6 +160,11 @@ const
 {: Copies a VCL pen (still used by TLayer and the viewports) into a
    drawing-layer pen. }
 procedure AssignVCLPen(const Dest: TCADPen; const Source: TPen);
+{ : A linear blend from AColor1 to AColor2 over ARect on ADC, with GDI's
+  GradientFill: left to right, or top to bottom when AVertical. The
+  colours are COLORREFs - GDI has no alpha, so blend them first. }
+procedure CADGDIGradientRect(const ADC: HDC; const ARect: TRect;
+  const AColor1, AColor2: COLORREF; const AVertical: Boolean);
 {: Copies a VCL brush into a drawing-layer brush. }
 procedure AssignVCLBrush(const Dest: TCADBrush; const Source: TBrush);
 {: Returns the TCanvas behind G, or nil when G is not a VCL backend. }
@@ -165,6 +179,54 @@ function CADImageToBitmap(const Image: TCADImage;
   const Bmp: TBitmap): Boolean;
 
 implementation
+
+type
+  { TRIVERTEX and GRADIENT_RECT, spelled out here with GradientFill's own
+    import so that nothing depends on how a given RTL version declares
+    them. }
+  TCADTriVertex = record
+    X, Y: Longint;
+    Red, Green, Blue, Alpha: Word;
+  end;
+
+  TCADGradientRect = record
+    UpperLeft, LowerRight: Cardinal;
+  end;
+
+function CADMsImgGradientFill(DC: HDC; pVertex: Pointer; nVertex: Cardinal;
+  pMesh: Pointer; nMesh, ulMode: Cardinal): BOOL; stdcall;
+  external 'msimg32.dll' name 'GradientFill';
+
+procedure CADGDIGradientRect(const ADC: HDC; const ARect: TRect;
+  const AColor1, AColor2: COLORREF; const AVertical: Boolean);
+const
+  GRADIENT_FILL_RECT_H = 0;
+  GRADIENT_FILL_RECT_V = 1;
+var
+  TmpV: array [0 .. 1] of TCADTriVertex;
+  TmpG: TCADGradientRect;
+begin
+  if (ARect.Right <= ARect.Left) or (ARect.Bottom <= ARect.Top) then
+    Exit;
+  TmpV[0].X := ARect.Left;
+  TmpV[0].Y := ARect.Top;
+  TmpV[0].Red := GetRValue(AColor1) shl 8;
+  TmpV[0].Green := GetGValue(AColor1) shl 8;
+  TmpV[0].Blue := GetBValue(AColor1) shl 8;
+  TmpV[0].Alpha := 0;
+  TmpV[1].X := ARect.Right;
+  TmpV[1].Y := ARect.Bottom;
+  TmpV[1].Red := GetRValue(AColor2) shl 8;
+  TmpV[1].Green := GetGValue(AColor2) shl 8;
+  TmpV[1].Blue := GetBValue(AColor2) shl 8;
+  TmpV[1].Alpha := 0;
+  TmpG.UpperLeft := 0;
+  TmpG.LowerRight := 1;
+  if AVertical then
+    CADMsImgGradientFill(ADC, @TmpV[0], 2, @TmpG, 1, GRADIENT_FILL_RECT_V)
+  else
+    CADMsImgGradientFill(ADC, @TmpV[0], 2, @TmpG, 1, GRADIENT_FILL_RECT_H);
+end;
 
 procedure AssignVCLPen(const Dest: TCADPen; const Source: TPen);
 begin
@@ -529,26 +591,112 @@ begin
   WinAPI.Windows.Polyline(fCanvas.Handle, PCADPoints(Pts)^, Count);
 end;
 
+function TCADVCLGraphics.GradientActive: Boolean;
+begin
+  Result := (Brush <> nil) and (Brush.Style = cbsGradient) and
+    (CADColorAlpha(Brush.Color) <> 0);
+end;
+
+procedure TCADVCLGraphics.GradientShape(const AShape: TProc;
+  const ABox: TRect);
+var
+  TmpDC: HDC;
+  TmpSaved: Integer;
+begin
+  TmpDC := fCanvas.Handle;
+  { A path rather than a region: a path is in logical coordinates, as
+    the shape is, whatever the DC's mapping - a region is in device
+    ones. SaveDC/RestoreDC undo the clip and nothing the caller set. }
+  TmpSaved := SaveDC(TmpDC);
+  try
+    BeginPath(TmpDC);
+    AShape();
+    EndPath(TmpDC);
+    SelectClipPath(TmpDC, RGN_AND);
+    CADGDIGradientRect(TmpDC, ABox,
+      ColorToRGB(CADColorToTColor(CADBlendColor(Brush.Color, BlendBackground))),
+      ColorToRGB(CADColorToTColor(CADBlendColor(Brush.Color2, BlendBackground))),
+      Brush.GradientVertical);
+  finally
+    RestoreDC(TmpDC, TmpSaved);
+  end;
+  { The outline over it, with nothing to fill. The canvas's own brush
+    goes back afterwards, by handle, so TCanvas's idea of what is
+    selected stays true. }
+  SelectObject(TmpDC, GetStockObject(NULL_BRUSH));
+  try
+    AShape();
+  finally
+    SelectObject(TmpDC, fCanvas.Brush.Handle);
+  end;
+end;
+
 procedure TCADVCLGraphics.DoPolygon(const Pts: Pointer; const Count: Integer);
+var
+  TmpBox: TRect;
+  Cont: Integer;
 begin
   if (Pts = nil) or (Count <= 0) then
     Exit;
-  WinAPI.Windows.Polygon(fCanvas.Handle, PCADPoints(Pts)^, Count);
+  if GradientActive then
+  begin
+    TmpBox := Rect(PCADPoints(Pts)^[0].X, PCADPoints(Pts)^[0].Y,
+      PCADPoints(Pts)^[0].X, PCADPoints(Pts)^[0].Y);
+    for Cont := 1 to Count - 1 do
+      with PCADPoints(Pts)^[Cont] do
+      begin
+        if X < TmpBox.Left then
+          TmpBox.Left := X;
+        if X > TmpBox.Right then
+          TmpBox.Right := X;
+        if Y < TmpBox.Top then
+          TmpBox.Top := Y;
+        if Y > TmpBox.Bottom then
+          TmpBox.Bottom := Y;
+      end;
+    GradientShape(
+      procedure
+      begin
+        WinAPI.Windows.Polygon(fCanvas.Handle, PCADPoints(Pts)^, Count);
+      end, TmpBox);
+  end
+  else
+    WinAPI.Windows.Polygon(fCanvas.Handle, PCADPoints(Pts)^, Count);
 end;
 
 procedure TCADVCLGraphics.DoRectangle(const X1, Y1, X2, Y2: Integer);
 begin
-  WinAPI.Windows.Rectangle(fCanvas.Handle, X1, Y1, X2, Y2);
+  if GradientActive then
+    GradientShape(
+      procedure
+      begin
+        WinAPI.Windows.Rectangle(fCanvas.Handle, X1, Y1, X2, Y2);
+      end, Rect(Min(X1, X2), Min(Y1, Y2), Max(X1, X2), Max(Y1, Y2)))
+  else
+    WinAPI.Windows.Rectangle(fCanvas.Handle, X1, Y1, X2, Y2);
 end;
 
 procedure TCADVCLGraphics.DoEllipse(const X1, Y1, X2, Y2: Integer);
 begin
-  WinAPI.Windows.Ellipse(fCanvas.Handle, X1, Y1, X2, Y2);
+  if GradientActive then
+    GradientShape(
+      procedure
+      begin
+        WinAPI.Windows.Ellipse(fCanvas.Handle, X1, Y1, X2, Y2);
+      end, Rect(Min(X1, X2), Min(Y1, Y2), Max(X1, X2), Max(Y1, Y2)))
+  else
+    WinAPI.Windows.Ellipse(fCanvas.Handle, X1, Y1, X2, Y2);
 end;
 
 procedure TCADVCLGraphics.DoFillRect(const R: TRect);
 begin
-  fCanvas.FillRect(R);
+  if GradientActive then
+    CADGDIGradientRect(fCanvas.Handle, R,
+      ColorToRGB(CADColorToTColor(CADBlendColor(Brush.Color, BlendBackground))),
+      ColorToRGB(CADColorToTColor(CADBlendColor(Brush.Color2, BlendBackground))),
+      Brush.GradientVertical)
+  else
+    fCanvas.FillRect(R);
 end;
 
 procedure TCADVCLGraphics.FreeFontHandle;

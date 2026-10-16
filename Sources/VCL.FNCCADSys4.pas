@@ -11534,8 +11534,9 @@ const
   CADPenModeNames: array [0 .. 15] of String = ('black', 'white', 'nop', 'not',
     'copy', 'notCopy', 'mergePenNot', 'maskPenNot', 'mergeNotPen',
     'maskNotPen', 'merge', 'notMerge', 'mask', 'notMask', 'xor', 'notXor');
-  CADBrushStyleNames: array [0 .. 7] of String = ('solid', 'clear',
-    'horizontal', 'vertical', 'fDiagonal', 'bDiagonal', 'cross', 'diagCross');
+  CADBrushStyleNames: array [0 .. 8] of String = ('solid', 'clear',
+    'horizontal', 'vertical', 'fDiagonal', 'bDiagonal', 'cross', 'diagCross',
+    'gradient');
 
 var
   GraphicObjectsRegistered: array [0 .. 512] of TGraphicObjectClass;
@@ -16315,6 +16316,13 @@ begin
   TmpBrush := TJSONObject.Create;
   JSetStr(TmpBrush, 'color', ColorToJSONStr(fBrush.Color));
   JSetEnum(TmpBrush, 'style', Ord(fBrush.Style), CADBrushStyleNames);
+  { Only for a gradient, so every other layer writes what it did before
+    gradients existed. }
+  if fBrush.Style = cbsGradient then
+  begin
+    JSetStr(TmpBrush, 'color2', ColorToJSONStr(fBrush.Color2));
+    JSetBool(TmpBrush, 'gradientVertical', fBrush.GradientVertical);
+  end;
   JSetValue(AJSON, 'brush', TmpBrush);
 
   TmpPattern := '';
@@ -16354,6 +16362,10 @@ begin
   if TmpBrush <> nil then
   begin
     fBrush.Color := JSONStrToColor(JGetStr(TmpBrush, 'color'), fBrush.Color);
+    fBrush.Color2 := JSONStrToColor(JGetStr(TmpBrush, 'color2'),
+      fBrush.Color2);
+    fBrush.GradientVertical := JGetBool(TmpBrush, 'gradientVertical',
+      fBrush.GradientVertical);
     fBrush.Style := TCADBrushStyle(JGetEnum(TmpBrush, 'style',
       Ord(fBrush.Style), CADBrushStyleNames));
   end;

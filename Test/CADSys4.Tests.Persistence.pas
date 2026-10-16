@@ -115,6 +115,10 @@ type
     [Test]
     procedure ModifiedLayer_PreservesNameAndFlags;
     [Test]
+    procedure GradientLayerBrush_RoundTrips;
+    [Test]
+    procedure SolidLayerBrush_WritesNoGradientMembers;
+    [Test]
     procedure LayerColour_WritesHexWithAlphaOnlyWhenNeeded;
     [Test]
     procedure UnmodifiedLayer_IsNotSaved;
@@ -921,6 +925,49 @@ begin
   finally
     TmpSrc.Free;
     TmpDst.Free;
+  end;
+end;
+
+procedure TDocumentJSONRoundTripTests.GradientLayerBrush_RoundTrips;
+var
+  TmpSrc, TmpDst: TFNCCADCmp2D;
+begin
+  TmpSrc := TFNCCADCmp2D.Create(nil);
+  TmpDst := TFNCCADCmp2D.Create(nil);
+  try
+    TmpSrc.Layers[5].Name := 'BARS';
+    TmpSrc.Layers[5].Brush.Color := cadclRed;
+    TmpSrc.Layers[5].Brush.Color2 := CADColorSetAlpha(cadclBlue, 128);
+    TmpSrc.Layers[5].Brush.GradientVertical := True;
+    TmpSrc.Layers[5].Brush.Style := cbsGradient;
+    Assert.IsTrue(TmpSrc.SaveToJSONString.Contains('"gradient"'),
+      'written by name');
+    SaveAndLoadDocument(TmpSrc, TmpDst);
+    Assert.IsTrue(TmpDst.Layers[5].Brush.Style = cbsGradient, 'style');
+    Assert.AreEqual<Cardinal>(Cardinal(CADColorSetAlpha(cadclBlue, 128)),
+      Cardinal(TmpDst.Layers[5].Brush.Color2), 'end colour, alpha and all');
+    Assert.IsTrue(TmpDst.Layers[5].Brush.GradientVertical, 'orientation');
+  finally
+    TmpSrc.Free;
+    TmpDst.Free;
+  end;
+end;
+
+procedure TDocumentJSONRoundTripTests.SolidLayerBrush_WritesNoGradientMembers;
+var
+  TmpSrc: TFNCCADCmp2D;
+  TmpText: string;
+begin
+  TmpSrc := TFNCCADCmp2D.Create(nil);
+  try
+    TmpSrc.Layers[5].Name := 'PLAIN';
+    TmpSrc.Layers[5].Brush.Color2 := cadclBlue;
+    TmpText := TmpSrc.SaveToJSONString;
+    Assert.IsFalse(TmpText.Contains('color2'),
+      'a layer that is not a gradient writes what it always did');
+    Assert.IsFalse(TmpText.Contains('gradientVertical'));
+  finally
+    TmpSrc.Free;
   end;
 end;
 

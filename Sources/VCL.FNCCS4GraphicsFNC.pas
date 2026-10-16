@@ -81,6 +81,7 @@ type
     fColor: TCADColor;
     fStyle: TCADBrushStyle;
   protected
+    procedure GradientChanged; override;
     function GetColor: TCADColor; override;
     procedure SetColor(const Value: TCADColor); override;
     function GetStyle: TCADBrushStyle; override;
@@ -354,6 +355,11 @@ begin
   fOwner.ApplyBrush;
 end;
 
+procedure TCADFNCBrush.GradientChanged;
+begin
+  fOwner.ApplyBrush;
+end;
+
 { TCADFNCGraphics }
 
 constructor TCADFNCGraphics.Create(const AGraphics: TTMSFNCGraphics;
@@ -431,6 +437,19 @@ begin
   B := TCADFNCBrush(Brush);
   if (B.fStyle = cbsClear) or (CADColorAlpha(B.fColor) = 0) then
     fGraphics.Fill.Kind := gfkNone
+  else if B.fStyle = cbsGradient then
+  begin
+    { FNC draws it across the shape's bounding rectangle, on the screen
+      and in a PDF alike - the PDF engine is an FNC graphics. }
+    fGraphics.Fill.Kind := gfkGradient;
+    fGraphics.Fill.Color := CADToFNCColor(B.fColor);
+    fGraphics.Fill.ColorTo := CADToFNCColor(B.Color2);
+    fGraphics.Fill.Opacity := CADToFNCOpacity(B.fColor);
+    if B.GradientVertical then
+      fGraphics.Fill.Orientation := gfoVertical
+    else
+      fGraphics.Fill.Orientation := gfoHorizontal;
+  end
   else
   begin
     fGraphics.Fill.Kind := gfkSolid;

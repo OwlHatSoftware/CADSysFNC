@@ -46,6 +46,10 @@ type
     [Test]
     procedure Brush_Alpha_BecomesFillOpacity;
     [Test]
+    procedure Brush_Gradient_BecomesAGradientFill;
+    [Test]
+    procedure Brush_Gradient_BlendsAcrossARectangle;
+    [Test]
     procedure Brush_ZeroAlpha_DisablesTheFill;
     [Test]
     procedure Brush_ClearStyle_DisablesTheFill;
@@ -185,6 +189,46 @@ begin
   Assert.IsTrue(FG.Fill.Kind = gfkNone, 'nothing to fill with');
   FCnv.Polygon(@Pts[0], 4);
   Assert.AreEqual(TColor(clWhite), Pixel(30, 30), 'so nothing is drawn');
+end;
+
+{ The red and blue of a colour as it is on the screen - ColorToRGB
+  resolves a system colour - without WinAPI.Windows for GetRValue. }
+function RedOf(const AColor: TColor): Byte;
+begin
+  Result := ColorToRGB(AColor) and $FF;
+end;
+
+function BlueOf(const AColor: TColor): Byte;
+begin
+  Result := (ColorToRGB(AColor) shr 16) and $FF;
+end;
+
+procedure TCADFNCGraphicsTests.Brush_Gradient_BecomesAGradientFill;
+begin
+  FCnv.Brush.Color := cadclRed;
+  FCnv.Brush.Color2 := cadclBlue;
+  FCnv.Brush.GradientVertical := True;
+  FCnv.Brush.Style := cbsGradient;
+  Assert.IsTrue(FG.Fill.Kind = gfkGradient, 'kind');
+  Assert.AreEqual(TColor(clRed), TColor(FG.Fill.Color), 'from');
+  Assert.AreEqual(TColor(clBlue), TColor(FG.Fill.ColorTo), 'to');
+  Assert.IsTrue(FG.Fill.Orientation = gfoVertical, 'top to bottom');
+  FCnv.Brush.GradientVertical := False;
+  Assert.IsTrue(FG.Fill.Orientation = gfoHorizontal,
+    'and a change reaches the fill at once');
+end;
+
+procedure TCADFNCGraphicsTests.Brush_Gradient_BlendsAcrossARectangle;
+begin
+  FCnv.Pen.Style := cpsClear;
+  FCnv.Brush.Color := cadclRed;
+  FCnv.Brush.Color2 := cadclBlue;
+  FCnv.Brush.GradientVertical := False;
+  FCnv.Brush.Style := cbsGradient;
+  FCnv.Graphics.Rectangle(0, 0, W, H);
+  Assert.IsTrue(RedOf((Pixel(2, H div 2))) > 180, 'red at the left');
+  Assert.IsTrue(BlueOf((Pixel(W - 3, H div 2))) > 180,
+    'blue at the right');
 end;
 
 procedure TCADFNCGraphicsTests.Brush_ClearStyle_DisablesTheFill;

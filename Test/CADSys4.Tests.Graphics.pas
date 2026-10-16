@@ -110,6 +110,10 @@ type
     [Test]
     procedure SaveRestoreState_RoundTrips;
     [Test]
+    procedure BrushAssign_CopiesTheGradient;
+    [Test]
+    procedure SaveRestoreState_KeepsTheGradient;
+    [Test]
     procedure PenAssign_CopiesAllFields;
   end;
 
@@ -134,6 +138,10 @@ type
     procedure PenMode_SetOnTheCanvas_IsSeenThroughTheLayer;
     [Test]
     procedure BrushStyle_MapsBothWays;
+    [Test]
+    procedure GradientRectangle_BlendsAcross;
+    [Test]
+    procedure GradientEllipse_StaysInsideTheEllipse;
     [Test]
     procedure CanvasProperty_ReturnsTheWrappedCanvas;
     [Test]
@@ -519,6 +527,63 @@ end;
 
 { TCADVCLGraphicsTests }
 
+{ The red and blue of a colour as it is on the screen - ColorToRGB
+  resolves a system colour - without WinAPI.Windows for GetRValue. }
+function RedOf(const AColor: TColor): Byte;
+begin
+  Result := ColorToRGB(AColor) and $FF;
+end;
+
+function BlueOf(const AColor: TColor): Byte;
+begin
+  Result := (ColorToRGB(AColor) shr 16) and $FF;
+end;
+
+procedure TCADGraphicsCoreTests.BrushAssign_CopiesTheGradient;
+var
+  TmpA, TmpB: TCADSimpleBrush;
+begin
+  TmpA := TCADSimpleBrush.Create;
+  TmpB := TCADSimpleBrush.Create;
+  try
+    Assert.AreEqual<Cardinal>(Cardinal(cadclWhite), Cardinal(TmpA.Color2),
+      'white until set');
+    TmpA.Color := cadclRed;
+    TmpA.Color2 := cadclBlue;
+    TmpA.GradientVertical := True;
+    TmpA.Style := cbsGradient;
+    TmpB.Assign(TmpA);
+    Assert.IsTrue(TmpB.Style = cbsGradient, 'style');
+    Assert.AreEqual<Cardinal>(Cardinal(cadclBlue), Cardinal(TmpB.Color2),
+      'end colour');
+    Assert.IsTrue(TmpB.GradientVertical, 'orientation');
+  finally
+    TmpA.Free;
+    TmpB.Free;
+  end;
+end;
+
+procedure TCADGraphicsCoreTests.SaveRestoreState_KeepsTheGradient;
+var
+  TmpRec: TRecordingGraphics;
+  TmpState: TCADGraphicsState;
+begin
+  TmpRec := TRecordingGraphics.Create(Rect(0, 0, 10, 10));
+  try
+    TmpRec.Brush.Color2 := cadclBlue;
+    TmpRec.Brush.GradientVertical := True;
+    TmpState := TmpRec.SaveState;
+    TmpRec.Brush.Color2 := cadclRed;
+    TmpRec.Brush.GradientVertical := False;
+    TmpRec.RestoreState(TmpState);
+    Assert.AreEqual<Cardinal>(Cardinal(cadclBlue),
+      Cardinal(TmpRec.Brush.Color2), 'end colour back');
+    Assert.IsTrue(TmpRec.Brush.GradientVertical, 'and the orientation');
+  finally
+    TmpRec.Free;
+  end;
+end;
+
 procedure TCADVCLGraphicsTests.Setup;
 begin
   FBmp := TBitmap.Create;
@@ -587,13 +652,52 @@ procedure TCADVCLGraphicsTests.BrushStyle_MapsBothWays;
 var
   S: TCADBrushStyle;
 begin
-  for S := Low(TCADBrushStyle) to High(TCADBrushStyle) do
+  for S := Low(TCADBrushStyle) to cbsDiagCross do
   begin
     FCnv.Brush.Style := S;
     Assert.IsTrue(FCnv.Brush.Style = S, 'brush style ' + IntToStr(Ord(S)));
     Assert.AreEqual(Ord(S), Ord(FBmp.Canvas.Brush.Style),
       'ordinal ' + IntToStr(Ord(S)));
   end;
+  { A gradient is drawn by the backend, not by the canvas brush, which
+    holds the start colour solid for anything that fills without it. }
+  FCnv.Brush.Style := cbsGradient;
+  Assert.IsTrue(FCnv.Brush.Style = cbsGradient, 'the brush says gradient');
+  Assert.IsTrue(FBmp.Canvas.Brush.Style = bsSolid, 'the canvas, solid');
+end;
+
+procedure TCADVCLGraphicsTests.GradientRectangle_BlendsAcross;
+begin
+  FCnv.Pen.Style := cpsClear;
+  FCnv.Brush.Color := cadclRed;
+  FCnv.Brush.Color2 := cadclBlue;
+  FCnv.Brush.GradientVertical := False;
+  FCnv.Brush.Style := cbsGradient;
+  FCnv.Graphics.Rectangle(0, 0, 40, 40);
+  Assert.IsTrue(RedOf((FBmp.Canvas.Pixels[1, 20])) > 200,
+    'red at the left');
+  Assert.IsTrue(BlueOf((FBmp.Canvas.Pixels[38, 20])) > 200,
+    'blue at the right');
+  Assert.IsTrue(RedOf((FBmp.Canvas.Pixels[20, 1])) =
+    RedOf((FBmp.Canvas.Pixels[20, 38])),
+    'and the same all the way down');
+end;
+
+procedure TCADVCLGraphicsTests.GradientEllipse_StaysInsideTheEllipse;
+begin
+  FCnv.Pen.Style := cpsClear;
+  FCnv.Brush.Color := cadclRed;
+  FCnv.Brush.Color2 := cadclBlue;
+  FCnv.Brush.GradientVertical := True;
+  FCnv.Brush.Style := cbsGradient;
+  FCnv.Graphics.Ellipse(0, 0, 40, 40);
+  Assert.AreEqual(TColor(clWhite), FBmp.Canvas.Pixels[1, 1],
+    'the corner outside the ellipse is untouched');
+  Assert.IsTrue(FBmp.Canvas.Pixels[20, 3] <> TColor(clWhite),
+    'the top inside it is filled');
+  Assert.IsTrue(RedOf((FBmp.Canvas.Pixels[20, 3])) >
+    RedOf((FBmp.Canvas.Pixels[20, 36])),
+    'redder at the top than the bottom');
 end;
 
 procedure TCADVCLGraphicsTests.CanvasProperty_ReturnsTheWrappedCanvas;

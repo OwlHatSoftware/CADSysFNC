@@ -56,8 +56,11 @@ type
     cpmNotMerge, cpmMask, cpmNotMask, cpmXor, cpmNotXor);
 
   {: Same ordinal order as Vcl.Graphics.TBrushStyle. }
+  { : cbsGradient is last so that the ordinals stored before it existed
+    keep their meaning: a linear blend from Color to Color2, see
+    <See Property=TCADBrush@Color2>. }
   TCADBrushStyle = (cbsSolid, cbsClear, cbsHorizontal, cbsVertical,
-    cbsFDiagonal, cbsBDiagonal, cbsCross, cbsDiagCross);
+    cbsFDiagonal, cbsBDiagonal, cbsCross, cbsDiagCross, cbsGradient);
 
 const
   { Text format flags for TCADGraphics.DrawText. The values equal the
@@ -194,15 +197,31 @@ type
 
   {: Brush of a <See Class=TCADGraphics>. }
   TCADBrush = class(TObject)
+  private
+    fColor2: TCADColor;
+    fGradientVertical: Boolean;
+    procedure SetColor2(const Value: TCADColor);
+    procedure SetGradientVertical(const Value: Boolean);
   protected
     function GetColor: TCADColor; virtual; abstract;
     procedure SetColor(const Value: TCADColor); virtual; abstract;
     function GetStyle: TCADBrushStyle; virtual; abstract;
     procedure SetStyle(const Value: TCADBrushStyle); virtual; abstract;
+    { : Called after Color2 or GradientVertical changes, for a backend
+      that applies its brush as it is set. Does nothing here. }
+    procedure GradientChanged; virtual;
   public
+    constructor Create;
     procedure Assign(const Source: TCADBrush);
     property Color: TCADColor read GetColor write SetColor;
     property Style: TCADBrushStyle read GetStyle write SetStyle;
+    { : Where a cbsGradient fill ends; it starts at Color. Alpha comes
+      from Color. White until set. Ignored by every other style. }
+    property Color2: TCADColor read fColor2 write SetColor2;
+    { : False blends left to right, True top to bottom - the two a bar
+      needs, and the two every backend can draw. }
+    property GradientVertical: Boolean read fGradientVertical
+      write SetGradientVertical;
   end;
 
   {: A pen that only stores its values, for code that owns a pen without
@@ -239,6 +258,7 @@ type
     fOnChange: TNotifyEvent;
     procedure Changed;
   protected
+    procedure GradientChanged; override;
     function GetColor: TCADColor; override;
     procedure SetColor(const Value: TCADColor); override;
     function GetStyle: TCADBrushStyle; override;
@@ -257,6 +277,8 @@ type
     PenLineWeightMM: Double;
     BrushColor: TCADColor;
     BrushStyle: TCADBrushStyle;
+    BrushColor2: TCADColor;
+    BrushGradientVertical: Boolean;
   end;
 
   {: Platform-neutral description of a font. The fields follow the
@@ -854,10 +876,38 @@ end;
 
 { TCADBrush }
 
+constructor TCADBrush.Create;
+begin
+  inherited Create;
+  fColor2 := cadclWhite;
+  fGradientVertical := False;
+end;
+
+procedure TCADBrush.SetColor2(const Value: TCADColor);
+begin
+  fColor2 := Value;
+  GradientChanged;
+end;
+
+procedure TCADBrush.SetGradientVertical(const Value: Boolean);
+begin
+  fGradientVertical := Value;
+  GradientChanged;
+end;
+
+procedure TCADBrush.GradientChanged;
+begin
+end;
+
 procedure TCADBrush.Assign(const Source: TCADBrush);
 begin
   if (Source = nil) or (Source = Self) then
     Exit;
+  { The gradient's half first, so that the style - the setter that
+    makes a backend apply the brush - is set last with everything in
+    place. }
+  fColor2 := Source.fColor2;
+  fGradientVertical := Source.fGradientVertical;
   Color := Source.Color;
   Style := Source.Style;
 end;
@@ -1106,6 +1156,11 @@ begin
     fOnChange(Self);
 end;
 
+procedure TCADSimpleBrush.GradientChanged;
+begin
+  Changed;
+end;
+
 function TCADSimpleBrush.GetColor: TCADColor;
 begin
   Result := fColor;
@@ -1160,6 +1215,8 @@ begin
   Result.PenLineWeightMM := fPen.LineWeightMM;
   Result.BrushColor := fBrush.Color;
   Result.BrushStyle := fBrush.Style;
+  Result.BrushColor2 := fBrush.Color2;
+  Result.BrushGradientVertical := fBrush.GradientVertical;
 end;
 
 procedure TCADGraphics.RestoreState(const State: TCADGraphicsState);
@@ -1173,6 +1230,8 @@ begin
     recompute it and could land a pixel away. }
   fPen.fLineWeightMM := State.PenLineWeightMM;
   fPen.Width := State.PenWidth;
+  fBrush.Color2 := State.BrushColor2;
+  fBrush.GradientVertical := State.BrushGradientVertical;
   fBrush.Color := State.BrushColor;
   fBrush.Style := State.BrushStyle;
 end;
