@@ -390,6 +390,59 @@ type
     procedure APointIsRefused;
   end;
 
+  { : CS-01 and CS-02 of docs\masterplanner-changes.md: a viewport's
+    content inset, the per-viewport draw hook, and the application's
+    own data on a viewport and a sheet. }
+  [TestFixture]
+  TCADViewportInsetTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FSheet: TCADSheet;
+    FViewport: TCADSheetViewport;
+    FCalls: TArray<string>;
+    FLastInfo: TCADSheetViewportDrawInfo;
+    function Device: TCADPageDevice;
+    procedure RecordHook(Sender: TObject;
+      const AInfo: TCADSheetViewportDrawInfo;
+      const APhase: TCADViewportDrawPhase);
+    procedure CarelessHook(Sender: TObject;
+      const AInfo: TCADSheetViewportDrawInfo;
+      const APhase: TCADViewportDrawPhase);
+    function DrawSheetLog: TStringList;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    [Test]
+    procedure WithoutAnInsetTheContentIsTheRectangle;
+    [Test]
+    procedure TheContentRectangleIsTheRectangleLessTheInset;
+    [Test]
+    procedure AnInsetLargerThanTheRectangleLeavesNoContent;
+    [Test]
+    procedure TheFitIsIntoTheContent;
+    [Test]
+    procedure PointsMapIntoAndOutOfTheContent;
+    [Test]
+    procedure TheDrawingTransformLandsOnTheContentPixels;
+    [Test]
+    procedure TheModelIsNotDrawnInTheInset;
+    [Test]
+    procedure TheHookIsCalledBeforeAndAfterTheModel;
+    [Test]
+    procedure TheHookIsToldWhereTheViewportIs;
+    [Test]
+    procedure ACarelessHookCannotSpoilTheSheet;
+    [Test]
+    procedure InsetAndAppDataRoundTrip;
+    [Test]
+    procedure NothingNewIsWrittenWhenNothingIsSet;
+    [Test]
+    procedure AssignCopiesInsetAndAppData;
+  end;
+
   [TestFixture]
   TCADSheetDrawingTests = class(TObject)
   private
@@ -2604,8 +2657,286 @@ begin
     'and it is the sheet''s one, not the drawing''s two');
 end;
 
+{ ==================================================================
+  TCADViewportInsetTests
+  ================================================================== }
+
+function TCADViewportInsetTests.Device: TCADPageDevice;
+begin
+  { One device pixel to the millimetre, so every number is a
+    millimetre - as in TCADSheetDrawingTests. }
+  Result := TCADPageDevice.FromDPI(CADMMPerInch, CADMMPerInch);
+end;
+
+procedure TCADViewportInsetTests.Setup;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(300, 150)));
+  FSheet := FCAD.Sheets.Add('Plan');
+  FViewport := FSheet.AddViewport;
+  { 100 by 50 mm; the inset tests take 20 off the left and 10 off the
+    top, leaving 80 by 40. }
+  FViewport.RectMM := Rect2D(10, 10, 110, 60);
+  FCalls := nil;
+end;
+
+procedure TCADViewportInsetTests.TearDown;
+begin
+  FCAD.Free;
+end;
+
+procedure TCADViewportInsetTests.RecordHook(Sender: TObject;
+  const AInfo: TCADSheetViewportDrawInfo;
+  const APhase: TCADViewportDrawPhase);
+begin
+  if APhase = vdpBeforeModel then
+    FCalls := FCalls + ['before ' + AInfo.Viewport.Name]
+  else
+    FCalls := FCalls + ['after ' + AInfo.Viewport.Name];
+  FLastInfo := AInfo;
+end;
+
+procedure TCADViewportInsetTests.CarelessHook(Sender: TObject;
+  const AInfo: TCADSheetViewportDrawInfo;
+  const APhase: TCADViewportDrawPhase);
+begin
+  { Everything a handler should not leave behind. }
+  AInfo.Canvas.Graphics.PushClip(Rect(0, 0, 5, 5));
+  AInfo.Canvas.Graphics.PushClip(Rect(0, 0, 2, 2));
+  AInfo.Canvas.Pen.Width := 17;
+end;
+
+function TCADViewportInsetTests.DrawSheetLog: TStringList;
+var
+  TmpRec: TRecordingGraphics;
+  TmpCanvas: TDecorativeCanvas;
+begin
+  Result := TStringList.Create;
+  TmpRec := TRecordingGraphics.Create(Rect(0, 0, 420, 297));
+  try
+    TmpCanvas := TDecorativeCanvas.Create(TmpRec, False);
+    try
+      CADDrawSheet(FCAD, FSheet, Device, TmpCanvas);
+    finally
+      TmpCanvas.Free;
+    end;
+    Result.Assign(TmpRec.Log);
+    Assert.AreEqual(0, TmpRec.ClipDepth, 'every clip came back');
+  finally
+    TmpRec.Free;
+  end;
+end;
+
+procedure TCADViewportInsetTests.WithoutAnInsetTheContentIsTheRectangle;
+var
+  TmpContent: TRect2D;
+begin
+  TmpContent := FViewport.ContentRectMM;
+  Assert.AreEqual(10.0, TmpContent.Left, 1E-9);
+  Assert.AreEqual(10.0, TmpContent.Bottom, 1E-9);
+  Assert.AreEqual(110.0, TmpContent.Right, 1E-9);
+  Assert.AreEqual(60.0, TmpContent.Top, 1E-9);
+  Assert.AreEqual(3.0, FViewport.EffectiveUnitsPerMM(FCAD), 1E-9,
+    'and the fit is the one it always was');
+end;
+
+procedure TCADViewportInsetTests.TheContentRectangleIsTheRectangleLessTheInset;
+var
+  TmpContent: TRect2D;
+begin
+  { Left 20, top 10, right 5, bottom 2 - the four fields by their own
+    names. }
+  FViewport.ContentInsetMM := Rect2D(20, 2, 5, 10);
+  TmpContent := FViewport.ContentRectMM;
+  Assert.AreEqual(30.0, TmpContent.Left, 1E-9, 'left');
+  Assert.AreEqual(12.0, TmpContent.Bottom, 1E-9, 'bottom');
+  Assert.AreEqual(105.0, TmpContent.Right, 1E-9, 'right');
+  Assert.AreEqual(50.0, TmpContent.Top, 1E-9, 'top');
+end;
+
+procedure TCADViewportInsetTests.AnInsetLargerThanTheRectangleLeavesNoContent;
+var
+  TmpContent: TRect2D;
+begin
+  FViewport.ContentInsetMM := Rect2D(70, 0, 70, 0);
+  TmpContent := FViewport.ContentRectMM;
+  Assert.AreEqual(0.0, TmpContent.Right - TmpContent.Left, 1E-9,
+    'no width, and not a negative one');
+  Assert.WillRaise(
+    procedure
+    begin
+      FViewport.EffectiveUnitsPerMM(FCAD);
+    end, ECADPageError, 'nothing to fit into');
+end;
+
+procedure TCADViewportInsetTests.TheFitIsIntoTheContent;
+begin
+  FViewport.ContentInsetMM := Rect2D(20, 0, 0, 10);
+  { 300 x 150 into 80 x 40: 3.75 either way. }
+  Assert.AreEqual(3.75, FViewport.EffectiveUnitsPerMM(FCAD), 1E-9);
+end;
+
+procedure TCADViewportInsetTests.PointsMapIntoAndOutOfTheContent;
+var
+  TmpPt, TmpBack: TPoint2D;
+begin
+  FViewport.ContentInsetMM := Rect2D(20, 0, 0, 10);
+  { The model window fills the content exactly, so its corners are the
+    content's corners. }
+  TmpPt := FViewport.ModelToPointMM(FCAD, Point2D(0, 0));
+  Assert.AreEqual(30.0, TmpPt.X, 1E-6, 'the model origin at the content''s left');
+  Assert.AreEqual(10.0, TmpPt.Y, 1E-6, 'and its bottom');
+  TmpPt := FViewport.ModelToPointMM(FCAD, Point2D(300, 150));
+  Assert.AreEqual(110.0, TmpPt.X, 1E-6, 'the far corner at the right');
+  Assert.AreEqual(50.0, TmpPt.Y, 1E-6, 'and under the top inset');
+  TmpBack := FViewport.PointMMToModel(FCAD, Point2D(70, 30));
+  TmpPt := FViewport.ModelToPointMM(FCAD, TmpBack);
+  Assert.AreEqual(70.0, TmpPt.X, 1E-6, 'and back again');
+  Assert.AreEqual(30.0, TmpPt.Y, 1E-6);
+end;
+
+procedure TCADViewportInsetTests.TheDrawingTransformLandsOnTheContentPixels;
+var
+  TmpContent: TRect;
+  TmpPt: TPoint2D;
+begin
+  FViewport.ContentInsetMM := Rect2D(20, 0, 0, 10);
+  TmpContent := CADSheetViewportContentRectPx(FSheet, FViewport, Device);
+  { 297 mm tall: content 30..110 across and 10..50 up is rows 247..287. }
+  Assert.AreEqual(30, TmpContent.Left, 'left');
+  Assert.AreEqual(247, TmpContent.Top, 'top');
+  Assert.AreEqual(110, TmpContent.Right, 'right');
+  Assert.AreEqual(287, TmpContent.Bottom, 'bottom');
+  TmpPt := CartesianPoint2D(TransformPoint2D(Point2D(0, 150),
+    CADSheetViewportTransform(FCAD, FSheet, FViewport, Device)));
+  { Within a pixel: the transform is laid out on pixel centres. }
+  Assert.AreEqual(30.0, TmpPt.X, 1.0, 'the model''s top-left at the content''s');
+  Assert.AreEqual(247.0, TmpPt.Y, 1.0);
+end;
+
+procedure TCADViewportInsetTests.TheModelIsNotDrawnInTheInset;
+var
+  TmpLog: TStringList;
+begin
+  FViewport.ContentInsetMM := Rect2D(20, 0, 0, 10);
+  TmpLog := DrawSheetLog;
+  try
+    Assert.IsTrue(TmpLog.IndexOf('PushClip 30,247,110,287') >= 0,
+      'the model is clipped to the content: ' + TmpLog.Text);
+  finally
+    TmpLog.Free;
+  end;
+end;
+
+procedure TCADViewportInsetTests.TheHookIsCalledBeforeAndAfterTheModel;
+var
+  TmpSecond: TCADSheetViewport;
+  TmpLog: TStringList;
+begin
+  FViewport.Name := 'A';
+  TmpSecond := FSheet.AddViewport;
+  TmpSecond.Name := 'B';
+  TmpSecond.RectMM := Rect2D(150, 10, 250, 60);
+  FCAD.OnDrawSheetViewport := RecordHook;
+  TmpLog := DrawSheetLog;
+  try
+    Assert.AreEqual(4, Length(FCalls), 'twice per viewport');
+    Assert.AreEqual('before A', FCalls[0]);
+    Assert.AreEqual('after A', FCalls[1]);
+    Assert.AreEqual('before B', FCalls[2]);
+    Assert.AreEqual('after B', FCalls[3]);
+  finally
+    TmpLog.Free;
+  end;
+end;
+
+procedure TCADViewportInsetTests.TheHookIsToldWhereTheViewportIs;
+var
+  TmpLog: TStringList;
+begin
+  FViewport.ContentInsetMM := Rect2D(20, 0, 0, 10);
+  FCAD.OnDrawSheetViewport := RecordHook;
+  TmpLog := DrawSheetLog;
+  try
+    Assert.AreSame(TObject(FViewport), TObject(FLastInfo.Viewport));
+    Assert.AreSame(TObject(FSheet), TObject(FLastInfo.Sheet));
+    Assert.AreEqual(10, FLastInfo.OuterPx.Left, 'outer left');
+    Assert.AreEqual(237, FLastInfo.OuterPx.Top, 'outer top');
+    Assert.AreEqual(30, FLastInfo.ContentPx.Left, 'content left');
+    Assert.AreEqual(247, FLastInfo.ContentPx.Top, 'content top');
+    Assert.AreEqual(300.0, FLastInfo.ModelWindow.Right -
+      FLastInfo.ModelWindow.Left, 1E-6, 'the window it shows');
+    Assert.AreEqual(1.0, FLastInfo.PixelsPerMM, 1E-6, 'and the device');
+  finally
+    TmpLog.Free;
+  end;
+end;
+
+procedure TCADViewportInsetTests.ACarelessHookCannotSpoilTheSheet;
+var
+  TmpLog: TStringList;
+begin
+  { DrawSheetLog asserts that the clip depth is back to nothing. }
+  FCAD.OnDrawSheetViewport := CarelessHook;
+  TmpLog := DrawSheetLog;
+  TmpLog.Free;
+  Assert.Pass('the two clips the handler left were popped for it');
+end;
+
+procedure TCADViewportInsetTests.InsetAndAppDataRoundTrip;
+var
+  TmpBack: TFNCCADCmp2D;
+  TmpPort: TCADSheetViewport;
+begin
+  FViewport.ContentInsetMM := Rect2D(20, 2, 5, 10);
+  FViewport.AppData := '{"lanes":[3,9],"from":"2026-01-01"}';
+  FSheet.AppData := '{"series":"A","number":2}';
+  TmpBack := TFNCCADCmp2D.Create(nil);
+  try
+    TmpBack.LoadFromJSONString(FCAD.SaveToJSONString);
+    TmpPort := TmpBack.Sheets[0].Viewports[0];
+    Assert.AreEqual(20.0, TmpPort.ContentInsetMM.Left, 1E-9, 'left');
+    Assert.AreEqual(10.0, TmpPort.ContentInsetMM.Top, 1E-9, 'top');
+    Assert.AreEqual(5.0, TmpPort.ContentInsetMM.Right, 1E-9, 'right');
+    Assert.AreEqual(2.0, TmpPort.ContentInsetMM.Bottom, 1E-9, 'bottom');
+    Assert.AreEqual('{"lanes":[3,9],"from":"2026-01-01"}', TmpPort.AppData,
+      'the viewport''s data, untouched');
+    Assert.AreEqual('{"series":"A","number":2}', TmpBack.Sheets[0].AppData,
+      'and the sheet''s');
+  finally
+    TmpBack.Free;
+  end;
+end;
+
+procedure TCADViewportInsetTests.NothingNewIsWrittenWhenNothingIsSet;
+var
+  TmpText: string;
+begin
+  TmpText := FCAD.SaveToJSONString;
+  Assert.IsFalse(TmpText.Contains('contentInset'), 'no inset member');
+  Assert.IsFalse(TmpText.Contains('appData'), 'no data member');
+end;
+
+procedure TCADViewportInsetTests.AssignCopiesInsetAndAppData;
+var
+  TmpCopy: TCADSheetViewport;
+begin
+  FViewport.ContentInsetMM := Rect2D(1, 2, 3, 4);
+  FViewport.AppData := 'mine';
+  TmpCopy := TCADSheetViewport.Create;
+  try
+    TmpCopy.Assign(FViewport);
+    Assert.AreEqual(1.0, TmpCopy.ContentInsetMM.Left, 1E-9);
+    Assert.AreEqual(4.0, TmpCopy.ContentInsetMM.Top, 1E-9);
+    Assert.AreEqual('mine', TmpCopy.AppData);
+  finally
+    TmpCopy.Free;
+  end;
+end;
+
 initialization
 
+TDUnitX.RegisterTestFixture(TCADViewportInsetTests);
 TDUnitX.RegisterTestFixture(TCADSheetHitTestTests);
 TDUnitX.RegisterTestFixture(TCADSheetModelTests);
 TDUnitX.RegisterTestFixture(TCADSheetPersistenceTests);

@@ -5719,6 +5719,8 @@ type
     fViewLink: String;
     fUnitsPerMM: TRealType;
     fShowBorder: Boolean;
+    fContentInsetMM: TRect2D;
+    fAppData: String;
     { : The view's window, or the drawing's whole extension when the
       view frames nothing yet. }
     function EffectiveWindow(const ACAD: TFNCCADCmp2D): TRect2D;
@@ -5730,6 +5732,12 @@ type
     { : The rectangle's size on the paper, in millimetres. }
     function WidthMM: TRealType;
     function HeightMM: TRealType;
+    { : RectMM less <See Property=TCADSheetViewport@ContentInsetMM>:
+      where the model is drawn. Everything that places, fits or inverts
+      the model uses this; the border, the handles and ViewportAt use
+      RectMM. Never inside out - an inset larger than the rectangle
+      leaves a content rectangle of no size, which draws no model. }
+    function ContentRectMM: TRect2D;
 
     { : True when it has a link, whether or not the link finds anything. }
     function IsLinked: Boolean;
@@ -5854,6 +5862,23 @@ type
       zero. Default True: an empty viewport with no border is
       indistinguishable from no viewport at all. }
     property ShowBorder: Boolean read fShowBorder write fShowBorder;
+    { : Margins inside RectMM, in millimetres of paper, that the model
+      is not drawn in - Left, Top, Right and Bottom, each a width, held
+      in the four fields of a TRect2D under those names. Zero by
+      default, which is the viewport as it always was.
+
+      For an application's own furniture per viewport: a timescale
+      across the top of exactly the window this viewport shows, a
+      column of lane headers down its left. The model is fitted to, and
+      scaled into, <See Method=TCADSheetViewport@ContentRectMM>; the
+      application draws in the margins through
+      <See Property=TFNCCADCmp2D@OnDrawSheetViewport>. }
+    property ContentInsetMM: TRect2D read fContentInsetMM
+      write fContentInsetMM;
+    { : Text that belongs to the application - typically JSON - saved
+      and loaded with the viewport and copied by Assign, never read by
+      the library. Not written to the file when empty. }
+    property AppData: String read fAppData write fAppData;
   end;
 
   { : A sheet of paper with viewports and annotation on it - paper
@@ -5888,6 +5913,7 @@ type
     fObjects: TGraphicObjList;
     fViewports: TList;
     fNextID: LongInt;
+    fAppData: String;
     function GetViewport(const AIndex: Integer): TCADSheetViewport;
     function GetViewportCount: Integer;
     function GetObjectsCount: Integer;
@@ -6011,7 +6037,44 @@ type
     { : The annotation list itself, for the operations the two
       convenience methods above do not cover. }
     property ObjectList: TGraphicObjList read fObjects;
+    { : Text that belongs to the application, saved and loaded with the
+      sheet, never read by the library - a sheet's number in a series,
+      the rule the series was split by. Not written when empty. }
+    property AppData: String read fAppData write fAppData;
   end;
+
+  { : When <See Property=TFNCCADCmp2D@OnDrawSheetViewport> is called:
+    before the model is drawn into a viewport, and after it. }
+  TCADViewportDrawPhase = (vdpBeforeModel, vdpAfterModel);
+
+  { : What <See Property=TFNCCADCmp2D@OnDrawSheetViewport> is handed:
+    everything needed to draw in a viewport's own terms, on whichever
+    device the sheet is going to - the editing viewport, a preview, a
+    printer or a PDF. }
+  TCADSheetViewportDrawInfo = record
+    Sheet: TCADSheet;
+    Viewport: TCADSheetViewport;
+    Canvas: TDecorativeCanvas;
+    Device: TCADPageDevice;
+    { : RectMM in device pixels: the whole viewport, insets included. }
+    OuterPx: TRect;
+    { : ContentRectMM in device pixels: where the model is drawn. }
+    ContentPx: TRect;
+    { : The transform the model is drawn with, model in, device pixels
+      out - identity when the content rectangle has no area. }
+    ModelToDevice: TTransf2D;
+    { : The part of the model shown, in drawing units. }
+    ModelWindow: TRect2D;
+    { : The device's, across: a millimetre of paper in pixels. }
+    PixelsPerMM: TRealType;
+    DrawMode: Cardinal;
+  end;
+
+  { : Draws an application's own furniture into one sheet viewport -
+    see <See Property=TFNCCADCmp2D@OnDrawSheetViewport>. }
+  TCADSheetViewportDrawEvent = procedure(Sender: TObject;
+    const AInfo: TCADSheetViewportDrawInfo;
+    const APhase: TCADViewportDrawPhase) of object;
 
   { : The sheets of one drawing, in order. Owned by
     <See Property=TFNCCADCmp@Sheets> and by nothing else. }
@@ -6051,6 +6114,7 @@ type
   }
   TFNCCADCmp2D = class(TFNCCADCmp)
   private
+    fOnDrawSheetViewport: TCADSheetViewportDrawEvent;
     function GetExtension: TRect2D;
   protected
     procedure LoadObjectFromJSON(const AJSON: TJSONObject;
@@ -6216,6 +6280,21 @@ type
       instead of use this property in all the computations.
     }
     property DrawingExtension: TRect2D read GetExtension;
+  published
+    { : Called for every sheet viewport as it is drawn, twice: before
+      the model (<I=vdpBeforeModel> - a lane band behind it, say) and
+      after it (<I=vdpAfterModel> - a timescale across the top inset,
+      lane headers down the side). The border is drawn after both.
+
+      The clip is the viewport's whole rectangle, insets included, and
+      the canvas state - pen, brush, font, and any clip a handler
+      pushes and forgets - is put back afterwards, so a careless handler
+      cannot spoil the rest of the sheet. Every way a sheet is drawn
+      comes through here: the editing viewport, the preview, the
+      printer and the PDF writer, so what a handler draws appears the
+      same on all of them. }
+    property OnDrawSheetViewport: TCADSheetViewportDrawEvent
+      read fOnDrawSheetViewport write fOnDrawSheetViewport;
   end;
 
   { : This component derives from <See Class=TFNCCADViewport> and
@@ -9297,6 +9376,10 @@ function CADSheetRectPx(const ASheet: TCADSheet;
   because an application that lets somebody click a viewport needs the
   same arithmetic and must not invent its own. }
 function CADSheetViewportRectPx(const ASheet: TCADSheet;
+  const AViewport: TCADSheetViewport; const ADevice: TCADPageDevice): TRect;
+{ : The viewport's content rectangle - RectMM less its inset - in the
+  same device pixels: where the model is drawn and clipped. }
+function CADSheetViewportContentRectPx(const ASheet: TCADSheet;
   const AViewport: TCADSheetViewport; const ADevice: TCADPageDevice): TRect;
 
 { : The sheet less its margins, in device pixels - what
@@ -16504,6 +16587,8 @@ begin
   fView.Window := Rect2D(0, 0, 0, 0);
   fUnitsPerMM := 0;
   fShowBorder := True;
+  fContentInsetMM := Rect2D(0, 0, 0, 0);
+  fAppData := '';
 end;
 
 procedure TCADSheetViewport.Assign(const ASource: TCADSheetViewport);
@@ -16516,6 +16601,31 @@ begin
   fViewLink := ASource.fViewLink;
   fUnitsPerMM := ASource.fUnitsPerMM;
   fShowBorder := ASource.fShowBorder;
+  fContentInsetMM := ASource.fContentInsetMM;
+  fAppData := ASource.fAppData;
+end;
+
+function TCADSheetViewport.ContentRectMM: TRect2D;
+var
+  TmpRect: TRect2D;
+begin
+  TmpRect := ReorderRect2D(fRectMM);
+  Result := Rect2D(TmpRect.Left + Max(0.0, fContentInsetMM.Left),
+    TmpRect.Bottom + Max(0.0, fContentInsetMM.Bottom),
+    TmpRect.Right - Max(0.0, fContentInsetMM.Right),
+    TmpRect.Top - Max(0.0, fContentInsetMM.Top));
+  { Never inside out: an inset larger than the rectangle leaves no
+    content, collapsed where the insets meet. }
+  if Result.Right < Result.Left then
+  begin
+    Result.Left := (Result.Left + Result.Right) / 2;
+    Result.Right := Result.Left;
+  end;
+  if Result.Top < Result.Bottom then
+  begin
+    Result.Bottom := (Result.Bottom + Result.Top) / 2;
+    Result.Top := Result.Bottom;
+  end;
 end;
 
 function TCADSheetViewport.WidthMM: TRealType;
@@ -16606,31 +16716,38 @@ end;
 function TCADSheetViewport.EffectiveUnitsPerMM(const ACAD: TFNCCADCmp2D)
   : TRealType;
 var
-  TmpWin: TRect2D;
+  TmpWin, TmpContent: TRect2D;
+  TmpW, TmpH: TRealType;
 begin
   if fUnitsPerMM > 0 then
   begin
     Result := fUnitsPerMM;
     Exit;
   end;
-  if (WidthMM <= 0) or (HeightMM <= 0) then
+  { Fitted into the content rectangle, so the insets stay clear of the
+    model. }
+  TmpContent := ContentRectMM;
+  TmpW := TmpContent.Right - TmpContent.Left;
+  TmpH := TmpContent.Top - TmpContent.Bottom;
+  if (TmpW <= 0) or (TmpH <= 0) then
     Raise ECADPageError.Create('The viewport has no area on the sheet');
   TmpWin := EffectiveWindow(ACAD);
   { The larger of the two ratios: whichever way round the window is,
     all of it has to fit. }
-  Result := MaxValue([(TmpWin.Right - TmpWin.Left) / WidthMM,
-    (TmpWin.Top - TmpWin.Bottom) / HeightMM]);
+  Result := MaxValue([(TmpWin.Right - TmpWin.Left) / TmpW,
+    (TmpWin.Top - TmpWin.Bottom) / TmpH]);
 end;
 
 function TCADSheetViewport.ModelWindow(const ACAD: TFNCCADCmp2D): TRect2D;
 var
-  TmpWin: TRect2D;
+  TmpWin, TmpContent: TRect2D;
   TmpUPM, TmpW, TmpH, TmpCX, TmpCY: TRealType;
 begin
   TmpWin := EffectiveWindow(ACAD);
   TmpUPM := EffectiveUnitsPerMM(ACAD);
-  TmpW := WidthMM * TmpUPM;
-  TmpH := HeightMM * TmpUPM;
+  TmpContent := ContentRectMM;
+  TmpW := (TmpContent.Right - TmpContent.Left) * TmpUPM;
+  TmpH := (TmpContent.Top - TmpContent.Bottom) * TmpUPM;
   TmpCX := (TmpWin.Left + TmpWin.Right) / 2;
   TmpCY := (TmpWin.Bottom + TmpWin.Top) / 2;
   Result := Rect2D(TmpCX - TmpW / 2, TmpCY - TmpH / 2, TmpCX + TmpW / 2,
@@ -16715,7 +16832,7 @@ var
   TmpW, TmpH: TRealType;
 begin
   Result := APointMM;
-  TmpRect := ReorderRect2D(fRectMM);
+  TmpRect := ContentRectMM;
   TmpW := TmpRect.Right - TmpRect.Left;
   TmpH := TmpRect.Top - TmpRect.Bottom;
   if (TmpW <= 0) or (TmpH <= 0) then
@@ -16738,13 +16855,15 @@ begin
   TmpH := TmpWin.Top - TmpWin.Bottom;
   if (TmpW = 0) or (TmpH = 0) then
     Exit;
-  TmpRect := ReorderRect2D(fRectMM);
+  TmpRect := ContentRectMM;
   Result := Point2D(TmpRect.Left + (APointModel.X - TmpWin.Left) / TmpW *
     (TmpRect.Right - TmpRect.Left), TmpRect.Bottom +
     (APointModel.Y - TmpWin.Bottom) / TmpH * (TmpRect.Top - TmpRect.Bottom));
 end;
 
 function TCADSheetViewport.SaveToJSON: TJSONObject;
+var
+  TmpInset: TJSONObject;
 begin
   Result := TJSONObject.Create;
   try
@@ -16762,6 +16881,20 @@ begin
       nothing of links shows what this one does. }
     if fViewLink <> '' then
       JSetStr(Result, 'viewLink', fViewLink);
+    { Only when there is one: a viewport without an inset writes the
+      file it wrote before insets existed. }
+    if (fContentInsetMM.Left <> 0) or (fContentInsetMM.Top <> 0) or
+      (fContentInsetMM.Right <> 0) or (fContentInsetMM.Bottom <> 0) then
+    begin
+      TmpInset := TJSONObject.Create;
+      JSetValue(Result, 'contentInset', TmpInset);
+      JSetReal(TmpInset, 'left', fContentInsetMM.Left);
+      JSetReal(TmpInset, 'top', fContentInsetMM.Top);
+      JSetReal(TmpInset, 'right', fContentInsetMM.Right);
+      JSetReal(TmpInset, 'bottom', fContentInsetMM.Bottom);
+    end;
+    if fAppData <> '' then
+      JSetStr(Result, 'appData', fAppData);
   except
     Result.Free;
     Raise;
@@ -16770,7 +16903,7 @@ end;
 
 procedure TCADSheetViewport.LoadFromJSON(const AJSON: TJSONObject);
 var
-  TmpView: TJSONObject;
+  TmpView, TmpInset: TJSONObject;
 begin
   if AJSON = nil then
     Exit;
@@ -16791,6 +16924,14 @@ begin
   { Absent in every file written before links existed, which is the
     unlinked viewport those files describe. }
   fViewLink := JGetStr(AJSON, 'viewLink');
+  TmpInset := JGetObject(AJSON, 'contentInset');
+  if TmpInset <> nil then
+    fContentInsetMM := Rect2D(JGetReal(TmpInset, 'left'),
+      JGetReal(TmpInset, 'bottom'), JGetReal(TmpInset, 'right'),
+      JGetReal(TmpInset, 'top'))
+  else
+    fContentInsetMM := Rect2D(0, 0, 0, 0);
+  fAppData := JGetStr(AJSON, 'appData');
 end;
 
 { ==================================================================
@@ -17102,6 +17243,8 @@ begin
     JSetReal(Result, 'marginTopMM', fMargins.Top);
     JSetReal(Result, 'marginRightMM', fMargins.Right);
     JSetReal(Result, 'marginBottomMM', fMargins.Bottom);
+    if fAppData <> '' then
+      JSetStr(Result, 'appData', fAppData);
 
     TmpViewports := TJSONArray.Create;
     JSetValue(Result, 'viewports', TmpViewports);
@@ -17162,6 +17305,7 @@ begin
   fMargins.Top := JGetReal(AJSON, 'marginTopMM', fMargins.Top);
   fMargins.Right := JGetReal(AJSON, 'marginRightMM', fMargins.Right);
   fMargins.Bottom := JGetReal(AJSON, 'marginBottomMM', fMargins.Bottom);
+  fAppData := JGetStr(AJSON, 'appData');
 
   TmpArray := JGetArray(AJSON, 'viewports');
   if TmpArray <> nil then
@@ -17734,6 +17878,15 @@ begin
   Result := SheetRectPx(ASheet, ADevice, AViewport.RectMM);
 end;
 
+function CADSheetViewportContentRectPx(const ASheet: TCADSheet;
+  const AViewport: TCADSheetViewport; const ADevice: TCADPageDevice): TRect;
+begin
+  Result := Rect(0, 0, 0, 0);
+  if (ASheet = nil) or (AViewport = nil) then
+    Exit;
+  Result := SheetRectPx(ASheet, ADevice, AViewport.ContentRectMM);
+end;
+
 function CADSheetPrintableRectPx(const ASheet: TCADSheet;
   const ADevice: TCADPageDevice): TRect;
 begin
@@ -17753,7 +17906,8 @@ begin
   Result := IdentityTransf2D;
   if (ASheet = nil) or (AViewport = nil) then
     Exit;
-  TmpDest := CADSheetViewportRectPx(ASheet, AViewport, ADevice);
+  { The content rectangle: the model is drawn inside the insets. }
+  TmpDest := CADSheetViewportContentRectPx(ASheet, AViewport, ADevice);
   if (TmpDest.Right <= TmpDest.Left) or (TmpDest.Bottom <= TmpDest.Top) then
     Exit;
   TmpWindow := AViewport.ModelWindow(ACAD);
@@ -17845,7 +17999,8 @@ begin
   Result := Point(Round(TmpPt.X), Round(TmpPt.Y));
 end;
 
-{ : One viewport: the model seen through it, and its border over that. }
+{ : One viewport: the application's furniture behind, the model seen
+  through it, the furniture in front, and the border over all of it. }
 procedure DrawSheetViewport(const ACAD: TFNCCADCmp2D;
   const ASheet: TCADSheet; const AViewport: TCADSheetViewport;
   const ADevice: TCADPageDevice; const ACanvas: TDecorativeCanvas;
@@ -17853,10 +18008,36 @@ procedure DrawSheetViewport(const ACAD: TFNCCADCmp2D;
 var
   TmpWindow, TmpClip: TRect2D;
   TmpTransf: TTransf2D;
-  TmpDest: TRect;
+  TmpOuter, TmpDest: TRect;
   TmpIter: TGraphicObjIterator;
   TmpObj: TObject2D;
   TmpView: TCADViewSpec;
+  TmpHasContent: Boolean;
+  TmpInfo: TCADSheetViewportDrawInfo;
+
+  { The application's turn. Clipped to the whole viewport, and whatever
+    it does to the canvas undone afterwards - a clip pushed and not
+    popped would cut every later viewport on the sheet short, and on
+    FMX outlive the paint itself. }
+  procedure CallHook(const APhase: TCADViewportDrawPhase);
+  var
+    TmpState: TCADGraphicsState;
+    TmpDepth: Integer;
+  begin
+    if not Assigned(ACAD.OnDrawSheetViewport) then
+      Exit;
+    TmpState := ACanvas.Graphics.SaveState;
+    TmpDepth := ACanvas.Graphics.ClipDepth;
+    ACanvas.Graphics.PushClip(TmpOuter);
+    try
+      ACAD.OnDrawSheetViewport(ACAD, TmpInfo, APhase);
+    finally
+      while ACanvas.Graphics.ClipDepth > TmpDepth do
+        ACanvas.Graphics.PopClip;
+      ACanvas.Graphics.RestoreState(TmpState);
+    end;
+  end;
+
 begin
   { What the viewport shows - its linked view, or its own - asked once.
     The layer override is the view's, so a named detail that hides the
@@ -17864,43 +18045,76 @@ begin
   TmpView := AViewport.EffectiveView(ACAD);
   { Worked out here rather than handed in, so that the rectangle drawn,
     the rectangle clipped to and the rectangle an application hit-tests
-    against are one expression with one place to be wrong. }
-  TmpDest := CADSheetViewportRectPx(ASheet, AViewport, ADevice);
-  if (TmpDest.Right <= TmpDest.Left) or (TmpDest.Bottom <= TmpDest.Top) then
+    against are one expression with one place to be wrong. The outer
+    rectangle is the viewport's - border, handles, the application's
+    furniture - and the content rectangle, inside its insets, is where
+    the model goes. }
+  TmpOuter := CADSheetViewportRectPx(ASheet, AViewport, ADevice);
+  if (TmpOuter.Right <= TmpOuter.Left) or (TmpOuter.Bottom <= TmpOuter.Top)
+  then
     Exit;
-  TmpWindow := AViewport.ModelWindow(ACAD);
-  { Through the same routine an application inverts, rather than a
-    second copy of the expression. If the two ever disagree, a click
-    lands somewhere other than where the drawing is. }
-  TmpTransf := CADSheetViewportTransform(ACAD, ASheet, AViewport, ADevice);
+  TmpDest := CADSheetViewportContentRectPx(ASheet, AViewport, ADevice);
+  TmpHasContent := (TmpDest.Right > TmpDest.Left) and
+    (TmpDest.Bottom > TmpDest.Top);
+  if TmpHasContent then
+  begin
+    TmpWindow := AViewport.ModelWindow(ACAD);
+    { Through the same routine an application inverts, rather than a
+      second copy of the expression. If the two ever disagree, a click
+      lands somewhere other than where the drawing is. }
+    TmpTransf := CADSheetViewportTransform(ACAD, ASheet, AViewport, ADevice);
+  end
+  else
+  begin
+    TmpWindow := Rect2D(0, 0, 0, 0);
+    TmpTransf := IdentityTransf2D;
+  end;
   TmpClip := RectToRect2D(TmpDest);
 
-  { Nested inside the sheet's clip, which is what PushClip had to
-    learn to do before any of this could work: a viewport is a hole in
-    a sheet, and a drawing seen through it runs past the hole in every
-    direction. }
-  ACanvas.Graphics.PushClip(TmpDest);
-  try
-    TmpIter := ACAD.ObjectsIterator;
+  TmpInfo.Sheet := ASheet;
+  TmpInfo.Viewport := AViewport;
+  TmpInfo.Canvas := ACanvas;
+  TmpInfo.Device := ADevice;
+  TmpInfo.OuterPx := TmpOuter;
+  TmpInfo.ContentPx := TmpDest;
+  TmpInfo.ModelToDevice := TmpTransf;
+  TmpInfo.ModelWindow := TmpWindow;
+  TmpInfo.PixelsPerMM := ADevice.PixelsPerMMX;
+  TmpInfo.DrawMode := ADrawMode;
+
+  CallHook(vdpBeforeModel);
+
+  if TmpHasContent then
+  begin
+    { Nested inside the sheet's clip, which is what PushClip had to
+      learn to do before any of this could work: a viewport is a hole
+      in a sheet, and a drawing seen through it runs past the hole in
+      every direction. }
+    ACanvas.Graphics.PushClip(TmpDest);
     try
-      TmpObj := TObject2D(TmpIter.First);
-      while TmpObj <> nil do
-      begin
-        if TmpObj.IsVisible(TmpWindow, ADrawMode) and
-          (not TmpView.UseLayerOverride or
-          not(TmpObj.Layer in TmpView.HiddenLayers)) then
+      TmpIter := ACAD.ObjectsIterator;
+      try
+        TmpObj := TObject2D(TmpIter.First);
+        while TmpObj <> nil do
         begin
-          ACAD.Layers.SetCanvas(ACanvas, TmpObj.Layer);
-          TmpObj.Draw(TmpTransf, ACanvas, TmpClip, ADrawMode);
+          if TmpObj.IsVisible(TmpWindow, ADrawMode) and
+            (not TmpView.UseLayerOverride or
+            not(TmpObj.Layer in TmpView.HiddenLayers)) then
+          begin
+            ACAD.Layers.SetCanvas(ACanvas, TmpObj.Layer);
+            TmpObj.Draw(TmpTransf, ACanvas, TmpClip, ADrawMode);
+          end;
+          TmpObj := TObject2D(TmpIter.Next);
         end;
-        TmpObj := TObject2D(TmpIter.Next);
+      finally
+        TmpIter.Free;
       end;
     finally
-      TmpIter.Free;
+      ACanvas.Graphics.PopClip;
     end;
-  finally
-    ACanvas.Graphics.PopClip;
   end;
+
+  CallHook(vdpAfterModel);
 
   { The border last, over the drawing rather than under it. The clip is
     the border's own rectangle, so anything filled that reaches the edge
@@ -17913,9 +18127,10 @@ begin
   if AViewport.ShowBorder then
   begin
     ACAD.Layers.SetCanvas(ACanvas, 0);
-    ACanvas.Graphics.Polyline([Point(TmpDest.Left, TmpDest.Top),
-      Point(TmpDest.Right, TmpDest.Top), Point(TmpDest.Right, TmpDest.Bottom),
-      Point(TmpDest.Left, TmpDest.Bottom), Point(TmpDest.Left, TmpDest.Top)]);
+    ACanvas.Graphics.Polyline([Point(TmpOuter.Left, TmpOuter.Top),
+      Point(TmpOuter.Right, TmpOuter.Top), Point(TmpOuter.Right,
+      TmpOuter.Bottom), Point(TmpOuter.Left, TmpOuter.Bottom),
+      Point(TmpOuter.Left, TmpOuter.Top)]);
   end;
 end;
 
