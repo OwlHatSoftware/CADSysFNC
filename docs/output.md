@@ -48,6 +48,13 @@ CADSaveSheetsToPDF(CAD, CAD.Sheets, 'plan.pdf', 0, -1,
 They are added to the finished file as an incremental update - see the header
 of `FNCCS4PDF` for why.
 
+Three things FNC's PDF engine gets wrong at 600 dpi are drawn by the library
+instead: a dashed pen, as solid pieces whose length scales with the pen; a
+gradient, as up to 256 bands of solid colour inside the shape's outline; and
+turned text, rotated about its rectangle's centre in the page's own
+coordinates. On paper and on screen they look as they should. A program that
+edits the PDF sees bands, not one gradient object.
+
 ## PNG
 
 On FMX the bitmap's own alpha is used, so a transparent image is exact. On the

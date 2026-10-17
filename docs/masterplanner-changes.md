@@ -41,8 +41,32 @@ All changes go into `Sources\VCL.*` (the masters) and are regenerated for FMX/VC
 | CS-07 | **Printing on FMX** | Should | MP-OUT-002 | Done (e32f949) |
 | CS-08 | **PDF**: link annotations and font embedding control | Should | MP-OUT-001 | Done (b1b8315) |
 | CS-09 | Anisotropic viewport scale (`UnitsPerMMY`) | Could (P1.1) | date window fitted to a sheet while lanes keep their height | Open |
-| CS-10 | Verification items (no change expected) | Must | spike WP-0.1 | Library side done; 5,000 shapes for the spike |
+| CS-10 | Verification items (no change expected) | Must | spike WP-0.1 | Library side done (c1aabac); spike measured the 5,000 shapes |
 | CS-11 | Docs, JSON format, tests, demo | Must | — | Done (08bd7bd) |
+| CS-12 | **PDF: gradient fills** at the 600 dpi layout (found in WP-0.1) | Must | MP-SHP-006, MP-OUT-001 | Done (df6b798) |
+| CS-13 | **PDF: rotated text** at the 600 dpi layout (found in WP-0.1) | Must | MP-TXT-005, MP-LAN-001, MP-OUT-001 | Done (df6b798) |
+| CS-14 | **PDF: dash patterns** scaled from dots to points (found in WP-0.1) | Must | MP-SHP-007, MP-CON-003 | Done (c1aabac) |
+| CS-15 | **FNC backend: rotated text clipped** to the unrotated rectangle (found in WP-0.1) | Must | MP-TXT-005 | Open |
+| CS-16 | **GDI/EMF backend: wrapped text not centred vertically** (found in WP-0.2) | Must | MP-OUT-004 | Open |
+| CS-17 | **EMF: uneven glyph spacing, text overflow** at the 600 dpi layout (found in WP-0.2) | Must | MP-OUT-004 | Open |
+| CS-18 | Clipboard: **no PNG next to the EMF** (Office pastes the PNG by default) — Must; SVG (`image/svg+xml`) next to it — Should (WP-0.2, decision 0002) | Must / Should | MP-OUT-004 | Open |
+
+---
+
+### Status after the WP-0.1 spike (2026-10-16)
+
+The local CADSysFNC (`b1b8315`) already has **CS-01 … CS-08** (commits `6263116` … `b1b8315`); the spike used CS-01 (inset, hook, AppData), CS-03 (gradient), CS-04 (PNG), CS-05 (SVG) and the PDF writer. CS-01, CS-04 and CS-05 work as specified. CS-03 works on screen/PNG and SVG but not in the PDF. The spike found four new items, **CS-12 … CS-15**, and the CS-10 results are in §12. Details and pictures: `docs\spikes\wp01-rendering-spike.md`.
+
+**Re-check against `c1aabac` ("CS-10 checks: turned text, dashes and text size on paper"), 2026-10-16 23:02.** The spike was run again in CI on `main` with CADSysFNC `c1aabac` (the build log records the commit) and its 600 dpi PDF compared with the 72 dpi one (`ci-output/main/spike/spike.pdf` and `spike-72dpi.pdf`):
+
+| Item | Status at `c1aabac` |
+|---|---|
+| CS-14 PDF dashes | ✅ **fixed** — dashed and dotted lines show proper dashes at 600 dpi |
+| CS-12 PDF gradient | ❌ **open** — the gradient-filled bar ("Aanbesteden Realisatiecontract", sheet 2) is still not drawn; its text floats on the bar behind |
+| CS-13 PDF rotated text | ❌ **open, now better located** — the text **is** written, but in the wrong place (see §15) |
+| CS-15 FNC rotated-text clip | open in the library; the spike's square-rectangle workaround still applies (the commit documents the VCL GDI+ displacement as not fixed) |
+
+**Fixed in CADSysFNC `df6b798` (2026-10-17):** CS-12 and CS-13 - see §14 and §15. Checked with a test sheet written at 600 and 72 dpi (four gradient shapes, labels at 0°, 45°, 90° and 270°) by the suite, by `pdftoppm` and by `pdftotext -bbox`; the spike has not been run against it yet.
 
 ---
 
@@ -236,18 +260,18 @@ procedure CADPrintSheetsFMX(const ACAD: TFNCCADCmp2D; const ASheets: TCADSheets;
 
 Drawing through an FNC graphics on `Printer.Canvas` per page, using `CADDrawSheet` like the VCL version. **Fallback** already used by VisualPlannerFNC (write a temporary PDF and hand it to the shell's `print` verb) stays acceptable if FMX printer output proves unreliable; then this item is closed with a documented decision.
 
-**Done as:** not through the FMX printer canvas but through GDI on the active FMX printer's own device context - `VCL.FNCCS4PrintFMX` (`CADPrintSheetsFMX`, `CADPrintPagesFMX`, `CADFMXPrinterPageDevice`) over `CADPrintSheetsWin` / `CADPrintPagesWin` in `VCL.FNCCS4GDI`. Same drawing as the EMF and the VCL print, and each sheet sets its own orientation and (standard) paper by resetting the DC between pages. Copies and other settings made on FMX's printer object are not carried over. Windows only; elsewhere the calls raise `ECADPageError` and the PDF is the way to paper.
-
 ---
+
+**Done as:** not through the FMX printer canvas but through GDI on the active FMX printer's own device context - `VCL.FNCCS4PrintFMX` (`CADPrintSheetsFMX`, `CADPrintPagesFMX`, `CADFMXPrinterPageDevice`) over `CADPrintSheetsWin` / `CADPrintPagesWin` in `VCL.FNCCS4GDI`. Same drawing as the EMF and the VCL print, and each sheet sets its own orientation and (standard) paper by resetting the DC between pages. Copies and other settings made on FMX's printer object are not carried over. Windows only; elsewhere the calls raise `ECADPageError` and the PDF is the way to paper.
 
 ## 10. CS-08 — PDF: links and fonts
 
 - **Links:** an optional list of link areas passed to `CADSaveSheetsToPDF` (or a callback per sheet): `TCADPDFLink = record RectMM: TRect2D; URL: String; end;` → link annotations on the page. Use the URL/link support of `TTMSFNCPDFLib` if FNC Core provides it; if it does not, record that as a known limitation in `VCL.FNCCS4PDF`'s header comment and close the item.
 - **Fonts:** expose whether TrueType fonts are embedded (and subset) — a global `CADPDFEmbedFonts: Boolean = True` passed to the FNC PDF library — and document what happens with a font that is not installed.
 
-**Done as:** `CADSaveSheetsToPDF` takes an optional `TCADPDFSheetLinksFunc` returning `TCADPDFLink` records per sheet. FNC only links over text it draws (`AddURL`) and its rectangle-taking routine is out of reach in an implementation section, so the links are appended after writing as a PDF incremental update (`CADAddPDFLinks`, public). `CADPDFEmbedFonts` (default True) and `CADPDFFontFallbacks` (tried in order for a font that is not installed; with none of them available the name is written unembedded and the reader substitutes) are set on the FNC PDF library when a document starts. See the `VCL.FNCCS4PDF` header.
-
 ---
+
+**Done as:** `CADSaveSheetsToPDF` takes an optional `TCADPDFSheetLinksFunc` returning `TCADPDFLink` records per sheet. FNC only links over text it draws (`AddURL`) and its rectangle-taking routine is out of reach in an implementation section, so the links are appended after writing as a PDF incremental update (`CADAddPDFLinks`, public). `CADPDFEmbedFonts` (default True) and `CADPDFFontFallbacks` (tried in order for a font that is not installed; with none of them available the name is written unembedded and the reader substitutes) are set on the FNC PDF library when a document starts. See the `VCL.FNCCS4PDF` header.
 
 ## 11. CS-09 — Anisotropic viewport scale (Could, P1.1)
 
@@ -272,6 +296,8 @@ Lets a sheet show ten years of a plate across an A3 width while lanes keep their
 | 5,000 custom shapes: redraw and `PickObject` on FMX | existing benchmark with Masterplanner shapes | consider a spatial index for picking |
 | `OnPaintOverlay` gives access to the canvas and the current transform | draw a header band in the overlay | expose them |
 
+---
+
 **Checked on the library side (2026-10-16):**
 
 | Item | Result |
@@ -284,6 +310,8 @@ Lets a sheet show ten years of a plate across an A3 width while lanes keep their
 | `OnPaintOverlay` | Nothing to expose: the event's `Sender` is the viewport, whose public `OnScreenCanvas` and `ViewportToScreenTransform` are the canvas and the transform. On FMX the overlay canvas carries a `ViewScale` matrix. |
 | *Found on the way:* text size in a PDF on the VCL | **Fixed.** FNC's PDF engine takes the font's `Size`, which on the VCL is the pixel height turned into points at the font's pixels per inch - three quarters of the intended size at 96 dpi, under a third at 240. `TCADPDFGraphics.SelectFont` now sets the size to the pixel height. A 10 mm text object now has 6.3 mm capitals, as it should. FMX was not affected. **VCL PDFs written before this have text 25% too small.** |
 
+**Results (WP-0.1, 2026-10-16):** rotated text — SVG ✅, PDF ❌ → CS-13, screen/PNG clipped → CS-15; `CAD_DT_CALCRECT` vs `DrawText` ✅; dashes — PNG/SVG ✅, PDF ❌ → CS-14; rounded polygons in PDF ✅; 5,000 shapes — redraw ≈ 0.05 ms per visible shape, picking 0.1 ms over 8,202 objects (no spatial index needed for picking); `OnPaintOverlay` not tested.
+
 ---
 
 ## 13. CS-11 — Docs, JSON, tests, demo
@@ -295,7 +323,77 @@ Lets a sheet show ten years of a plate across an A3 width while lanes keep their
 
 ---
 
-## 14. Done when
+## 14. CS-12 — PDF: gradient fills (Must)
+
+**Found in WP-0.1.** At `CADPDFResolution = 600` a polygon or rectangle filled with `cbsGradient` is not drawn at all; with `CADPDFResolution = 72` the same page renders the gradient correctly. The brush is right (screen, PNG and SVG show it), so the gradient reaches `TTMSFNCGraphicsPDFEngine`, whose shading is set up in coordinates the 600 dpi → points page transform does not apply to (the same class of unit mix as the page-height problem the unit header describes) — the shading ends up off the page or degenerate, and the fill with it.
+
+**Status at `c1aabac`: open** — unchanged; the gradient-filled bar on sheet 2 of the spike's `spike.pdf` is not drawn, and is drawn correctly in `spike-72dpi.pdf`.
+
+**Fix plan**, in order of preference:
+
+1. In `TCADPDFGraphics`, convert the gradient's start and end points to what the PDF engine expects (multiply by `72 / CADPDFResolution`, or apply the inverse of the page transform) before handing the fill over. Check against the PDF engine's source which coordinates its shading uses.
+2. If the engine cannot be fed correctly: draw a `cbsGradient` fill in the PDF backend as **N solid bands** (e.g. 32) clipped to the shape (`PushClip` to the polygon's box plus the polygon itself as a clip path), interpolating `Color` → `Color2`. Indistinguishable from a real gradient on paper, works in every backend, a few dozen more operators per shape.
+3. Never silently drop the shape: if neither works, fill with the average of the two colours.
+
+**Test:** a page with a horizontal and a vertical gradient rectangle and a gradient polygon at 600 dpi; parse the content stream for a shading (`sh`) or the band fills, and render the page (pdftoppm in the test suite or a stored reference image).
+
+**Done as (`df6b798`):** fix plan 2. `TCADPDFGraphics` paints a `cbsGradient` fill as bands of solid colour - one per step of the channel that changes most, at most 256, never thinner than a dot - inside the shape's own outline as a clip path (`W n`), then strokes the outline with nothing to fill. Opaque bands overlap by a dot so a reader shows no seams. Plan 1 was not possible: FNC writes the pattern itself, with the shape's box in dots, no `/Matrix` and `/Extend[false false]`, from a routine in its implementation section. Rectangles, polygons, ellipses and `FillRect` all go this way. Test: `TCADPDFPaperTests.AGradientIsPaintedInBandsInsideItsShape`.
+
+## 15. CS-13 — PDF: rotated text (Must)
+
+**Found in WP-0.1.** At 600 dpi, text drawn with `Escapement` ≠ 0 is missing from the PDF (no rotated text matrix in the content stream); at 72 dpi it is there, in the right place. Lane captions (90°) and milestone labels (45°) depend on it.
+
+**Status at `c1aabac`: open.** Turned text is now drawn, but misplaced at 600 dpi. `pdftotext -bbox` on the spike's `spike.pdf`: the 90° lane caption "Nieuwbouw ZS Reijerswaard" should sit in the lane column at the left edge (x ≈ 30–45 pt, as in `spike-72dpi.pdf`, where it is right); at 600 dpi only the word "Nieuwbouw" is found, mid-page at x 722–741, y 459–463 pt on sheet 1 and at x 86–124, y 495–503 pt on sheet 3, and on sheet 2 none of the turned words (lane captions, 45° milestone labels "Concept P&ID beschikbaar", "Definitief P&ID beschikbaar") are on the page at all. So the rotation centre (or the translation that goes with the turn) still takes the dots-to-points conversion once too often or not at all — the same class of unit mix as the page height. A check at 72 dpi, or on a page where the text sits near the origin, will not show it; the spike's sheets will (`mpspike01.exe -out <folder>`, compare the two PDFs).
+
+**Fix plan:** do the rotation in `TCADPDFGraphics.DrawText` rather than passing the angle to the FNC/PDF engine: save the graphics state, rotate the PDF graphics' transform about the centre of the text rectangle (in dots, so the page transform scales it with everything else), draw the text unrotated, restore. Equivalent: emit a `Tm` with the rotation matrix through the PDF library's lower-level text call.
+
+**Test:** 0°, 45°, 90°, 270° labels anchored at known points; extract with `pdftotext -bbox` and compare positions with the SVG output.
+
+**Done as (`df6b798`):** the fix plan. Cause: FNC's `SetTextAngle` translates to `MediaBox height - centre Y` - points minus dots - while the library flips everything else against the page height in dots. `TCADPDFGraphics.DrawText` now saves the state, rotates about the centre of the caller's rectangle in the page's own dotted space (the save routines set `PageHeight`), draws the text level in the box FNC would have used (`CADRotatedTextRect`) and restores. Drawn level, FNC cuts a line longer than its box short, where turned it lets it run on - a 90° label in a box sized for level text came out as "Mil" - so the box is opened out on the side the alignment grows towards and the text kept to one line. Test: `TCADPDFPaperTests.TurnedTextLandsWhereItIsAnchored` follows `q`/`cm`/`Td`/`Tj` through the content stream: each label turned the right way, complete, within half a label of its anchor and within 2 pt of the 72 dpi page.
+
+## 16. CS-14 — PDF: dash patterns (Must)
+
+**Found in WP-0.1.** At 600 dpi `cpsDash`/`cpsDot` lines come out as very dense hatching: the dash array is written in dots and then scaled by 72/600, so every dash is 8.3 × too short. At 72 dpi the dashes are right.
+
+**Status at `c1aabac`: fixed.** `TCADPDFGraphics` draws dashed pens as solid pieces with a pattern that scales with the pen width (`CADDashPattern` / `CADDashSegments`); confirmed in the spike's 600 dpi PDF.
+
+**Fix plan:** in `TCADPDFGraphics`, scale the dash array by `CADPDFResolution / 72` (or derive it from the pen width in points) before it reaches the PDF. Better still, make dash lengths a multiple of the line width on every backend, so a 0.5 mm dashed line looks the same in PNG, SVG and PDF (the SVG backend already writes `180,60` / `36,36` at 600 dpi, which is right).
+
+**Test:** a 0.25 mm and a 0.5 mm dashed and dotted line; measure the dash lengths in the content stream.
+
+## 17. CS-15 — FNC backend: rotated text clipped (Must)
+
+**Found in WP-0.1.** `TCADFNCGraphics.DrawText` with an angle passes its rectangle to `TTMSFNCGraphics.DrawText`, which rotates the text about the rectangle's centre and then clips it to the **unrotated** rectangle — `CAD_DT_NOCLIP` is not honoured. A 90° caption in a rectangle sized for the horizontal text showed only its middle ("ZS I" of "Nieuwbouw ZS Reijerswaard").
+
+**Fix plan:** when the angle is not zero, pass FNC a square of side `width + height` of the text, centred on the centre of the caller's rectangle (what the Masterplanner spike does in `MPDrawRotatedText`). The text's position is unchanged; only the clip goes away. Document that a rotated `DrawText` positions by the rectangle's centre.
+
+**Test:** draw a 90° label in a narrow rectangle onto a bitmap and check pixels along the rotated text's length.
+
+## 18. CS-16 — GDI/EMF backend: wrapped text not centred vertically (Must)
+
+**Found in WP-0.2** (`docs\spikes\wp02-output-spike.md`). `TCADGDIGraphics.DrawText` passes the `CAD_DT_` flags straight to `DrawTextW`. GDI honours `DT_VCENTER` (and `DT_BOTTOM`) only together with `DT_SINGLELINE`, so every wrapped label in an EMF sits at the top of its rectangle; the FNC backend (screen, PNG, PDF) and SVG centre it. Seen identically in Windows GDI playback and in PowerPoint.
+
+**Fix plan:** when `CAD_DT_WORDBREAK` is set with `CAD_DT_VCENTER` or `CAD_DT_BOTTOM`, measure with `DT_CALCRECT` on the same width, offset the rectangle's top by half (or all) of the spare height, and draw without the vertical flag. Same in the turned-text path and in the VCL GDI backend (`VCL.FNCCS4GraphicsVCL`), which has the same call.
+
+**Test:** a two-line label in a tall rectangle, `VCENTER`: the text's bounding box (from `DT_CALCRECT`, or rasterised) centred within one pixel, on GDI, FNC and SVG alike.
+
+## 19. CS-17 — EMF: uneven glyph spacing, text overflow (Must)
+
+**Found in WP-0.2.** `CADSheetToEMF` records against the screen DC (`GetDC(0)`) with the sheet laid out at 600 dpi. Glyph advances are stored rounded at small font sizes, so on playback (Windows and PowerPoint alike) words show gaps ("Realisatieco ntract") and text that measured as fitting is wider than its box ("Opstellen vraagspecificati…" instead of wrapping). The **same sheet recorded at 2400 dpi** wraps and spaces correctly (`sheet-2-2400dpi.emf` in the spike's output).
+
+**Fix plan:** make 2400 dpi (or higher) the default layout resolution for `CADSheetToEMF`, `CADModelRectToEMF` and the clipboard — the metafile is vector, so the file grows only by the larger numbers. Alternatively record against a high-resolution reference (a printer-like DC) or in `MM_HIMETRIC` logical units. Check that line weights and dash patterns (which scale with the pen) stay right at the new resolution.
+
+**Test:** a paragraph that just fits a box, recorded and played back (`PlayEnhMetaFile` into a bitmap): same line breaks as the measure, no glyph gaps beyond a pixel.
+
+## 20. CS-18 — SVG on the clipboard (Should)
+
+**From WP-0.2 / decision 0002 (proposed).** PowerPoint 16 (Microsoft 365) renders the library's SVG more faithfully than its EMF. Put `CADSaveSheetToSVGStream`'s output on the clipboard under the registered format `image/svg+xml`, next to `CF_ENHMETAFILE`, PNG and `CF_DIB`, in `CADCopySheetToClipboardWin` and `CADCopyModelRectToClipboardWin`; programs take the best format they understand.
+
+**Paste test (WP-0.2, 2026-10-17):** with EMF, PNG and DIB on the clipboard, a plain paste in PowerPoint and Word 16 takes the **PNG** — Office ranks PNG above `CF_ENHMETAFILE`; the metafile is only reachable through Paste Special. So, besides SVG: **do not put the registered `PNG` format on the clipboard together with the metafile** (or make it optional, default off); `CF_DIB` stays as the bitmap for programs without metafile support. Priority **Must** for that part, since without it MP-OUT-004's vector paste is not what users get.
+
+**Test:** the clipboard holds all four formats after a copy; a manual paste into PowerPoint 365 gives the SVG.
+
+## 21. Done when
 
 - All Must items in `Sources`, regenerated, packages built for FMX and VCL, test suites green.
 - VisualPlannerFNC builds and opens its drawings unchanged.
