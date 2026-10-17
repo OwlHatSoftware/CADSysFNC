@@ -19,7 +19,7 @@ uses
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsFNC,
   VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCadSysRegister,
   VCL.FNCCS4Paper, VCL.FNCCS4Image, Vcl.Imaging.pngimage, VCL.FNCCS4SVG,
-  VCL.FNCCS4GDI, VCL.FNCCS4PDF, System.IOUtils, System.RegularExpressions, System.ZLib, Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom, Xml.omnixmldom;
+  VCL.FNCCS4GDI, VCL.FNCCS4PDF, VCL.FNCCS4GraphicsVCL, System.IOUtils, System.RegularExpressions, System.ZLib, Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom, Xml.omnixmldom;
 
 type
   { : CS-04: a sheet, or a rectangle of the model, as a PNG. Here rather
@@ -133,7 +133,9 @@ type
     [Test]
     procedure AMetafileFileIsWritten;
     [Test]
-    procedure TheClipboardGetsAllThreeFormats;
+    procedure AMetafileSpacesSmallTextAsItMeasuredIt;
+    [Test]
+    procedure TheClipboardHasTheMetafileTheSVGAndABitmap;
     [Test]
     procedure SheetsPrintEachInItsOwnOrientation;
   end;
@@ -202,6 +204,12 @@ type
   public
     [Test]
     procedure ATurnedLabelIsTheLevelLabelTurned;
+    [Test]
+    procedure AnFNCTurnedLabelIsTheLevelLabelTurned;
+    [Test]
+    procedure ALongTurnedLabelIsDrawnWhole;
+    [Test]
+    procedure AWrappedLabelIsCentredOnEveryBackend;
     [Test]
     procedure SVGLaysTurnedTextOutAsFNCDoes;
     [Test]
@@ -1219,6 +1227,127 @@ begin
   Result := GetPixel(FDC, X, Y);
 end;
 
+{ : The box round the dark pixels of a 32-bit top-down DIB; an empty
+  rect for none. }
+function DIBInkBox(const ABits: Pointer; const AW, AH: Integer): TRect;
+var
+  P: PCardinal;
+  X, Y: Integer;
+begin
+  Result := Rect(MaxInt, MaxInt, -1, -1);
+  P := ABits;
+  for Y := 0 to AH - 1 do
+    for X := 0 to AW - 1 do
+    begin
+      if ((P^ and $FF) < 160) and (((P^ shr 16) and $FF) < 160) then
+      begin
+        Result.Left := Min(Result.Left, X);
+        Result.Top := Min(Result.Top, Y);
+        Result.Right := Max(Result.Right, X + 1);
+        Result.Bottom := Max(Result.Bottom, Y + 1);
+      end;
+      Inc(P);
+    end;
+  if Result.Right < 0 then
+    Result := Rect(0, 0, 0, 0);
+end;
+
+type
+  TDIBPaint = reference to procedure(const ADC: HDC);
+
+{ : AW by AH white pixels, APaint on them, and the box round the ink. }
+function PaintedInkBox(const AW, AH: Integer; const APaint: TDIBPaint): TRect;
+var
+  TmpDC: HDC;
+  TmpBmp: HBITMAP;
+  TmpOld: HGDIOBJ;
+  TmpInfo: TBitmapInfo;
+  TmpBits: Pointer;
+begin
+  TmpDC := CreateCompatibleDC(0);
+  FillChar(TmpInfo, SizeOf(TmpInfo), 0);
+  TmpInfo.bmiHeader.biSize := SizeOf(TBitmapInfoHeader);
+  TmpInfo.bmiHeader.biWidth := AW;
+  TmpInfo.bmiHeader.biHeight := -AH;
+  TmpInfo.bmiHeader.biPlanes := 1;
+  TmpInfo.bmiHeader.biBitCount := 32;
+  TmpInfo.bmiHeader.biCompression := BI_RGB;
+  TmpBmp := CreateDIBSection(TmpDC, TmpInfo, DIB_RGB_COLORS, TmpBits, 0, 0);
+  TmpOld := SelectObject(TmpDC, TmpBmp);
+  try
+    PatBlt(TmpDC, 0, 0, AW, AH, WHITENESS);
+    APaint(TmpDC);
+    GdiFlush;
+    Result := DIBInkBox(TmpBits, AW, AH);
+  finally
+    SelectObject(TmpDC, TmpOld);
+    DeleteObject(TmpBmp);
+    DeleteDC(TmpDC);
+  end;
+end;
+
+{ : The mean glyph advance, in the metafile's own units, of a line of
+  small text recorded at ADPI (0: the default) - read from the dx
+  arrays of its EMR_EXTTEXTOUTW records. GDI stores each advance as a
+  whole number of those units. }
+function MetafileMeanAdvance(const ADPI: Integer): Double;
+const
+  EMR_EXTTEXTOUTW = 84;
+  EMR_EOF = 14;
+var
+  TmpCAD: TFNCCADCmp2D;
+  TmpSheet: TCADSheet;
+  TmpEMF: HENHMETAFILE;
+  TmpBytes: TBytes;
+  TmpOff, TmpType, TmpSize, TmpChars, TmpDx, I, N: Cardinal;
+  TmpSum: Int64;
+begin
+  TmpCAD := TFNCCADCmp2D.Create(nil);
+  try
+    TmpSheet := TmpCAD.Sheets.Add('Text');
+    TmpSheet.Paper := pkA5;
+    TmpSheet.Orientation := pgoLandscape;
+    { 2.5 mm text: the size at which the spike saw words come apart. }
+    TmpSheet.AddObject(TText2D.Create(-1, Rect2D(10, 70, 200, 72.5), 2.5,
+      'Aanbesteden Realisatiecontract - Opstellen vraagspecificatie'));
+    TmpEMF := CADSheetToEMF(TmpCAD, TmpSheet, ADPI);
+    try
+      SetLength(TmpBytes, GetEnhMetaFileBits(TmpEMF, 0, nil));
+      GetEnhMetaFileBits(TmpEMF, Length(TmpBytes), @TmpBytes[0]);
+    finally
+      DeleteEnhMetaFile(TmpEMF);
+    end;
+  finally
+    TmpCAD.Free;
+  end;
+  TmpSum := 0;
+  N := 0;
+  TmpOff := 0;
+  while TmpOff + 8 <= Cardinal(Length(TmpBytes)) do
+  begin
+    TmpType := PCardinal(@TmpBytes[TmpOff])^;
+    TmpSize := PCardinal(@TmpBytes[TmpOff + 4])^;
+    if (TmpType = EMR_EOF) or (TmpSize = 0) then
+      Break;
+    if TmpType = EMR_EXTTEXTOUTW then
+    begin
+      { EMRTEXT at 36: reference point, nChars, offString, options,
+        rcl, offDx - offsets from the record's start. }
+      TmpChars := PCardinal(@TmpBytes[TmpOff + 44])^;
+      TmpDx := PCardinal(@TmpBytes[TmpOff + 72])^;
+      if (TmpDx <> 0) and (TmpChars > 0) then
+        for I := 0 to TmpChars - 1 do
+        begin
+          Inc(TmpSum, PInteger(@TmpBytes[TmpOff + TmpDx + I * 4])^);
+          Inc(N);
+        end;
+    end;
+    Inc(TmpOff, TmpSize);
+  end;
+  Assert.IsTrue(N > 20, 'the text was recorded: ' + IntToStr(N) + ' glyphs');
+  Result := TmpSum / N;
+end;
+
 function TCADGDIExportTests.SheetCAD(out ASheet: TCADSheet): TFNCCADCmp2D;
 begin
   Result := TFNCCADCmp2D.Create(nil);
@@ -1477,19 +1606,73 @@ begin
   end;
 end;
 
-procedure TCADGDIExportTests.TheClipboardGetsAllThreeFormats;
+procedure TCADGDIExportTests.AMetafileSpacesSmallTextAsItMeasuredIt;
+var
+  TmpDefault, TmpCoarse: Double;
+  TmpLogs: string;
+begin
+  { CS-17. Small text recorded at 600 dpi played back - in Windows and in
+    PowerPoint - with gaps inside words and past its box: GDI keeps each
+    glyph's advance as a whole number of the recording's units, and at
+    600 dpi a glyph of 2.5 mm text is only a couple of dozen of them.
+    Recorded by default, a glyph must be fifty or more, so that the
+    rounding stays under a percent. }
+  TmpDefault := MetafileMeanAdvance(0);
+  TmpCoarse := MetafileMeanAdvance(600);
+  TmpLogs := TPath.GetFullPath(ExtractFilePath(ParamStr(0)) + '..\..\logs');
+  if TDirectory.Exists(TmpLogs) then
+    TFile.WriteAllText(TPath.Combine(TmpLogs, 'emf-text-advance.txt'),
+      Format('mean glyph advance: default %.1f, at 600 dpi %.1f units',
+      [TmpDefault, TmpCoarse]));
+  Assert.IsTrue(TmpDefault >= 50, Format('a glyph is %.1f units by ' +
+    'default (%.1f at 600 dpi)', [TmpDefault, TmpCoarse]));
+end;
+
+procedure TCADGDIExportTests.TheClipboardHasTheMetafileTheSVGAndABitmap;
 var
   TmpCAD: TFNCCADCmp2D;
   TmpSheet: TCADSheet;
+  TmpHandle: THandle;
+  TmpPtr: PAnsiChar;
+  TmpHead: AnsiString;
 begin
   { This replaces whatever was on the clipboard of whoever runs it. }
   TmpCAD := SheetCAD(TmpSheet);
   try
     CADCopySheetToClipboardWin(TmpCAD, TmpSheet);
     Assert.IsTrue(IsClipboardFormatAvailable(CF_ENHMETAFILE), 'the metafile');
-    Assert.IsTrue(IsClipboardFormatAvailable(RegisterClipboardFormat('PNG')),
-      'the PNG');
     Assert.IsTrue(IsClipboardFormatAvailable(CF_DIB), 'the bitmap');
+    { CS-18: Office pastes a PNG before a metafile, so none by default. }
+    Assert.IsFalse(IsClipboardFormatAvailable(RegisterClipboardFormat('PNG')),
+      'no PNG');
+    Assert.IsTrue(IsClipboardFormatAvailable(RegisterClipboardFormat
+      ('image/svg+xml')), 'the SVG');
+    Assert.IsTrue(OpenClipboard(0), 'open the clipboard');
+    try
+      TmpHandle := GetClipboardData(RegisterClipboardFormat('image/svg+xml'));
+      Assert.IsTrue(TmpHandle <> 0, 'SVG data');
+      TmpPtr := GlobalLock(TmpHandle);
+      try
+        SetString(TmpHead, TmpPtr, Min(400, Integer(GlobalSize(TmpHandle))));
+      finally
+        GlobalUnlock(TmpHandle);
+      end;
+    finally
+      CloseClipboard;
+    end;
+    Assert.IsTrue(Pos(AnsiString('<svg'), TmpHead) > 0, string(TmpHead));
+
+    CADClipboardPNG := True;
+    try
+      CADCopySheetToClipboardWin(TmpCAD, TmpSheet);
+      Assert.IsTrue(IsClipboardFormatAvailable(RegisterClipboardFormat('PNG')),
+        'the PNG, when asked for');
+    finally
+      CADClipboardPNG := False;
+    end;
+    CADCopyModelRectToClipboardWin(TmpCAD, Rect2D(0, 0, 100, 50), 2);
+    Assert.IsTrue(IsClipboardFormatAvailable(RegisterClipboardFormat
+      ('image/svg+xml')), 'the SVG of a model rectangle');
   finally
     TmpCAD.Free;
   end;
@@ -2226,6 +2409,182 @@ begin
     (Abs(TmpWant.Y - TmpTurned.Y) < 6), Format('turned ink centre %.1f, ' +
     '%.1f; the level one turned %.1f, %.1f', [TmpTurned.X, TmpTurned.Y,
     TmpWant.X, TmpWant.Y]));
+end;
+
+{ : The box round the ink of AText drawn through the FNC backend onto an
+  AW by AH bitmap. }
+function FNCInkBox(const AW, AH: Integer; const AText: string;
+  const AFont: TCADFontSpec; const R: TRect; const AFlags: Cardinal): TRect;
+var
+  TmpG: TTMSFNCGraphics;
+  TmpFNC: TCADFNCGraphics;
+  TmpR: TRect;
+  X, Y: Integer;
+begin
+  Result := Rect(MaxInt, MaxInt, -1, -1);
+  TmpG := TTMSFNCGraphics.CreateBitmapCanvas(AW, AH, False, False);
+  try
+    TmpG.BeginScene;
+    try
+      TmpG.Fill.Kind := gfkSolid;
+      TmpG.Fill.Color := gcWhite;
+      TmpG.Stroke.Kind := gskNone;
+      TmpG.DrawRectangle(RectF(0, 0, AW, AH), gcrmNone);
+      TmpFNC := TCADFNCGraphics.Create(TmpG, Rect(0, 0, AW, AH), False);
+      try
+        TmpFNC.SelectFont(AFont);
+        TmpFNC.FontColor := cadclBlack;
+        TmpFNC.Transparent := True;
+        TmpR := R;
+        TmpFNC.DrawText(AText, TmpR, AFlags);
+      finally
+        TmpFNC.Free;
+      end;
+    finally
+      TmpG.EndScene;
+    end;
+    for Y := 0 to AH - 1 do
+      for X := 0 to AW - 1 do
+        if RedOf(TmpG.Bitmap.Canvas.Pixels[X, Y]) < 160 then
+        begin
+          Result.Left := Min(Result.Left, X);
+          Result.Top := Min(Result.Top, Y);
+          Result.Right := Max(Result.Right, X + 1);
+          Result.Bottom := Max(Result.Bottom, Y + 1);
+        end;
+  finally
+    TmpG.Free;
+  end;
+  Assert.IsTrue(Result.Right > 0, 'FNC drew something');
+end;
+
+procedure TCADTextAgreementTests.AnFNCTurnedLabelIsTheLevelLabelTurned;
+const
+  R: TRect = (Left: 100; Top: 180; Right: 300; Bottom: 220);
+var
+  TmpLevel, TmpTurned, TmpWant: TPointF;
+  TmpBottom: Integer;
+  TmpC, TmpS, TmpDX, TmpDY: Double;
+begin
+  { CS-15: the FNC backend follows the same rule as the rest - the
+    label laid out level in CADRotatedTextRect, then turned about R's
+    middle. Left-aligned, where any other pivot shows. }
+  TmpLevel := FNCInk(400, 400, 'Milestone label', Spec(-22, 0),
+    CADRotatedTextRect(R, 45), CAD_DT_SINGLELINE or CAD_DT_NOPREFIX,
+    TmpBottom);
+  TmpTurned := FNCInk(400, 400, 'Milestone label', Spec(-22, 450), R,
+    CAD_DT_SINGLELINE or CAD_DT_NOPREFIX, TmpBottom);
+  TmpC := Cos(DegToRad(45));
+  TmpS := Sin(DegToRad(45));
+  TmpDX := TmpLevel.X - 200;
+  TmpDY := TmpLevel.Y - 200;
+  TmpWant := PointF(200 + TmpDX * TmpC + TmpDY * TmpS,
+    200 - TmpDX * TmpS + TmpDY * TmpC);
+  Assert.IsTrue((Abs(TmpWant.X - TmpTurned.X) < 6) and
+    (Abs(TmpWant.Y - TmpTurned.Y) < 6), Format('turned ink centre %.1f, ' +
+    '%.1f; the level one turned %.1f, %.1f', [TmpTurned.X, TmpTurned.Y,
+    TmpWant.X, TmpWant.Y]));
+end;
+
+procedure TCADTextAgreementTests.ALongTurnedLabelIsDrawnWhole;
+const
+  { Sized for the caption laid level: 300 by 20. }
+  R: TRect = (Left: 50; Top: 190; Right: 350; Bottom: 210);
+  Caption = 'Nieuwbouw ZS Reijerswaard';
+var
+  TmpLevel, TmpBox: TRect;
+begin
+  { CS-15: at 90 degrees FNC's own layout box is as narrow as the text is
+    tall, and on FMX its text layout cut the caption down to its middle.
+    The ink must be as long as the caption is when level. }
+  TmpLevel := FNCInkBox(400, 400, Caption, Spec(-20, 0), R,
+    CAD_DT_SINGLELINE or CAD_DT_CENTER or CAD_DT_VCENTER);
+  TmpBox := FNCInkBox(400, 400, Caption, Spec(-20, 900), R,
+    CAD_DT_SINGLELINE or CAD_DT_CENTER or CAD_DT_VCENTER);
+  Assert.IsTrue(Abs((TmpBox.Bottom - TmpBox.Top) - (TmpLevel.Right -
+    TmpLevel.Left)) <= 3, Format('turned %d tall, level %d long',
+    [TmpBox.Bottom - TmpBox.Top, TmpLevel.Right - TmpLevel.Left]));
+  Assert.IsTrue(TmpBox.Right - TmpBox.Left <= 30, 'and upright: ' +
+    IntToStr(TmpBox.Right - TmpBox.Left));
+  Assert.IsTrue(Abs((TmpBox.Top + TmpBox.Bottom) / 2 - 200) <= 3,
+    Format('centred on R: %d..%d', [TmpBox.Top, TmpBox.Bottom]));
+  { Left-aligned, the line starts at the level box's left edge - 10
+    pixels left of the middle - which turned is 10 below it, and runs
+    up. }
+  TmpBox := FNCInkBox(400, 400, Caption, Spec(-20, 900), R,
+    CAD_DT_SINGLELINE or CAD_DT_VCENTER);
+  Assert.IsTrue(Abs(TmpBox.Bottom - 210) <= 4, Format('starts at %d, ' +
+    'wanted 210', [TmpBox.Bottom]));
+end;
+
+procedure TCADTextAgreementTests.AWrappedLabelIsCentredOnEveryBackend;
+const
+  R: TRect = (Left: 50; Top: 50; Right: 250; Bottom: 350);
+  Text = 'Opstellen vraagspecificatie Realisatiecontract Reijerswaard';
+  Flags = CAD_DT_WORDBREAK or CAD_DT_CENTER or CAD_DT_VCENTER;
+var
+  TmpGDI, TmpVCL, TmpFNC: TRect;
+  TmpBmp: Vcl.Graphics.TBitmap;
+  TmpVG: TCADVCLGraphics;
+  TmpR: TRect;
+  X, Y: Integer;
+begin
+  { CS-16: GDI centres only a single line; wrapped, the label sat at the
+    top of its box in the metafile and on the printer. }
+  TmpGDI := PaintedInkBox(300, 400,
+    procedure(const ADC: HDC)
+    var
+      TmpG: TCADGDIGraphics;
+      TmpR: TRect;
+    begin
+      TmpG := TCADGDIGraphics.Create(ADC, 0);
+      try
+        TmpG.SelectFont(Spec(-20, 0));
+        TmpG.FontColor := cadclBlack;
+        TmpG.Transparent := True;
+        TmpR := R;
+        TmpG.DrawText(Text, TmpR, Flags);
+      finally
+        TmpG.Free;
+      end;
+    end);
+  Assert.IsTrue(TmpGDI.Bottom - TmpGDI.Top > 40, 'wrapped: ' +
+    IntToStr(TmpGDI.Bottom - TmpGDI.Top));
+  Assert.IsTrue(Abs((TmpGDI.Top + TmpGDI.Bottom) / 2 - 200) <= 6,
+    Format('GDI ink %d..%d, box 50..350', [TmpGDI.Top, TmpGDI.Bottom]));
+
+  TmpBmp := Vcl.Graphics.TBitmap.Create;
+  try
+    TmpBmp.SetSize(300, 400);
+    TmpBmp.Canvas.Brush.Color := clWhite;
+    TmpBmp.Canvas.FillRect(Rect(0, 0, 300, 400));
+    TmpVG := TCADVCLGraphics.Create(TmpBmp.Canvas);
+    try
+      TmpVG.SelectFont(Spec(-20, 0));
+      TmpVG.FontColor := cadclBlack;
+      TmpVG.Transparent := True;
+      TmpR := R;
+      TmpVG.DrawText(Text, TmpR, Flags);
+    finally
+      TmpVG.Free;
+    end;
+    TmpVCL := Rect(MaxInt, MaxInt, -1, -1);
+    for Y := 0 to 399 do
+      for X := 0 to 299 do
+        if RedOf(TmpBmp.Canvas.Pixels[X, Y]) < 160 then
+        begin
+          TmpVCL.Top := Min(TmpVCL.Top, Y);
+          TmpVCL.Bottom := Max(TmpVCL.Bottom, Y + 1);
+        end;
+  finally
+    TmpBmp.Free;
+  end;
+  Assert.IsTrue(Abs((TmpVCL.Top + TmpVCL.Bottom) / 2 - 200) <= 6,
+    Format('VCL ink %d..%d, box 50..350', [TmpVCL.Top, TmpVCL.Bottom]));
+
+  TmpFNC := FNCInkBox(300, 400, Text, Spec(-20, 0), R, Flags);
+  Assert.IsTrue(Abs((TmpFNC.Top + TmpFNC.Bottom) / 2 - 200) <= 6,
+    Format('FNC ink %d..%d, box 50..350', [TmpFNC.Top, TmpFNC.Bottom]));
 end;
 
 procedure TCADTextAgreementTests.SVGLaysTurnedTextOutAsFNCDoes;

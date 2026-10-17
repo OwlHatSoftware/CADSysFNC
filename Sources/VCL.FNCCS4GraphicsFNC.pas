@@ -216,6 +216,82 @@ function CADFontHeightToFNCSize(const Height: Integer): Single;
 
 implementation
 
+{$IFDEF CADSYS_VCL}
+uses
+  Winapi.Windows;
+
+{ : Turned text on the VCL's general FNC context, which draws with GDI on
+  a TCanvas and turns text by a rule of its own that only suits right
+  angles. Done as VCL.FNCCS4GraphicsVCL and VCL.FNCCS4GDI do it - a
+  level font, laid out in CADRotatedTextRect, turned about R's middle
+  by a world transform - so the screen agrees with the PDF, the SVG and
+  the metafile. }
+procedure GDITurnedText(const ADC: HDC; const AText: string; const R: TRect;
+  const AFlags: Cardinal; const AFont: TCADFontSpec; const AColor: TCADColor);
+var
+  TmpLF: TLogFont;
+  TmpFont, TmpOldFont: HFONT;
+  TmpLayout: TRect;
+  TmpAngle, TmpC, TmpS, TmpCX, TmpCY: Double;
+  TmpOldMode, TmpOldBk, TmpLen: Integer;
+  TmpOldColor: COLORREF;
+  TmpOld, TmpTurn: TXForm;
+begin
+  FillChar(TmpLF, SizeOf(TmpLF), 0);
+  TmpLF.lfHeight := AFont.Height;
+  TmpLF.lfWidth := AFont.Width;
+  TmpLF.lfWeight := AFont.Weight;
+  TmpLF.lfItalic := Byte(AFont.Italic);
+  TmpLF.lfUnderline := Byte(AFont.Underline);
+  TmpLF.lfStrikeOut := Byte(AFont.StrikeOut);
+  TmpLF.lfCharSet := AFont.CharSet;
+  TmpLF.lfOutPrecision := AFont.OutPrecision;
+  TmpLF.lfClipPrecision := AFont.ClipPrecision;
+  TmpLF.lfQuality := AFont.Quality;
+  TmpLF.lfPitchAndFamily := AFont.PitchAndFamily;
+  TmpLen := Min(Length(AFont.FaceName), LF_FACESIZE - 1);
+  if TmpLen > 0 then
+    Move(PChar(AFont.FaceName)^, TmpLF.lfFaceName[0], TmpLen * SizeOf(Char));
+  TmpFont := CreateFontIndirect(TmpLF);
+  TmpOldFont := SelectObject(ADC, TmpFont);
+  try
+    TmpAngle := AFont.Escapement / 10;
+    TmpLayout := CADRotatedTextRect(R, TmpAngle);
+    TmpC := Cos(DegToRad(TmpAngle));
+    TmpS := Sin(DegToRad(TmpAngle));
+    TmpCX := (R.Left + R.Right) / 2;
+    TmpCY := (R.Top + R.Bottom) / 2;
+    { Counter-clockwise on the page, with Y down. }
+    TmpTurn.eM11 := TmpC;
+    TmpTurn.eM12 := -TmpS;
+    TmpTurn.eM21 := TmpS;
+    TmpTurn.eM22 := TmpC;
+    TmpTurn.eDx := TmpCX - TmpCX * TmpC - TmpCY * TmpS;
+    TmpTurn.eDy := TmpCY + TmpCX * TmpS - TmpCY * TmpC;
+    TmpOldMode := SetGraphicsMode(ADC, GM_ADVANCED);
+    GetWorldTransform(ADC, TmpOld);
+    TmpOldBk := SetBkMode(ADC, Winapi.Windows.TRANSPARENT);
+    TmpOldColor := SetTextColor(ADC, RGB((AColor shr 16) and $FF,
+      (AColor shr 8) and $FF, AColor and $FF));
+    try
+      ModifyWorldTransform(ADC, TmpTurn, MWT_LEFTMULTIPLY);
+      { One line, running past the box as the other outputs let it. }
+      Winapi.Windows.DrawText(ADC, PChar(AText), Length(AText), TmpLayout,
+        (AFlags and not (DT_WORDBREAK or DT_CALCRECT)) or DT_SINGLELINE or
+        DT_NOCLIP);
+    finally
+      SetWorldTransform(ADC, TmpOld);
+      SetGraphicsMode(ADC, TmpOldMode);
+      SetBkMode(ADC, TmpOldBk);
+      SetTextColor(ADC, TmpOldColor);
+    end;
+  finally
+    SelectObject(ADC, TmpOldFont);
+    DeleteObject(TmpFont);
+  end;
+end;
+{$ENDIF}
+
 function CADToFNCColor(const Color: TCADColor): TTMSFNCGraphicsColor;
 begin
 {$IFDEF CADSYS_FMX}
@@ -774,7 +850,9 @@ var
   HAlign, VAlign: TTMSFNCGraphicsTextAlign;
   WordWrap: Boolean;
   Angle: Single;
-  RF: TRectF;
+  RF, TmpSize: TRectF;
+  TmpBox: TRect;
+  TmpTheta, TmpC, TmpS, TmpCX, TmpCY, TmpTX, TmpTY, TmpDX, TmpDY, TmpL: Double;
 begin
   Result := 0;
   if not fReady then
@@ -819,8 +897,66 @@ begin
     FillRect(R);
 
   fGraphics.Font.Color := CADToFNCColor(fFontColor);
-  fGraphics.DrawText(RectF(R.Left, R.Top, R.Right, R.Bottom), Text, WordWrap,
-    HAlign, VAlign, gttNone, Angle, -1, -1, False);
+{$IFDEF CADSYS_VCL}
+  if (Angle <> 0) and not WordWrap and (fGraphics.Canvas <> nil) and
+    (fGraphics.Context <> nil) and
+    (fGraphics.Context.ClassName = 'TTMSFNCGraphicsContextGeneral') then
+  begin
+    GDITurnedText(fGraphics.Canvas.Handle, Text, R, Flags, fFont,
+      fFontColor);
+    Result := R.Bottom - R.Top;
+    Exit;
+  end;
+{$ENDIF}
+  if (Angle <> 0) and not WordWrap then
+  begin
+    { CS-15. FNC lays turned text out in the bounding box of R once
+      turned - for a 90 degree label in a rectangle sized for it level,
+      a box as narrow as the text is tall - and on FMX its text layout
+      cuts a line off at the box. So the line is placed here, by the
+      rule every output follows (CADRotatedTextRect: laid out level in
+      that box, aligned as asked and free to run past it, then turned
+      about R's middle), and FNC is given a square about the middle of
+      the line, large enough for any turn of it, with the line centred
+      in it. Turning about the square's middle leaves the line where it
+      was put; nothing is cut. }
+    TmpTheta := fFont.Escapement / 10;
+    TmpBox := CADRotatedTextRect(R, TmpTheta);
+    TmpSize := fGraphics.CalculateText(Text, RectF(0, 0, BIG, BIG), False,
+      False);
+    case HAlign of
+      gtaCenter:
+        TmpTX := (TmpBox.Left + TmpBox.Right) / 2;
+      gtaTrailing:
+        TmpTX := TmpBox.Right - TmpSize.Width / 2;
+    else
+      TmpTX := TmpBox.Left + TmpSize.Width / 2;
+    end;
+    case VAlign of
+      gtaCenter:
+        TmpTY := (TmpBox.Top + TmpBox.Bottom) / 2;
+      gtaTrailing:
+        TmpTY := TmpBox.Bottom - TmpSize.Height / 2;
+    else
+      TmpTY := TmpBox.Top + TmpSize.Height / 2;
+    end;
+    TmpCX := (R.Left + R.Right) / 2;
+    TmpCY := (R.Top + R.Bottom) / 2;
+    TmpC := Cos(DegToRad(TmpTheta));
+    TmpS := Sin(DegToRad(TmpTheta));
+    { The line's middle, turned counter-clockwise about R's - Y down. }
+    TmpDX := TmpTX - TmpCX;
+    TmpDY := TmpTY - TmpCY;
+    TmpTX := TmpCX + TmpDX * TmpC + TmpDY * TmpS;
+    TmpTY := TmpCY - TmpDX * TmpS + TmpDY * TmpC;
+    TmpL := TmpSize.Width + TmpSize.Height + 2;
+    fGraphics.DrawText(RectF(TmpTX - TmpL / 2, TmpTY - TmpL / 2,
+      TmpTX + TmpL / 2, TmpTY + TmpL / 2), Text, False, gtaCenter, gtaCenter,
+      gttNone, Angle, -1, -1, False);
+  end
+  else
+    fGraphics.DrawText(RectF(R.Left, R.Top, R.Right, R.Bottom), Text,
+      WordWrap, HAlign, VAlign, gttNone, Angle, -1, -1, False);
   Result := R.Bottom - R.Top;
 end;
 

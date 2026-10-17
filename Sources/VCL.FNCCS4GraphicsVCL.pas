@@ -180,6 +180,37 @@ function CADImageToBitmap(const Image: TCADImage;
 
 implementation
 
+{ : Windows' DrawText, with a wrapped text's DT_VCENTER and DT_BOTTOM
+  done by hand: GDI honours them only for a single line, and the FNC
+  backend, the PDF and the SVG centre a wrapped label (CS-16). The same
+  as VCL.FNCCS4GDI's. }
+function GDIDrawText(const ADC: HDC; const AText: string; var R: TRect;
+  const AFlags: Cardinal): Integer;
+var
+  TmpMeasure, TmpDraw: TRect;
+  TmpSpare: Integer;
+begin
+  if ((AFlags and DT_WORDBREAK) = 0) or ((AFlags and DT_SINGLELINE) <> 0) or
+    ((AFlags and DT_CALCRECT) <> 0) or
+    ((AFlags and (DT_VCENTER or DT_BOTTOM)) = 0) then
+  begin
+    Result := WinAPI.Windows.DrawText(ADC, PChar(AText), Length(AText), R,
+      AFlags);
+    Exit;
+  end;
+  TmpMeasure := R;
+  WinAPI.Windows.DrawText(ADC, PChar(AText), Length(AText), TmpMeasure,
+    (AFlags and not (DT_VCENTER or DT_BOTTOM)) or DT_CALCRECT);
+  TmpSpare := (R.Bottom - R.Top) - (TmpMeasure.Bottom - TmpMeasure.Top);
+  TmpDraw := R;
+  if (AFlags and DT_VCENTER) <> 0 then
+    Inc(TmpDraw.Top, TmpSpare div 2)
+  else
+    Inc(TmpDraw.Top, TmpSpare);
+  Result := WinAPI.Windows.DrawText(ADC, PChar(AText), Length(AText),
+    TmpDraw, AFlags and not (DT_VCENTER or DT_BOTTOM));
+end;
+
 type
   { TRIVERTEX and GRADIENT_RECT, spelled out here with GradientFill's own
     import so that nothing depends on how a given RTL version declares
@@ -771,8 +802,7 @@ begin
   if (not fFontSelected) or (fFontSpec.Escapement mod 3600 = 0) or
     ((Flags and CAD_DT_CALCRECT) <> 0) then
   begin
-    Result := WinAPI.Windows.DrawText(fCanvas.Handle, PChar(Text),
-      Length(Text), R, Flags);
+    Result := GDIDrawText(fCanvas.Handle, Text, R, Flags);
     Exit;
   end;
   { Turned text, laid out and turned as FNC does it - see
@@ -821,8 +851,11 @@ begin
     try
       ModifyWorldTransform(TmpDC, TmpTurn, MWT_LEFTMULTIPLY);
       SetBkMode(TmpDC, WinAPI.Windows.TRANSPARENT);
-      WinAPI.Windows.DrawText(TmpDC, PChar(Text), Length(Text), TmpLayout,
-        Flags);
+      { A line longer than its box runs on, as FNC lets turned text. }
+      if (Flags and DT_WORDBREAK) = 0 then
+        GDIDrawText(TmpDC, Text, TmpLayout, Flags or DT_NOCLIP)
+      else
+        GDIDrawText(TmpDC, Text, TmpLayout, Flags);
     finally
       SetWorldTransform(TmpDC, TmpOld);
       SetGraphicsMode(TmpDC, TmpOldMode);

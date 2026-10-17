@@ -11,12 +11,43 @@
   THE METAFILE
 
   A metafile records logical coordinates. The sheet is laid out at a
-  resolution of its own (600 dpi unless asked otherwise) and mapped
+  resolution of its own (<See Variable=CADEMFResolution>, 2400 dpi,
+  unless asked otherwise) and mapped
   onto the metafile's frame with MM_ANISOTROPIC, so the numbers in the
   file keep that precision and the picture says the paper size. GDI
   works out the frame in the reference device's pixels, from its
   HORZSIZE and HORZRES; the mapping uses the same two figures, so the
   two agree.
+
+  WHY 2400 DPI (CS-17)
+
+  GDI lays text out in the recording's logical units and writes each
+  glyph's advance into the file as a whole number of them. At 600 dpi
+  a glyph of a small label is a dozen units wide, and the rounding
+  shows on playback - in Windows and in PowerPoint alike - as gaps
+  inside words and as lines that measured as fitting running past
+  their box. At 2400 dpi the same rounding is a hundredth of a
+  millimetre. The file is vector either way; it only grows by the
+  larger numbers.
+
+  WRAPPED TEXT, CENTRED (CS-16)
+
+  GDI's DrawText honours DT_VCENTER and DT_BOTTOM only for a single
+  line, so a wrapped label sat at the top of its box where the screen,
+  the PDF and the SVG centre it. A wrapped label that asks for either
+  is measured first (DT_CALCRECT at the same width) and drawn that much
+  lower, without the flag. VCL.FNCCS4GraphicsVCL does the same.
+
+  THE CLIPBOARD (CS-18)
+
+  Office ranks a registered 'PNG' above CF_ENHMETAFILE, so with both
+  on the clipboard a plain paste in Word or PowerPoint took the bitmap
+  and the vector picture was only reachable through Paste Special. The
+  PNG is therefore left off unless <See Variable=CADClipboardPNG> asks
+  for it; CF_DIB stays, for programs that take no metafile. The sheet
+  also goes on as SVG under 'image/svg+xml' while
+  <See Variable=CADClipboardSVG> is True, which current Office renders
+  more faithfully than the metafile.
 
   STATE AND CLIPPING
 
@@ -62,6 +93,19 @@ var
     next to the metafile, for programs that cannot paste a vector
     picture. 150 keeps an A0 sheet within reason. }
   CADClipboardBitmapDPI: Integer = 150;
+
+  { : The resolution a metafile is laid out at when the caller passes
+    none (ADPI = 0) - see WHY 2400 DPI above. The clipboard uses it. }
+  CADEMFResolution: Integer = 2400;
+
+  { : Whether a copy puts the registered 'PNG' format on the clipboard
+    as well. Off: Office would paste it in preference to the metafile.
+    The CF_DIB bitmap goes on regardless. }
+  CADClipboardPNG: Boolean = False;
+
+  { : Whether a copy puts an SVG on the clipboard under 'image/svg+xml',
+    next to the metafile. Office 365 pastes it ahead of the metafile. }
+  CADClipboardSVG: Boolean = True;
 
 type
   { : A <See Class=TCADGraphics> on a GDI device context: a screen DC, a
@@ -166,24 +210,26 @@ procedure CADGDIGradient(const ADC: HDC; const ARect: TRect;
   const AColor1, AColor2: COLORREF; const AVertical: Boolean);
 
 { : ASheet as an enhanced metafile the size of its paper, laid out at
-  ADPI. The caller owns the handle: DeleteEnhMetaFile it, or hand it to
-  the clipboard. }
+  ADPI - 0 for <See Variable=CADEMFResolution>. The caller owns the
+  handle: DeleteEnhMetaFile it, or hand it to the clipboard. }
 function CADSheetToEMF(const ACAD: TFNCCADCmp2D; const ASheet: TCADSheet;
-  const ADPI: Integer = 600): HENHMETAFILE;
+  const ADPI: Integer = 0): HENHMETAFILE;
 { : ARect of the model as an enhanced metafile, as large as it is on
   paper at AUnitsPerMM drawing units to the millimetre. }
 function CADModelRectToEMF(const ACAD: TFNCCADCmp2D; const ARect: TRect2D;
-  const AUnitsPerMM: TRealType; const ADPI: Integer = 600): HENHMETAFILE;
+  const AUnitsPerMM: TRealType; const ADPI: Integer = 0): HENHMETAFILE;
 { : CADSheetToEMF, written to AFileName (.emf). }
 procedure CADSaveSheetToEMF(const ACAD: TFNCCADCmp2D;
   const ASheet: TCADSheet; const AFileName: String;
-  const ADPI: Integer = 600);
+  const ADPI: Integer = 0);
 
-{ : Puts ASheet on the Windows clipboard three ways: an enhanced
-  metafile, which Office pastes as a vector picture; a PNG, under the
-  registered format 'PNG'; and a CF_DIB, for everything else. The two
-  bitmaps are at <See Variable=CADClipboardBitmapDPI>; when they would
-  be too large (see CADImageMaxPixels) only the metafile goes. }
+{ : Puts ASheet on the Windows clipboard: an enhanced metafile, which
+  Office pastes as a vector picture; an SVG under 'image/svg+xml' while
+  <See Variable=CADClipboardSVG>; a CF_DIB, for everything else; and a
+  PNG under the registered format 'PNG' only when
+  <See Variable=CADClipboardPNG> - see THE CLIPBOARD above. The bitmaps
+  are at <See Variable=CADClipboardBitmapDPI>; when they would be too
+  large (see CADImageMaxPixels) they are left out. }
 procedure CADCopySheetToClipboardWin(const ACAD: TFNCCADCmp2D;
   const ASheet: TCADSheet);
 { : The same for ARect of the model at AUnitsPerMM. }
@@ -231,7 +277,45 @@ implementation
 {$IFDEF MSWINDOWS}
 
 uses
-  Winapi.ActiveX, VCL.FNCCS4Image;
+  Winapi.ActiveX, VCL.FNCCS4Image, VCL.FNCCS4SVG;
+
+{ : DrawTextW, with a wrapped text's DT_VCENTER and DT_BOTTOM done by
+  hand - GDI honours them only for a single line. See WRAPPED TEXT,
+  CENTRED in the unit header. }
+function GDIDrawText(const ADC: HDC; const AText: string; var R: TRect;
+  const AFlags: Cardinal): Integer;
+var
+  TmpMeasure, TmpDraw: TRect;
+  TmpSpare: Integer;
+begin
+  if ((AFlags and DT_WORDBREAK) = 0) or ((AFlags and DT_SINGLELINE) <> 0) or
+    ((AFlags and DT_CALCRECT) <> 0) or
+    ((AFlags and (DT_VCENTER or DT_BOTTOM)) = 0) then
+  begin
+    Result := DrawTextW(ADC, PChar(AText), Length(AText), R, AFlags);
+    Exit;
+  end;
+  TmpMeasure := R;
+  DrawTextW(ADC, PChar(AText), Length(AText), TmpMeasure,
+    (AFlags and not (DT_VCENTER or DT_BOTTOM)) or DT_CALCRECT);
+  TmpSpare := (R.Bottom - R.Top) - (TmpMeasure.Bottom - TmpMeasure.Top);
+  TmpDraw := R;
+  if (AFlags and DT_VCENTER) <> 0 then
+    Inc(TmpDraw.Top, TmpSpare div 2)
+  else
+    Inc(TmpDraw.Top, TmpSpare);
+  Result := DrawTextW(ADC, PChar(AText), Length(AText), TmpDraw,
+    AFlags and not (DT_VCENTER or DT_BOTTOM));
+end;
+
+{ : ADPI, or CADEMFResolution for 0. }
+function EMFDPI(const ADPI: Integer): Integer;
+begin
+  if ADPI > 0 then
+    Result := Max(72, ADPI)
+  else
+    Result := Max(72, CADEMFResolution);
+end;
 
 { ------------------------------------------------------------------
   GDI and GDI+ entry points, spelled out here so that nothing depends
@@ -956,7 +1040,7 @@ begin
   PrepareBrush;
   if (not fFontSelected) or (fFont.Escapement mod 3600 = 0) then
   begin
-    Result := DrawTextW(fDC, PChar(Text), Length(Text), R, Flags);
+    Result := GDIDrawText(fDC, Text, R, Flags);
     Exit;
   end;
   Result := DrawTurnedText(Text, R, Flags);
@@ -1008,7 +1092,11 @@ begin
         would be turned too, and FNC's is the level rectangle filled
         above. }
       SetBkMode(fDC, Winapi.Windows.TRANSPARENT);
-      DrawTextW(fDC, PChar(Text), Length(Text), TmpLayout, Flags);
+      { A line longer than its box runs on, as FNC lets turned text. }
+      if (Flags and DT_WORDBREAK) = 0 then
+        GDIDrawText(fDC, Text, TmpLayout, Flags or DT_NOCLIP)
+      else
+        GDIDrawText(fDC, Text, TmpLayout, Flags);
     finally
       SetWorldTransform(fDC, TmpOld);
       SetGraphicsMode(fDC, TmpOldMode);
@@ -1180,8 +1268,8 @@ begin
   if (ACAD = nil) or (ASheet = nil) then
     Exit;
   ASheet.SizeMM(TmpW, TmpH);
-  TmpDevice := TCADPageDevice.FromDPI(Max(72, ADPI), Max(72, ADPI));
-  Result := RecordEMF(TmpW, TmpH, ADPI, ASheet.Name,
+  TmpDevice := TCADPageDevice.FromDPI(EMFDPI(ADPI), EMFDPI(ADPI));
+  Result := RecordEMF(TmpW, TmpH, EMFDPI(ADPI), ASheet.Name,
     procedure(const ACanvas: TDecorativeCanvas; const ASizePx: TPoint)
     begin
       CADDrawSheet(ACAD, ASheet, TmpDevice, ACanvas);
@@ -1198,7 +1286,7 @@ begin
     Exit;
   TmpRect := ReorderRect2D(ARect);
   Result := RecordEMF((TmpRect.Right - TmpRect.Left) / AUnitsPerMM,
-    (TmpRect.Top - TmpRect.Bottom) / AUnitsPerMM, ADPI, '',
+    (TmpRect.Top - TmpRect.Bottom) / AUnitsPerMM, EMFDPI(ADPI), '',
     procedure(const ACanvas: TDecorativeCanvas; const ASizePx: TPoint)
     begin
       CADDrawModelRect(ACAD, ARect, ASizePx, ACanvas);
@@ -1260,7 +1348,8 @@ begin
   RaiseLastOSError;
 end;
 
-procedure PutOnClipboard(const AEMF: HENHMETAFILE; const APNG: TBytes);
+procedure PutOnClipboard(const AEMF: HENHMETAFILE;
+  const APNG, ASVG: TBytes);
 var
   TmpDIB: TCADDIB;
   TmpHandle: HGLOBAL;
@@ -1276,7 +1365,15 @@ begin
         that fails leaves it ours to free. }
       if (AEMF <> 0) and (SetClipboardData(CF_ENHMETAFILE, AEMF) = 0) then
         DeleteEnhMetaFile(AEMF);
-      if Length(APNG) > 0 then
+      if Length(ASVG) > 0 then
+      begin
+        TmpHandle := GlobalFromBytes(@ASVG[0], Length(ASVG));
+        if (TmpHandle <> 0) and (SetClipboardData(RegisterClipboardFormat
+          ('image/svg+xml'), TmpHandle) = 0) then
+          GlobalFree(TmpHandle);
+      end;
+      { Not by default - Office would take it before the metafile. }
+      if CADClipboardPNG and (Length(APNG) > 0) then
       begin
         TmpHandle := GlobalFromBytes(@APNG[0], Length(APNG));
         if (TmpHandle <> 0) and
@@ -1300,6 +1397,65 @@ end;
 
 type
   TCADPNGWrite = reference to procedure(const AStream: TStream);
+
+{ : What AWrite writes, as bytes; nothing if it raises - the metafile
+  goes on the clipboard either way. }
+function StreamBytes(const AWrite: TCADPNGWrite): TBytes;
+var
+  TmpStream: TBytesStream;
+begin
+  SetLength(Result, 0);
+  TmpStream := TBytesStream.Create;
+  try
+    try
+      AWrite(TmpStream);
+      Result := Copy(TmpStream.Bytes, 0, TmpStream.Size);
+    except
+      on Exception do
+        SetLength(Result, 0);
+    end;
+  finally
+    TmpStream.Free;
+  end;
+end;
+
+{ : ARect of the model as an SVG, at the size it has on paper - the SVG
+  unit draws sheets; the model rectangle is drawn as its PNG and its
+  metafile are, by CADDrawModelRect. }
+procedure SaveModelRectToSVGStream(const ACAD: TFNCCADCmp2D;
+  const ARect: TRect2D; const AUnitsPerMM: TRealType; const AStream: TStream);
+var
+  TmpRect: TRect2D;
+  TmpW, TmpH: TRealType;
+  TmpDevice: TCADPageDevice;
+  TmpSVG: TCADSVGGraphics;
+  TmpCanvas: TDecorativeCanvas;
+  TmpSize: TPoint;
+begin
+  TmpRect := ReorderRect2D(ARect);
+  TmpW := (TmpRect.Right - TmpRect.Left) / AUnitsPerMM;
+  TmpH := (TmpRect.Top - TmpRect.Bottom) / AUnitsPerMM;
+  if (TmpW <= 0) or (TmpH <= 0) then
+    Exit;
+  TmpDevice := TCADPageDevice.FromDPI(Max(72, CADSVGResolution),
+    Max(72, CADSVGResolution));
+  TmpSize := Point(TmpDevice.MMToPxX(TmpW), TmpDevice.MMToPxY(TmpH));
+  TmpSVG := TCADSVGGraphics.Create(TmpSize.X, TmpSize.Y,
+    TmpDevice.PixelsPerMM);
+  try
+    TmpSVG.WidthMM := TmpW;
+    TmpSVG.HeightMM := TmpH;
+    TmpCanvas := TDecorativeCanvas.Create(TmpSVG, False);
+    try
+      CADDrawModelRect(ACAD, ARect, TmpSize, TmpCanvas);
+    finally
+      TmpCanvas.Free;
+    end;
+    TmpSVG.SaveToStream(AStream);
+  finally
+    TmpSVG.Free;
+  end;
+end;
 
 { : The PNG, or nothing when it would be larger than the image export
   allows - the metafile goes on the clipboard either way. }
@@ -1326,7 +1482,7 @@ procedure CADCopySheetToClipboardWin(const ACAD: TFNCCADCmp2D;
   const ASheet: TCADSheet);
 var
   TmpEMF: HENHMETAFILE;
-  TmpPNG: TBytes;
+  TmpPNG, TmpSVG: TBytes;
 begin
   if (ACAD = nil) or (ASheet = nil) then
     Exit;
@@ -1336,15 +1492,22 @@ begin
       CADSaveSheetToPNGStream(ACAD, ASheet, AStream, CADClipboardBitmapDPI,
         False);
     end);
+  TmpSVG := nil;
+  if CADClipboardSVG then
+    TmpSVG := StreamBytes(
+      procedure(const AStream: TStream)
+      begin
+        CADSaveSheetToSVGStream(ACAD, ASheet, AStream);
+      end);
   TmpEMF := CADSheetToEMF(ACAD, ASheet);
-  PutOnClipboard(TmpEMF, TmpPNG);
+  PutOnClipboard(TmpEMF, TmpPNG, TmpSVG);
 end;
 
 procedure CADCopyModelRectToClipboardWin(const ACAD: TFNCCADCmp2D;
   const ARect: TRect2D; const AUnitsPerMM: TRealType);
 var
   TmpEMF: HENHMETAFILE;
-  TmpPNG: TBytes;
+  TmpPNG, TmpSVG: TBytes;
 begin
   if (ACAD = nil) or (AUnitsPerMM <= 0) then
     Exit;
@@ -1354,8 +1517,15 @@ begin
       CADSaveModelRectToPNGStream(ACAD, ARect, AUnitsPerMM, AStream,
         CADClipboardBitmapDPI, False);
     end);
+  TmpSVG := nil;
+  if CADClipboardSVG then
+    TmpSVG := StreamBytes(
+      procedure(const AStream: TStream)
+      begin
+        SaveModelRectToSVGStream(ACAD, ARect, AUnitsPerMM, AStream);
+      end);
   TmpEMF := CADModelRectToEMF(ACAD, ARect, AUnitsPerMM);
-  PutOnClipboard(TmpEMF, TmpPNG);
+  PutOnClipboard(TmpEMF, TmpPNG, TmpSVG);
 end;
 
 { ------------------------------------------------------------------
