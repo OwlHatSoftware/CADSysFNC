@@ -66,9 +66,11 @@ The local CADSysFNC (`b1b8315`) already has **CS-01 … CS-08** (commits `626311
 | CS-13 PDF rotated text | ❌ **open, now better located** — the text **is** written, but in the wrong place (see §15) |
 | CS-15 FNC rotated-text clip | open in the library; the spike's square-rectangle workaround still applies (the commit documents the VCL GDI+ displacement as not fixed) |
 
-**Fixed in CADSysFNC `df6b798` (2026-10-17):** CS-12 and CS-13 - see §14 and §15. Checked with a test sheet written at 600 and 72 dpi (four gradient shapes, labels at 0°, 45°, 90° and 270°) by the suite, by `pdftoppm` and by `pdftotext -bbox`; the spike has not been run against it yet.
+**Fixed in CADSysFNC `df6b798` (2026-10-17):** CS-12 and CS-13 - see §14 and §15. Checked with a test sheet written at 600 and 72 dpi (four gradient shapes, labels at 0°, 45°, 90° and 270°) by the suite, by `pdftoppm` and by `pdftotext -bbox`; run in the spike on 2026-10-17 (below).
 
 **CS-15 to CS-18 in CADSysFNC `7b15de7` (2026-10-17)** - see §17 to §20. Suites green (716 found, 709 passed, 7 ignored; FNC 67/67), FMX and packages built.
+
+**Spike run against CADSysFNC `0223538` (2026-10-17, locally, masterplanner `4a96771`):** builds, tests 21/21, every export ok. PDF at 600 dpi: the gradient bars are drawn, the lane captions sit in the lane column as at 72 dpi, the 45° milestone labels at their diamonds. EMF, played back by Windows and inside PowerPoint: wrapped labels centred, "4. Aanbesteding & selectie ingenieursbureau" fits its bar. FMX PNG: captions whole. Clipboard paste into PowerPoint: works.
 
 ---
 
@@ -401,7 +403,7 @@ Lets a sheet show ten years of a plate across an A3 width while lanes keep their
 
 **Test:** the clipboard holds all four formats after a copy; a manual paste into PowerPoint 365 gives the SVG.
 
-**Done as (`7b15de7`):** both parts. The registered `PNG` is left off unless `CADClipboardPNG` (default False); `CF_DIB` stays. The SVG goes on under `image/svg+xml` while `CADClipboardSVG` (default True), for a sheet (`CADSaveSheetToSVGStream`) and for a model rectangle (drawn by `CADDrawModelRect` onto `TCADSVGGraphics`). Test: `TheClipboardHasTheMetafileTheSVGAndABitmap`. The paste into PowerPoint 365 is still to be tried by hand.
+**Done as (`7b15de7`):** both parts. The registered `PNG` is left off unless `CADClipboardPNG` (default False); `CF_DIB` stays. The SVG goes on under `image/svg+xml` while `CADClipboardSVG` (default True), for a sheet (`CADSaveSheetToSVGStream`) and for a model rectangle (drawn by `CADDrawModelRect` onto `TCADSVGGraphics`). Test: `TheClipboardHasTheMetafileTheSVGAndABitmap`. Pasted into PowerPoint by Jack from the spike's "Copy sheet (EMF)" on 2026-10-17: works.
 
 ## 21. Done when
 
