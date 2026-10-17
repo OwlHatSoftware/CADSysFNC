@@ -46,10 +46,10 @@ All changes go into `Sources\VCL.*` (the masters) and are regenerated for FMX/VC
 | CS-12 | **PDF: gradient fills** at the 600 dpi layout (found in WP-0.1) | Must | MP-SHP-006, MP-OUT-001 | Done (df6b798) |
 | CS-13 | **PDF: rotated text** at the 600 dpi layout (found in WP-0.1) | Must | MP-TXT-005, MP-LAN-001, MP-OUT-001 | Done (df6b798) |
 | CS-14 | **PDF: dash patterns** scaled from dots to points (found in WP-0.1) | Must | MP-SHP-007, MP-CON-003 | Done (c1aabac) |
-| CS-15 | **FNC backend: rotated text clipped** to the unrotated rectangle (found in WP-0.1) | Must | MP-TXT-005 | Open |
-| CS-16 | **GDI/EMF backend: wrapped text not centred vertically** (found in WP-0.2) | Must | MP-OUT-004 | Open |
-| CS-17 | **EMF: uneven glyph spacing, text overflow** at the 600 dpi layout (found in WP-0.2) | Must | MP-OUT-004 | Open |
-| CS-18 | Clipboard: **no PNG next to the EMF** (Office pastes the PNG by default) — Must; SVG (`image/svg+xml`) next to it — Should (WP-0.2, decision 0002) | Must / Should | MP-OUT-004 | Open |
+| CS-15 | **FNC backend: rotated text clipped** to the unrotated rectangle (found in WP-0.1) | Must | MP-TXT-005 | Done (7b15de7) |
+| CS-16 | **GDI/EMF backend: wrapped text not centred vertically** (found in WP-0.2) | Must | MP-OUT-004 | Done (7b15de7) |
+| CS-17 | **EMF: uneven glyph spacing, text overflow** at the 600 dpi layout (found in WP-0.2) | Must | MP-OUT-004 | Done (7b15de7) |
+| CS-18 | Clipboard: **no PNG next to the EMF** (Office pastes the PNG by default) — Must; SVG (`image/svg+xml`) next to it — Should (WP-0.2, decision 0002) | Must / Should | MP-OUT-004 | Done (7b15de7) |
 
 ---
 
@@ -67,6 +67,8 @@ The local CADSysFNC (`b1b8315`) already has **CS-01 … CS-08** (commits `626311
 | CS-15 FNC rotated-text clip | open in the library; the spike's square-rectangle workaround still applies (the commit documents the VCL GDI+ displacement as not fixed) |
 
 **Fixed in CADSysFNC `df6b798` (2026-10-17):** CS-12 and CS-13 - see §14 and §15. Checked with a test sheet written at 600 and 72 dpi (four gradient shapes, labels at 0°, 45°, 90° and 270°) by the suite, by `pdftoppm` and by `pdftotext -bbox`; the spike has not been run against it yet.
+
+**CS-15 to CS-18 in CADSysFNC `7b15de7` (2026-10-17)** - see §17 to §20. Suites green (716 found, 709 passed, 7 ignored; FNC 67/67), FMX and packages built.
 
 ---
 
@@ -369,6 +371,8 @@ Lets a sheet show ten years of a plate across an A3 width while lanes keep their
 
 **Test:** draw a 90° label in a narrow rectangle onto a bitmap and check pixels along the rotated text's length.
 
+**Done as (`7b15de7`):** the fix plan, for one-line turned text too. `TCADFNCGraphics.DrawText` places a one-line turned label by the common rule (`CADRotatedTextRect`, aligned as asked, free to run past the box, turned about the rectangle's middle). On FMX it hands FNC a square about the line's middle with the line centred in it - so the alignment is kept, not only centred labels - and nothing is cut. On the VCL the library's FNC graphics use FNC's general context, which turns text by a rule that only suits right angles; there it is drawn with GDI, a level font and a world transform, as `VCL.FNCCS4GraphicsVCL` does. Wrapped turned text still goes to FNC as before. Tests: `AnFNCTurnedLabelIsTheLevelLabelTurned`, `ALongTurnedLabelIsDrawnWhole`. Not yet seen on FMX by eye; the spike will show it.
+
 ## 18. CS-16 — GDI/EMF backend: wrapped text not centred vertically (Must)
 
 **Found in WP-0.2** (`docs\spikes\wp02-output-spike.md`). `TCADGDIGraphics.DrawText` passes the `CAD_DT_` flags straight to `DrawTextW`. GDI honours `DT_VCENTER` (and `DT_BOTTOM`) only together with `DT_SINGLELINE`, so every wrapped label in an EMF sits at the top of its rectangle; the FNC backend (screen, PNG, PDF) and SVG centre it. Seen identically in Windows GDI playback and in PowerPoint.
@@ -376,6 +380,8 @@ Lets a sheet show ten years of a plate across an A3 width while lanes keep their
 **Fix plan:** when `CAD_DT_WORDBREAK` is set with `CAD_DT_VCENTER` or `CAD_DT_BOTTOM`, measure with `DT_CALCRECT` on the same width, offset the rectangle's top by half (or all) of the spare height, and draw without the vertical flag. Same in the turned-text path and in the VCL GDI backend (`VCL.FNCCS4GraphicsVCL`), which has the same call.
 
 **Test:** a two-line label in a tall rectangle, `VCENTER`: the text's bounding box (from `DT_CALCRECT`, or rasterised) centred within one pixel, on GDI, FNC and SVG alike.
+
+**Done as (`7b15de7`):** the fix plan, in `VCL.FNCCS4GDI` and `VCL.FNCCS4GraphicsVCL` (`GDIDrawText`). One-line turned text on GDI now also runs past its box (`DT_NOCLIP`), as everywhere else. Test: `AWrappedLabelIsCentredOnEveryBackend` - GDI, the VCL canvas and FNC each within 6 px of the box's middle.
 
 ## 19. CS-17 — EMF: uneven glyph spacing, text overflow (Must)
 
@@ -385,6 +391,8 @@ Lets a sheet show ten years of a plate across an A3 width while lanes keep their
 
 **Test:** a paragraph that just fits a box, recorded and played back (`PlayEnhMetaFile` into a bitmap): same line breaks as the measure, no glyph gaps beyond a pixel.
 
+**Done as (`7b15de7`):** `CADEMFResolution` (2400) is the layout resolution whenever `ADPI` is 0, now the default of `CADSheetToEMF`, `CADModelRectToEMF` and `CADSaveSheetToEMF`; the clipboard uses it. Line weights, dashes and hatching scale with it (they are in millimetres or scale with the pen); a one-pixel pen stays a cosmetic hairline. Test: `AMetafileSpacesSmallTextAsItMeasuredIt` reads the `EMR_EXTTEXTOUTW` dx arrays of 2.5 mm text - about 96 units a glyph by default, 24 at 600 dpi - and asks for at least 50, so the rounding stays under a percent. Playback widths at 300 dpi came out equal at 600, 2400 and 9600 dpi on the build machine, so the playback test the brief proposes could not tell them apart there.
+
 ## 20. CS-18 — SVG on the clipboard (Should)
 
 **From WP-0.2 / decision 0002 (proposed).** PowerPoint 16 (Microsoft 365) renders the library's SVG more faithfully than its EMF. Put `CADSaveSheetToSVGStream`'s output on the clipboard under the registered format `image/svg+xml`, next to `CF_ENHMETAFILE`, PNG and `CF_DIB`, in `CADCopySheetToClipboardWin` and `CADCopyModelRectToClipboardWin`; programs take the best format they understand.
@@ -392,6 +400,8 @@ Lets a sheet show ten years of a plate across an A3 width while lanes keep their
 **Paste test (WP-0.2, 2026-10-17):** with EMF, PNG and DIB on the clipboard, a plain paste in PowerPoint and Word 16 takes the **PNG** — Office ranks PNG above `CF_ENHMETAFILE`; the metafile is only reachable through Paste Special. So, besides SVG: **do not put the registered `PNG` format on the clipboard together with the metafile** (or make it optional, default off); `CF_DIB` stays as the bitmap for programs without metafile support. Priority **Must** for that part, since without it MP-OUT-004's vector paste is not what users get.
 
 **Test:** the clipboard holds all four formats after a copy; a manual paste into PowerPoint 365 gives the SVG.
+
+**Done as (`7b15de7`):** both parts. The registered `PNG` is left off unless `CADClipboardPNG` (default False); `CF_DIB` stays. The SVG goes on under `image/svg+xml` while `CADClipboardSVG` (default True), for a sheet (`CADSaveSheetToSVGStream`) and for a model rectangle (drawn by `CADDrawModelRect` onto `TCADSVGGraphics`). Test: `TheClipboardHasTheMetafileTheSVGAndABitmap`. The paste into PowerPoint 365 is still to be tried by hand.
 
 ## 21. Done when
 
