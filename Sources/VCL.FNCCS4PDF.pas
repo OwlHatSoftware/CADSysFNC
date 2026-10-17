@@ -177,14 +177,52 @@ type
     here as solid pieces, laid out by CADDashPattern and
     CADDashSegments - the pattern the SVG and the metafile use, which
     scales with the pen's width. A filled shape with a dashed outline is
-    filled first with no pen, then outlined. }
+    filled first with no pen, then outlined.
+
+    GRADIENTS (CS-12)
+
+    FNC writes a gradient as a PDF shading pattern, and a pattern lives
+    in the page's default space - points - whatever transform is in
+    force where it is used. FNC gives it the shape's box in 600 dpi
+    dots, with no /Matrix and without extending it, so the blend lay
+    eight times too far out and the shape was not painted at all. The
+    routine that writes the pattern is in FNC's implementation section.
+    So a gradient is drawn here as bands of solid colour, one per step
+    of the largest colour difference and at most 256, inside the shape
+    as a clip path - the shape's own outline, not its box - and the
+    outline goes over it with nothing to fill. On paper that is a
+    gradient. Opaque bands overlap by a dot, so that a reader's
+    anti-aliasing leaves no seams between them.
+
+    TURNED TEXT (CS-13)
+
+    FNC's PDF engine turns text about its rectangle's centre, flipped
+    against the MediaBox height - in points - while the centre is in
+    dots and the library flips everything else against the page height
+    in dots. At 72 dpi the two heights agree; at 600 dpi turned text
+    landed mid-page or off the paper. So the turn is done here: q, a
+    rotation about the centre of the caller's rectangle in the page's
+    own (dotted, flipped) space, the text drawn level in the box FNC
+    would have laid it out in (CADRotatedTextRect), Q. Drawn level, FNC
+    cuts a line longer than its box short where turned it lets it run
+    on, so the box is opened out on the side or sides the alignment
+    lets the text grow towards, and the text kept to one line, as FNC
+    keeps turned text. That needs the
+    page height the library flips against, which the save routines set
+    as PageHeight; with none set the engine's own path is used. }
   TCADPDFGraphics = class(TCADFNCGraphics)
   private
     fLib: ITMSFNCCustomPDFGraphicsLib;
     fCur: TPoint;
+    fPageHeight: Single;
+    fFontSpec: TCADFontSpec;
+    fHaveFont: Boolean;
     function Dashes: TCADDashPattern;
     procedure StrokeDashed(const APts: array of TPoint; const AClosed: Boolean;
       const APattern: TCADDashPattern);
+    function GradientActive: Boolean;
+    procedure GradientFill(const APts: array of TPoint;
+      const AEllipse: Boolean; const ABox: TRect);
   protected
     procedure DoPushClip(const R: TRect); override;
     procedure DoPopClip; override;
@@ -193,8 +231,16 @@ type
     procedure DoPolygon(const Pts: Pointer; const Count: Integer); override;
     procedure DoRectangle(const X1, Y1, X2, Y2: Integer); override;
     procedure DoEllipse(const X1, Y1, X2, Y2: Integer); override;
+    procedure DoFillRect(const R: TRect); override;
     constructor CreateForPDF(const ALib: ITMSFNCCustomPDFGraphicsLib);
     procedure SelectFont(const Font: TCADFontSpec); override;
+    procedure ResetFont; override;
+    function DrawText(const Text: string; var R: TRect;
+      const Flags: Cardinal): Integer; override;
+    { : The page height the PDF library flips Y against, in the units
+      the page is drawn in - set per page by the save routines. 0 leaves
+      turned text to FNC's engine. }
+    property PageHeight: Single read fPageHeight write fPageHeight;
     procedure MoveTo(const X, Y: Integer); override;
     procedure LineTo(const X, Y: Integer); override;
     procedure Polyline(const Pts: Pointer; const Count: Integer); overload;
@@ -346,6 +392,8 @@ end;
 
 procedure TCADPDFGraphics.SelectFont(const Font: TCADFontSpec);
 begin
+  fFontSpec := Font;
+  fHaveFont := True;
   inherited SelectFont(Font);
 {$IFNDEF CADSYS_FMX}
   { FNC's PDF engine takes the font's Size, in the page's own units -
@@ -407,10 +455,36 @@ end;
 procedure TCADPDFGraphics.DoPolygon(const Pts: Pointer; const Count: Integer);
 var
   TmpStyle: TCADPenStyle;
+  TmpBrush: TCADBrushStyle;
   TmpDashes: TCADDashPattern;
   TmpPts: array of TPoint;
+  TmpBox: TRect;
   I: Integer;
 begin
+  if GradientActive and (Pts <> nil) and (Count > 2) then
+  begin
+    SetLength(TmpPts, Count);
+    TmpBox := Rect(PCADPoints(Pts)^[0].X, PCADPoints(Pts)^[0].Y,
+      PCADPoints(Pts)^[0].X, PCADPoints(Pts)^[0].Y);
+    for I := 0 to Count - 1 do
+    begin
+      TmpPts[I] := PCADPoints(Pts)^[I];
+      TmpBox.Left := Min(TmpBox.Left, TmpPts[I].X);
+      TmpBox.Top := Min(TmpBox.Top, TmpPts[I].Y);
+      TmpBox.Right := Max(TmpBox.Right, TmpPts[I].X);
+      TmpBox.Bottom := Max(TmpBox.Bottom, TmpPts[I].Y);
+    end;
+    GradientFill(TmpPts, False, TmpBox);
+    { The outline, dashed or not, with nothing to fill. }
+    TmpBrush := Brush.Style;
+    Brush.Style := cbsClear;
+    try
+      DoPolygon(Pts, Count);
+    finally
+      Brush.Style := TmpBrush;
+    end;
+    Exit;
+  end;
   TmpDashes := Dashes;
   if (Length(TmpDashes) = 0) or (Pts = nil) or (Count <= 0) then
   begin
@@ -434,8 +508,26 @@ end;
 procedure TCADPDFGraphics.DoRectangle(const X1, Y1, X2, Y2: Integer);
 var
   TmpStyle: TCADPenStyle;
+  TmpBrush: TCADBrushStyle;
   TmpDashes: TCADDashPattern;
+  TmpBox: TRect;
 begin
+  if GradientActive then
+  begin
+    TmpBox := Rect(Min(X1, X2), Min(Y1, Y2), Max(X1, X2), Max(Y1, Y2));
+    { X2 and Y2 exclusive, as the FNC backend draws them. }
+    GradientFill([TmpBox.TopLeft, Point(TmpBox.Right - 1, TmpBox.Top),
+      Point(TmpBox.Right - 1, TmpBox.Bottom - 1),
+      Point(TmpBox.Left, TmpBox.Bottom - 1)], False, TmpBox);
+    TmpBrush := Brush.Style;
+    Brush.Style := cbsClear;
+    try
+      DoRectangle(X1, Y1, X2, Y2);
+    finally
+      Brush.Style := TmpBrush;
+    end;
+    Exit;
+  end;
   TmpDashes := Dashes;
   if Length(TmpDashes) = 0 then
   begin
@@ -458,11 +550,25 @@ end;
 procedure TCADPDFGraphics.DoEllipse(const X1, Y1, X2, Y2: Integer);
 var
   TmpStyle: TCADPenStyle;
+  TmpBrush: TCADBrushStyle;
   TmpDashes: TCADDashPattern;
   TmpPts: array of TPoint;
   TmpCX, TmpCY, TmpRX, TmpRY: Double;
   I, TmpN: Integer;
 begin
+  if GradientActive then
+  begin
+    GradientFill([], True, Rect(Min(X1, X2), Min(Y1, Y2), Max(X1, X2),
+      Max(Y1, Y2)));
+    TmpBrush := Brush.Style;
+    Brush.Style := cbsClear;
+    try
+      DoEllipse(X1, Y1, X2, Y2);
+    finally
+      Brush.Style := TmpBrush;
+    end;
+    Exit;
+  end;
   TmpDashes := Dashes;
   if Length(TmpDashes) = 0 then
   begin
@@ -489,6 +595,183 @@ begin
     TmpPts[I] := Point(Round(TmpCX + TmpRX * Cos(2 * Pi * I / TmpN)),
       Round(TmpCY + TmpRY * Sin(2 * Pi * I / TmpN)));
   StrokeDashed(TmpPts, True, TmpDashes);
+end;
+
+procedure TCADPDFGraphics.DoFillRect(const R: TRect);
+begin
+  if GradientActive then
+  begin
+    GradientFill([R.TopLeft, Point(R.Right, R.Top), R.BottomRight,
+      Point(R.Left, R.Bottom)], False, R);
+    Exit;
+  end;
+  inherited DoFillRect(R);
+end;
+
+function TCADPDFGraphics.GradientActive: Boolean;
+begin
+  Result := (fLib <> nil) and (Brush.Style = cbsGradient) and
+    (CADColorAlpha(Brush.Color) <> 0);
+end;
+
+procedure TCADPDFGraphics.GradientFill(const APts: array of TPoint;
+  const AEllipse: Boolean; const ABox: TRect);
+
+  function Channel(const AColor: TCADColor; const AShift: Integer): Integer;
+  begin
+    Result := (AColor shr AShift) and $FF;
+  end;
+
+var
+  TmpFrom, TmpTo, TmpSaved: TCADColor;
+  TmpStyle: TCADBrushStyle;
+  TmpExtent, TmpN, TmpDiff, TmpOverlap, TmpA, TmpB, I: Integer;
+  T: Double;
+  TmpBand: TRect;
+begin
+  TmpFrom := Brush.Color;
+  TmpTo := Brush.Color2;
+  if Brush.GradientVertical then
+    TmpExtent := ABox.Bottom - ABox.Top
+  else
+    TmpExtent := ABox.Right - ABox.Left;
+  if TmpExtent <= 0 then
+    Exit;
+  { A band per step of the channel that changes most - more could not
+    be told apart - and never thinner than a dot. }
+  TmpDiff := Max(Max(Abs(Channel(TmpFrom, 16) - Channel(TmpTo, 16)),
+    Abs(Channel(TmpFrom, 8) - Channel(TmpTo, 8))),
+    Abs(Channel(TmpFrom, 0) - Channel(TmpTo, 0)));
+  TmpN := Max(1, Min(TmpExtent, Min(256, TmpDiff + 1)));
+  { Opaque bands overlap by a dot so that no seam shows between them;
+    translucent ones must not, or the overlap would show darker. }
+  if CADColorAlpha(TmpFrom) = 255 then
+    TmpOverlap := 1
+  else
+    TmpOverlap := 0;
+
+  fLib.DrawSaveState;
+  try
+    fLib.DrawPathBeginClip;
+    if AEllipse then
+      fLib.DrawPathAddEllipse(RectF(ABox.Left, ABox.Top, ABox.Right - 1,
+        ABox.Bottom - 1))
+    else if Length(APts) > 2 then
+    begin
+      fLib.DrawPathMoveToPoint(PointF(APts[0].X, APts[0].Y));
+      for I := 1 to High(APts) do
+        fLib.DrawPathAddLineToPoint(PointF(APts[I].X, APts[I].Y));
+      fLib.DrawPathClose;
+    end
+    else
+      fLib.DrawPathAddRectangle(RectF(ABox.Left, ABox.Top, ABox.Right,
+        ABox.Bottom));
+    fLib.DrawPathEndClip;
+
+    TmpStyle := Brush.Style;
+    TmpSaved := Brush.Color;
+    try
+      Brush.Style := cbsSolid;
+      for I := 0 to TmpN - 1 do
+      begin
+        if TmpN = 1 then
+          T := 0
+        else
+          T := I / (TmpN - 1);
+        { The alpha is the first colour's, as on every other backend. }
+        Brush.Color := TCADColor((CADColorAlpha(TmpFrom) shl 24) or
+          (Round(Channel(TmpFrom, 16) + T * (Channel(TmpTo, 16) -
+          Channel(TmpFrom, 16))) shl 16) or
+          (Round(Channel(TmpFrom, 8) + T * (Channel(TmpTo, 8) -
+          Channel(TmpFrom, 8))) shl 8) or
+          Round(Channel(TmpFrom, 0) + T * (Channel(TmpTo, 0) -
+          Channel(TmpFrom, 0))));
+        TmpA := Round(TmpExtent * I / TmpN);
+        TmpB := Round(TmpExtent * (I + 1) / TmpN);
+        if I < TmpN - 1 then
+          Inc(TmpB, TmpOverlap);
+        if Brush.GradientVertical then
+          TmpBand := Rect(ABox.Left, ABox.Top + TmpA, ABox.Right,
+            ABox.Top + TmpB)
+        else
+          TmpBand := Rect(ABox.Left + TmpA, ABox.Top, ABox.Left + TmpB,
+            ABox.Bottom);
+        inherited DoFillRect(TmpBand);
+      end;
+    finally
+      Brush.Color := TmpSaved;
+      Brush.Style := TmpStyle;
+    end;
+  finally
+    fLib.DrawRestoreState;
+  end;
+end;
+
+procedure TCADPDFGraphics.ResetFont;
+begin
+  fHaveFont := False;
+  inherited ResetFont;
+end;
+
+function TCADPDFGraphics.DrawText(const Text: string; var R: TRect;
+  const Flags: Cardinal): Integer;
+const
+  { Room for any line on any paper, in dots. }
+  BIG = 100000;
+var
+  TmpSpec, TmpLevelSpec: TCADFontSpec;
+  TmpFlags: Cardinal;
+  TmpLevel: TRect;
+  TmpAngle, TmpC, TmpS, TmpCX, TmpCY: Double;
+  TmpTransparent: Boolean;
+begin
+  if (fLib = nil) or (fPageHeight <= 0) or not fHaveFont or
+    (fFontSpec.Escapement = 0) or ((Flags and CAD_DT_CALCRECT) <> 0) then
+  begin
+    Result := inherited DrawText(Text, R, Flags);
+    Exit;
+  end;
+  TmpSpec := fFontSpec;
+  TmpAngle := TmpSpec.Escapement / 10;
+  { The background, as the engine would have filled it: level. }
+  if not Transparent then
+    FillRect(R);
+  TmpLevel := CADRotatedTextRect(R, TmpAngle);
+  { One line, free to run past the box the way the alignment says. }
+  TmpFlags := (Flags and not CAD_DT_WORDBREAK) or CAD_DT_SINGLELINE;
+  if (Flags and CAD_DT_CENTER) <> 0 then
+  begin
+    Dec(TmpLevel.Left, BIG);
+    Inc(TmpLevel.Right, BIG);
+  end
+  else if (Flags and CAD_DT_RIGHT) <> 0 then
+    Dec(TmpLevel.Left, BIG)
+  else
+    Inc(TmpLevel.Right, BIG);
+  { The centre in the library's flipped space: X as it is, Y measured up
+    from the bottom of the page - in dots, under the page transform. }
+  TmpCX := (R.Left + R.Right) / 2;
+  TmpCY := fPageHeight - (R.Top + R.Bottom) / 2;
+  TmpC := Cos(DegToRad(TmpAngle));
+  TmpS := Sin(DegToRad(TmpAngle));
+  TmpTransparent := Transparent;
+  fLib.DrawSaveState;
+  try
+    { Counter-clockwise about the centre, as LOGFONT's escapement is. }
+    fLib.DrawSetTransform(TmpC, TmpS, -TmpS, TmpC,
+      TmpCX - TmpC * TmpCX + TmpS * TmpCY,
+      TmpCY - TmpS * TmpCX - TmpC * TmpCY);
+    TmpLevelSpec := TmpSpec;
+    TmpLevelSpec.Escapement := 0;
+    SelectFont(TmpLevelSpec);
+    Transparent := True;
+    inherited DrawText(Text, TmpLevel, TmpFlags);
+  finally
+    Transparent := TmpTransparent;
+    SelectFont(TmpSpec);
+    fLib.DrawRestoreState;
+  end;
+  Result := R.Bottom - R.Top;
 end;
 
 procedure TCADPDFGraphics.DoPopClip;
@@ -606,6 +889,11 @@ begin
                 happened to be pages two, three and four. }
               TmpPDF.NewPage;
               TmpGraphics.Attach(TmpEngine, TmpBounds);
+              { What the library flips Y against - see TURNED TEXT. }
+              if TmpResolution <> 72 then
+                TmpGraphics.PageHeight := TmpBounds.Bottom
+              else
+                TmpGraphics.PageHeight := TmpPDF.PageHeight;
               if TmpResolution <> 72 then
               begin
                 { Per page, and after NewPage rather than before it:
@@ -720,6 +1008,11 @@ begin
                 not open one. }
               TmpPDF.NewPage;
               TmpGraphics.Attach(TmpEngine, TmpBounds);
+              { What the library flips Y against - see TURNED TEXT. }
+              if TmpResolution <> 72 then
+                TmpGraphics.PageHeight := TmpBounds.Bottom
+              else
+                TmpGraphics.PageHeight := TmpPDF.PageHeight;
               if TmpResolution <> 72 then
               begin
                 TmpInit.SetPageWidth(TmpBounds.Right);

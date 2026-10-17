@@ -19,7 +19,7 @@ uses
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsFNC,
   VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCadSysRegister,
   VCL.FNCCS4Paper, VCL.FNCCS4Image, Vcl.Imaging.pngimage, VCL.FNCCS4SVG,
-  VCL.FNCCS4GDI, VCL.FNCCS4PDF, System.IOUtils, System.RegularExpressions, Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom, Xml.omnixmldom;
+  VCL.FNCCS4GDI, VCL.FNCCS4PDF, System.IOUtils, System.RegularExpressions, System.ZLib, Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom, Xml.omnixmldom;
 
 type
   { : CS-04: a sheet, or a rectangle of the model, as a PNG. Here rather
@@ -161,6 +161,30 @@ type
     procedure FontsAreLeftOutWhenAskedTo;
     [Test]
     procedure TheViewportHookRunsOncePerPhase;
+  end;
+
+  { : CS-12 and CS-13: what the Masterplanner spike found wrong in a
+    600 dpi PDF - a gradient that was not painted and turned text that
+    landed in the wrong place. A sheet is written through
+    CADSaveSheetsToPDF, the way an application writes it, and the page's
+    content stream is read back: inflated and followed operator by
+    operator, so that where the text ends up on the paper is computed
+    rather than guessed. }
+  [TestFixture]
+  TCADPDFPaperTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FFile: string;
+    function WritePage(const AResolution: Integer): string;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+    [Test]
+    procedure AGradientIsPaintedInBandsInsideItsShape;
+    [Test]
+    procedure TurnedTextLandsWhereItIsAnchored;
   end;
 
   { : CS-10: text that has to come out the same on every device -
@@ -1644,6 +1668,413 @@ begin
 end;
 
 { ==================================================================
+  TCADPDFPaperTests
+  ================================================================== }
+
+type
+  { : Paints the CS-12/CS-13 page: four gradient shapes and four turned
+    labels, at fixed places in the sheet's millimetres. A line, so that
+    its box covers the page and the sheet draws it. }
+  TPDFPaperProbe2D = class(TLine2D)
+  public
+    procedure Draw(const VT: TTransf2D; const Cnv: TDecorativeCanvas;
+      const ClipRect2D: TRect2D; const DrawMode: Integer); override;
+  end;
+
+const
+  { Label centres in mm (origin bottom-left) and their turns. }
+  PDFProbeLabels: array [0 .. 3] of record X, Y: Double; Angle: Integer;
+    end = ((X: 60; Y: 130; Angle: 0), (X: 150; Y: 130; Angle: 45),
+    (X: 60; Y: 60; Angle: 90), (X: 150; Y: 60; Angle: 270));
+  PDFProbeText = 'Milestone label';
+
+procedure TPDFPaperProbe2D.Draw(const VT: TTransf2D;
+  const Cnv: TDecorativeCanvas; const ClipRect2D: TRect2D;
+  const DrawMode: Integer);
+
+  function P(const X, Y: Double): TPoint;
+  begin
+    Result := Point2DToPoint(TransformPoint2D(Point2D(X, Y), VT));
+  end;
+
+var
+  G: TCADGraphics;
+  TmpPPMM: Double;
+  TmpSpec: TCADFontSpec;
+  TmpC: TPoint;
+  TmpR: TRect;
+  TmpW, TmpH: Integer;
+  I: Integer;
+begin
+  G := Cnv.Graphics;
+  TmpPPMM := PointDistance2D(TransformPoint2D(Point2D(0, 0), VT),
+    TransformPoint2D(Point2D(0, 1), VT));
+  G.Pen.Style := cpsClear;
+  G.Brush.Style := cbsGradient;
+  G.Brush.Color := cadclRed;
+  G.Brush.Color2 := cadclBlue;
+  G.Brush.GradientVertical := False;
+  G.Rectangle(P(20, 270).X, P(20, 270).Y, P(100, 250).X, P(100, 250).Y);
+  G.Polygon([P(20, 200), P(100, 200), P(60, 240)]);
+  G.Brush.GradientVertical := True;
+  G.Rectangle(P(120, 270).X, P(120, 270).Y, P(190, 250).X, P(190, 250).Y);
+  G.Ellipse(P(120, 240).X, P(120, 240).Y, P(190, 200).X, P(190, 200).Y);
+  G.Brush.Style := cbsClear;
+  G.Pen.Style := cpsSolid;
+
+  TmpSpec := TCADFontSpec.Default;
+  TmpSpec.FaceName := 'Arial';
+  TmpSpec.Height := -Round(5 * TmpPPMM);
+  G.FontColor := cadclBlack;
+  G.Transparent := True;
+  { The rectangle a caller sizes for the text laid level - 60 by 8 mm -
+    centred on the anchor. }
+  TmpW := Round(30 * TmpPPMM);
+  TmpH := Round(4 * TmpPPMM);
+  for I := Low(PDFProbeLabels) to High(PDFProbeLabels) do
+  begin
+    TmpSpec.Escapement := PDFProbeLabels[I].Angle * 10;
+    G.SelectFont(TmpSpec);
+    TmpC := P(PDFProbeLabels[I].X, PDFProbeLabels[I].Y);
+    TmpR := Rect(TmpC.X - TmpW, TmpC.Y - TmpH, TmpC.X + TmpW, TmpC.Y + TmpH);
+    G.DrawText(PDFProbeText, TmpR, CAD_DT_SINGLELINE or CAD_DT_CENTER or
+      CAD_DT_VCENTER or CAD_DT_NOCLIP);
+  end;
+  G.ResetFont;
+end;
+
+type
+  TPDFMatrix = array [0 .. 5] of Double;
+
+  { : A text run on the page: where its origin is, in points from the
+    bottom-left corner, and which way its baseline runs, in degrees. }
+  TPDFRun = record
+    X, Y, Angle: Double;
+    { Characters in its string - glyph ids, for an embedded font. }
+    Glyphs: Integer;
+  end;
+
+function PDFMul(const A, B: TPDFMatrix): TPDFMatrix;
+begin
+  { A then B, as PDF composes: [a b c d e f]. }
+  Result[0] := A[0] * B[0] + A[1] * B[2];
+  Result[1] := A[0] * B[1] + A[1] * B[3];
+  Result[2] := A[2] * B[0] + A[3] * B[2];
+  Result[3] := A[2] * B[1] + A[3] * B[3];
+  Result[4] := A[4] * B[0] + A[5] * B[2] + B[4];
+  Result[5] := A[4] * B[1] + A[5] * B[3] + B[5];
+end;
+
+const
+  PDFIdentity: TPDFMatrix = (1, 0, 0, 1, 0, 0);
+
+{ : The content streams of a PDF - not fonts, not images - inflated and
+  run together. }
+function PDFContent(const AFile: string): string;
+var
+  TmpBytes, TmpData, TmpOut: TBytes;
+  TmpRaw, TmpDict: string;
+  TmpAt, TmpStart, TmpEnd, TmpObj: Integer;
+  TmpLatin1: TEncoding;
+begin
+  Result := '';
+  TmpBytes := TFile.ReadAllBytes(AFile);
+  { Latin-1: one character per byte, so a position in the string is a
+    position in the file. }
+  TmpLatin1 := TEncoding.GetEncoding(28591);
+  try
+    TmpRaw := TmpLatin1.GetString(TmpBytes);
+  finally
+    TmpLatin1.Free;
+  end;
+  TmpAt := 1;
+  while True do
+  begin
+    TmpStart := Pos('stream', TmpRaw, TmpAt);
+    if TmpStart = 0 then
+      Break;
+    { 'endstream' contains 'stream' too. }
+    if (TmpStart > 3) and (Copy(TmpRaw, TmpStart - 3, 3) = 'end') then
+    begin
+      TmpAt := TmpStart + 6;
+      Continue;
+    end;
+    TmpObj := TmpStart;
+    while (TmpObj > 1) and (Copy(TmpRaw, TmpObj, 3) <> 'obj') do
+      Dec(TmpObj);
+    TmpDict := Copy(TmpRaw, TmpObj, TmpStart - TmpObj);
+    TmpEnd := Pos('endstream', TmpRaw, TmpStart);
+    if TmpEnd = 0 then
+      Break;
+    TmpAt := TmpEnd + 9;
+    if (Pos('/FlateDecode', TmpDict) = 0) or (Pos('/Length1', TmpDict) > 0) or
+      (Pos('/Subtype', TmpDict) > 0) or (Pos('/Type', TmpDict) > 0) then
+      Continue;
+    Inc(TmpStart, 6);
+    if TmpRaw[TmpStart] = #13 then
+      Inc(TmpStart);
+    if TmpRaw[TmpStart] = #10 then
+      Inc(TmpStart);
+    { The end of line before endstream is not part of the data, and
+      zlib will not have anything after its own end. }
+    while (TmpEnd > TmpStart) and CharInSet(TmpRaw[TmpEnd - 1], [#13, #10]) do
+      Dec(TmpEnd);
+    { Back to zero-based bytes. }
+    TmpData := Copy(TmpBytes, TmpStart - 1, TmpEnd - TmpStart);
+    try
+      ZDecompress(TmpData, TmpOut);
+      Result := Result + TEncoding.ANSI.GetString(TmpOut) + #10;
+    except
+      { Not a stream this reads: leave it out. }
+    end;
+  end;
+end;
+
+{ : Follows q, Q, cm, BT, Td, Tm and Tj/TJ through AContent and gives
+  each text run's origin and direction on the page. }
+function PDFTextRuns(const AContent: string): TArray<TPDFRun>;
+var
+  TmpStack: TArray<TPDFMatrix>;
+  TmpCTM, TmpTm, TmpTlm, TmpTrm: TPDFMatrix;
+  TmpNums: TArray<Double>;
+  TmpTok: string;
+  I, N, TmpDepth: Integer;
+  TmpRun: TPDFRun;
+  TmpV: Double;
+  TmpFS: TFormatSettings;
+  TmpLast, TmpFrom: Integer;
+
+  function Num(const AIndex: Integer): Double;
+  begin
+    Result := TmpNums[Length(TmpNums) - AIndex];
+  end;
+
+  function M6: TPDFMatrix;
+  var
+    K: Integer;
+  begin
+    for K := 0 to 5 do
+      Result[K] := TmpNums[Length(TmpNums) - 6 + K];
+  end;
+
+begin
+  SetLength(Result, 0);
+  TmpFS := TFormatSettings.Invariant;
+  TmpCTM := PDFIdentity;
+  TmpTm := PDFIdentity;
+  TmpTlm := PDFIdentity;
+  SetLength(TmpStack, 0);
+  SetLength(TmpNums, 0);
+  N := Length(AContent);
+  TmpLast := 0;
+  I := 1;
+  while I <= N do
+  begin
+    case AContent[I] of
+      #0 .. ' ':
+        begin
+          Inc(I);
+          Continue;
+        end;
+      '(':
+        begin
+          TmpFrom := I;
+          TmpDepth := 0;
+          repeat
+            if AContent[I] = '\' then
+              Inc(I)
+            else if AContent[I] = '(' then
+              Inc(TmpDepth)
+            else if AContent[I] = ')' then
+              Dec(TmpDepth);
+            Inc(I);
+          until (TmpDepth = 0) or (I > N);
+          TmpLast := I - TmpFrom - 2;
+          Continue;
+        end;
+      '<':
+        begin
+          TmpFrom := I;
+          while (I <= N) and (AContent[I] <> '>') do
+            Inc(I);
+          { Four hex digits a glyph: FNC embeds fonts as two-byte CIDs. }
+          TmpLast := (I - TmpFrom - 1) div 4;
+          Inc(I);
+          Continue;
+        end;
+      '[', ']':
+        begin
+          Inc(I);
+          Continue;
+        end;
+    end;
+    TmpTok := '';
+    while (I <= N) and not CharInSet(AContent[I], [#0 .. ' ', '(', '<', '[',
+      ']']) do
+    begin
+      TmpTok := TmpTok + AContent[I];
+      Inc(I);
+    end;
+    if TmpTok = '' then
+    begin
+      Inc(I);
+      Continue;
+    end;
+    if TryStrToFloat(TmpTok, TmpV, TmpFS) then
+    begin
+      TmpNums := TmpNums + [TmpV];
+      Continue;
+    end;
+    if TmpTok = 'q' then
+      TmpStack := TmpStack + [TmpCTM]
+    else if TmpTok = 'Q' then
+    begin
+      if Length(TmpStack) > 0 then
+      begin
+        TmpCTM := TmpStack[High(TmpStack)];
+        SetLength(TmpStack, Length(TmpStack) - 1);
+      end;
+    end
+    else if (TmpTok = 'cm') and (Length(TmpNums) >= 6) then
+      TmpCTM := PDFMul(M6, TmpCTM)
+    else if TmpTok = 'BT' then
+    begin
+      TmpTm := PDFIdentity;
+      TmpTlm := PDFIdentity;
+    end
+    else if (TmpTok = 'Td') and (Length(TmpNums) >= 2) then
+    begin
+      TmpTrm := PDFIdentity;
+      TmpTrm[4] := Num(2);
+      TmpTrm[5] := Num(1);
+      TmpTlm := PDFMul(TmpTrm, TmpTlm);
+      TmpTm := TmpTlm;
+    end
+    else if (TmpTok = 'Tm') and (Length(TmpNums) >= 6) then
+    begin
+      TmpTlm := M6;
+      TmpTm := TmpTlm;
+    end
+    else if (TmpTok = 'Tj') or (TmpTok = 'TJ') then
+    begin
+      TmpTrm := PDFMul(TmpTm, TmpCTM);
+      TmpRun.X := TmpTrm[4];
+      TmpRun.Y := TmpTrm[5];
+      TmpRun.Angle := RadToDeg(ArcTan2(TmpTrm[1], TmpTrm[0]));
+      TmpRun.Glyphs := TmpLast;
+      Result := Result + [TmpRun];
+    end;
+    SetLength(TmpNums, 0);
+  end;
+end;
+
+procedure TCADPDFPaperTests.Setup;
+var
+  TmpSheet: TCADSheet;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+  TmpSheet := FCAD.Sheets.Add('Paper');
+  TmpSheet.Paper := pkA4;
+  TmpSheet.Orientation := pgoPortrait;
+  TmpSheet.AddObject(TPDFPaperProbe2D.Create(-1, Point2D(1, 1),
+    Point2D(209, 296)));
+  FFile := TPath.Combine(TPath.GetTempPath, 'CADSysPDFPaper.pdf');
+end;
+
+procedure TCADPDFPaperTests.TearDown;
+begin
+  FCAD.Free;
+  if TFile.Exists(FFile) then
+    TFile.Delete(FFile);
+end;
+
+function TCADPDFPaperTests.WritePage(const AResolution: Integer): string;
+var
+  TmpOld: Integer;
+  TmpLogs: string;
+begin
+  TmpOld := CADPDFResolution;
+  CADPDFResolution := AResolution;
+  try
+    CADSaveSheetsToPDF(FCAD, FCAD.Sheets, FFile);
+  finally
+    CADPDFResolution := TmpOld;
+  end;
+  Assert.IsTrue(TFile.Exists(FFile), 'written');
+  { A copy beside the build logs, to look at. }
+  TmpLogs := TPath.GetFullPath(ExtractFilePath(ParamStr(0)) +
+    '..\..\logs');
+  if TDirectory.Exists(TmpLogs) then
+    TFile.Copy(FFile, TPath.Combine(TmpLogs, Format('pdf-paper-%d.pdf',
+      [AResolution])), True);
+  Result := PDFContent(FFile);
+end;
+
+procedure TCADPDFPaperTests.AGradientIsPaintedInBandsInsideItsShape;
+var
+  TmpText: string;
+begin
+  TmpText := WritePage(600);
+  { No shading pattern - FNC's lies in the wrong space at 600 dpi. }
+  Assert.AreEqual(0, CountOf(' scn', TmpText), 'no pattern fill');
+  { Red to blue is 255 steps; four shapes of them. }
+  Assert.IsTrue(CountOf(' rg', TmpText) >= 4 * 200,
+    Format('bands: %d colours set', [CountOf(' rg', TmpText)]));
+  { Each inside its own outline. }
+  Assert.IsTrue(CountOf('W n', TmpText) >= 4,
+    Format('%d clips', [CountOf('W n', TmpText)]));
+  { The first band is red, a middle one a blend. }
+  Assert.IsTrue(Pos('1 0 0 rg', TmpText) > 0, 'red at the start');
+  Assert.IsTrue(Pos('0 0 1 rg', TmpText) > 0, 'blue at the end');
+end;
+
+procedure TCADPDFPaperTests.TurnedTextLandsWhereItIsAnchored;
+const
+  PT = 72 / 25.4;
+var
+  TmpFine, TmpCoarse: TArray<TPDFRun>;
+  I: Integer;
+  TmpWant, TmpGot: Double;
+begin
+  TmpFine := PDFTextRuns(WritePage(600));
+  TmpCoarse := PDFTextRuns(WritePage(72));
+  Assert.AreEqual(Length(PDFProbeLabels), Length(TmpFine),
+    'one run per label at 600 dpi');
+  Assert.AreEqual(Length(PDFProbeLabels), Length(TmpCoarse),
+    'one run per label at 72 dpi');
+  for I := Low(PDFProbeLabels) to High(PDFProbeLabels) do
+  begin
+    { Turned the right way. }
+    TmpWant := PDFProbeLabels[I].Angle;
+    if TmpWant > 180 then
+      TmpWant := TmpWant - 360;
+    TmpGot := TmpFine[I].Angle;
+    Assert.IsTrue(Abs(TmpGot - TmpWant) < 1,
+      Format('label %d turned %.1f, wanted %.1f', [I, TmpGot, TmpWant]));
+    { The whole of it - drawn level, FNC cuts short a line longer than
+      its box, and a 90 degree label's box is the narrow way round. }
+    Assert.AreEqual(Length(PDFProbeText), TmpFine[I].Glyphs,
+      Format('label %d is all there', [I]));
+    { Its baseline starts within half a label of its anchor - the label
+      is under 60 mm long - so it is on its own part of the page, not
+      mid-page or off it. }
+    Assert.IsTrue(Hypot(TmpFine[I].X - PDFProbeLabels[I].X * PT,
+      TmpFine[I].Y - PDFProbeLabels[I].Y * PT) < 35 * PT,
+      Format('label %d at %.1f, %.1f pt; anchored at %.1f, %.1f',
+      [I, TmpFine[I].X, TmpFine[I].Y, PDFProbeLabels[I].X * PT,
+      PDFProbeLabels[I].Y * PT]));
+    { And the same place at either resolution, within two points: the
+      font size is rounded to a whole unit, which at 72 dpi is a whole
+      point, so the label's length differs by a percent or so. The
+      fault this guards against was hundreds of points. }
+    Assert.IsTrue(Hypot(TmpFine[I].X - TmpCoarse[I].X,
+      TmpFine[I].Y - TmpCoarse[I].Y) < 2,
+      Format('label %d: %.1f, %.1f at 600 dpi, %.1f, %.1f at 72',
+      [I, TmpFine[I].X, TmpFine[I].Y, TmpCoarse[I].X, TmpCoarse[I].Y]));
+  end;
+end;
+
+{ ==================================================================
   TCADTextAgreementTests
   ================================================================== }
 
@@ -1867,6 +2298,7 @@ initialization
 TDUnitX.RegisterTestFixture(TCADImageExportTests);
 TDUnitX.RegisterTestFixture(TCADTextAgreementTests);
 TDUnitX.RegisterTestFixture(TCADPDFExtrasTests);
+TDUnitX.RegisterTestFixture(TCADPDFPaperTests);
 TDUnitX.RegisterTestFixture(TCADGDIExportTests);
 TDUnitX.RegisterTestFixture(TCADSVGExportTests);
 TDUnitX.RegisterTestFixture(TCADFNCGraphicsTests);
